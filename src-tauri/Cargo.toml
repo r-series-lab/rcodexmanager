@@ -1,0 +1,27 @@
+[package]
+name = "rcodexmanager"
+version = "0.1.0"
+description = "A local Codex profile manager for independent desktop instances"
+authors = ["r"]
+edition = "2021"
+
+[lib]
+name = "rcodexmanager_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+base64 = "0.22.1"
+chrono = { version = "0.4.42", features = ["clock"] }
+clap = { version = "4.5.53", features = ["derive"] }
+dirs = "6.0.0"
+reqwest = { version = "0.12.24", default-features = false, features = ["blocking", "json", "rustls-tls"] }
+serde = { version = "1.0.228", features = ["derive"] }
+serde_json = "1.0.145"
+tauri = { version = "2", features = [] }
+toml = "0.8.23"
+
+[dev-dependencies]
+tempfile = "3.23.0"
