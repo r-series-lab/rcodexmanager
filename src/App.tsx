@@ -1,4 +1,5 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useState, type MouseEvent } from "react";
+import { getCurrentWindow } from "@tauri-apps/api/window";
 import AccountCircleRoundedIcon from "@mui/icons-material/AccountCircleRounded";
 import AddRoundedIcon from "@mui/icons-material/AddRounded";
 import DarkModeRoundedIcon from "@mui/icons-material/DarkModeRounded";
@@ -51,7 +52,7 @@ import {
   terminateProfile,
   updateProfileMetadata,
 } from "./lib/api";
-import type { CreateProfileInput, ProfileInfo, ProfileReport } from "./lib/types";
+import type { CodexSessionSummary, CreateProfileInput, ProfileInfo, ProfileReport } from "./lib/types";
 import type { ProfileQuotaReport, QuotaWindowInfo } from "./lib/types";
 import {
   createRcodexManagerTheme,
@@ -88,6 +89,26 @@ const DEFAULT_FORM: CreateProfileInput = {
 function initialStyleMode(): CodexManagerStyleMode {
   const stored = window.localStorage.getItem("rcodexmanager-style");
   return stored === "dark" ? "dark" : "light";
+}
+
+function errorMessage(error: unknown, fallback: string): string {
+  if (error instanceof Error && error.message.trim()) {
+    return error.message;
+  }
+  if (typeof error === "string" && error.trim()) {
+    return error;
+  }
+  if (error && typeof error === "object" && "message" in error) {
+    const message = String((error as { message?: unknown }).message ?? "").trim();
+    if (message) {
+      return message;
+    }
+  }
+  return fallback;
+}
+
+function isTauriRuntime(): boolean {
+  return "__TAURI_INTERNALS__" in window;
 }
 
 function App() {
@@ -146,6 +167,9 @@ function App() {
         profile.model ?? "",
         profile.reasoningEffort ?? "",
         profile.codexHome,
+        profile.latestSession?.title ?? "",
+        profile.latestSession?.summary ?? "",
+        profile.latestSession?.cwd ?? "",
       ]
         .join(" ")
         .toLowerCase()
@@ -193,7 +217,7 @@ function App() {
     } catch (error) {
       setFeedback({
         severity: "error",
-        text: error instanceof Error ? error.message : "读取 profile 失败",
+        text: errorMessage(error, "读取 profile 失败"),
       });
     } finally {
       setBusyLabel("");
@@ -258,7 +282,7 @@ function App() {
     } catch (error) {
       setFeedback({
         severity: "error",
-        text: error instanceof Error ? error.message : "创建 profile 失败",
+        text: errorMessage(error, "创建 profile 失败"),
       });
     } finally {
       setBusyLabel("");
@@ -283,7 +307,7 @@ function App() {
     } catch (error) {
       setFeedback({
         severity: "error",
-        text: error instanceof Error ? error.message : "保存 profile 信息失败",
+        text: errorMessage(error, "保存 profile 信息失败"),
       });
     } finally {
       setBusyLabel("");
@@ -301,7 +325,7 @@ function App() {
     } catch (error) {
       setFeedback({
         severity: "error",
-        text: error instanceof Error ? error.message : "启动失败",
+        text: errorMessage(error, "启动失败"),
       });
     } finally {
       setBusyLabel("");
@@ -321,7 +345,7 @@ function App() {
     } catch (error) {
       setFeedback({
         severity: "error",
-        text: error instanceof Error ? error.message : "终止失败",
+        text: errorMessage(error, "终止失败"),
       });
     } finally {
       setBusyLabel("");
@@ -353,7 +377,7 @@ function App() {
         [profile.name]: {
           loading: false,
           report: current[profile.name]?.report ?? null,
-          error: error instanceof Error ? error.message : "额度查询失败",
+          error: errorMessage(error, "额度查询失败"),
         },
       }));
     }
@@ -377,7 +401,7 @@ function App() {
     } catch (error) {
       setFeedback({
         severity: "error",
-        text: error instanceof Error ? error.message : "删除 profile 失败",
+        text: errorMessage(error, "删除 profile 失败"),
       });
     } finally {
       setBusyLabel("");
@@ -406,7 +430,7 @@ function App() {
     } catch (error) {
       setFeedback({
         severity: "error",
-        text: error instanceof Error ? error.message : "重置 profile 失败",
+        text: errorMessage(error, "重置 profile 失败"),
       });
     } finally {
       setBusyLabel("");
@@ -449,7 +473,7 @@ function App() {
     } catch (error) {
       setFeedback({
         severity: "error",
-        text: error instanceof Error ? error.message : "导入账号失败",
+        text: errorMessage(error, "导入账号失败"),
       });
     } finally {
       setBusyLabel("");
@@ -467,7 +491,7 @@ function App() {
     } catch (error) {
       setFeedback({
         severity: "error",
-        text: error instanceof Error ? error.message : "修复 Codex 网络失败",
+        text: errorMessage(error, "修复 Codex 网络失败"),
       });
     } finally {
       setBusyLabel("");
@@ -478,39 +502,56 @@ function App() {
     setCreateDraft((current) => ({ ...current, [key]: value }));
   }
 
+  function handleWindowDragMouseDown(event: MouseEvent<HTMLElement>) {
+    if (event.button !== 0 || !isTauriRuntime()) {
+      return;
+    }
+    void getCurrentWindow().startDragging().catch(() => undefined);
+  }
+
   return (
     <ThemeProvider theme={theme}>
       <CssBaseline />
       <Box className="app-shell" data-style={styleMode}>
-        <Paper className="topbar" elevation={0}>
-          <Stack direction="row" spacing={1.5} sx={{ alignItems: "center" }}>
-            <Box className="app-mark">C</Box>
-            <Typography variant="h6">rCodexManager</Typography>
-          </Stack>
-          <Stack direction="row" spacing={1} sx={{ alignItems: "center" }}>
+        <a className="skip-link" href="#profile-browser">
+          跳到 profile 列表
+        </a>
+        <Box
+          className="window-drag-region"
+          onMouseDown={handleWindowDragMouseDown}
+        />
+        <Box className="window-toolbar" aria-label="窗口工具">
+          <Stack direction="row" spacing={0.75} sx={{ alignItems: "center" }}>
             {busyLabel ? <Chip size="small" label={busyLabel} /> : null}
             <Tooltip title="新增 profile">
-              <IconButton onClick={() => setCreateDialogOpen(true)}>
+              <IconButton aria-label="新增 profile" onClick={() => setCreateDialogOpen(true)}>
                 <AddRoundedIcon />
               </IconButton>
             </Tooltip>
             <Tooltip title={styleMode === "light" ? "暗色模式" : "亮色模式"}>
-              <IconButton onClick={() => setStyleMode(styleMode === "light" ? "dark" : "light")}>
+              <IconButton
+                aria-label={styleMode === "light" ? "切换到暗色模式" : "切换到亮色模式"}
+                onClick={() => setStyleMode(styleMode === "light" ? "dark" : "light")}
+              >
                 {styleMode === "light" ? <DarkModeRoundedIcon /> : <LightModeRoundedIcon />}
               </IconButton>
             </Tooltip>
             <Tooltip title="刷新">
               <span>
-                <IconButton onClick={() => void refreshProfiles()} disabled={Boolean(busyLabel)}>
+                <IconButton
+                  aria-label="刷新 profile 列表"
+                  onClick={() => void refreshProfiles()}
+                  disabled={Boolean(busyLabel)}
+                >
                   <RefreshRoundedIcon />
                 </IconButton>
               </span>
             </Tooltip>
           </Stack>
-        </Paper>
+        </Box>
 
         <Box className="workbench-grid">
-          <main className="profile-browser">
+          <main id="profile-browser" className="profile-browser">
             <Paper className="browser-panel" elevation={0}>
               <Box className="browser-header">
                 <Box className="browser-title">
@@ -522,7 +563,7 @@ function App() {
                   </Stack>
                 </Box>
                 {feedback ? (
-                  <Alert className="feedback-line" severity={feedback.severity}>
+                  <Alert className="feedback-line" severity={feedback.severity} aria-live="polite">
                     {feedback.text}
                   </Alert>
                 ) : null}
@@ -535,6 +576,12 @@ function App() {
                   onChange={(event) => setQuery(event.target.value)}
                   placeholder="搜索 profile"
                   slotProps={{
+                    htmlInput: {
+                      "aria-label": "搜索 profile",
+                      name: "profile-search",
+                      autoComplete: "off",
+                      spellCheck: false,
+                    },
                     input: {
                       startAdornment: (
                         <InputAdornment position="start">
@@ -581,17 +628,19 @@ function App() {
             </Paper>
           </main>
 
-          <aside className="inspector-rail">
+          <aside className="inspector-rail" aria-label="profile 详情">
             <Paper className="inspector-panel" elevation={0}>
               {activeProfile ? (
                 <Stack className="inspector-content">
                   <Box className="inspector-title">
                     <Box>
                       <Typography variant="caption" color="text.secondary">
-                        Selected
+                        当前 profile
                       </Typography>
-                      <Typography variant="h5">{activeProfile.alias || activeProfile.name}</Typography>
-                      <Typography variant="body2" color="text.secondary">
+                      <Typography variant="h5" translate="no">
+                        {activeProfile.alias || activeProfile.name}
+                      </Typography>
+                      <Typography variant="body2" color="text.secondary" translate="no">
                         {activeProfile.name}
                       </Typography>
                     </Box>
@@ -602,19 +651,11 @@ function App() {
                     <Chip size="small" variant="outlined" label={activeProfile.category} />
                     <Chip size="small" label={activeProfile.model ?? "unknown"} />
                     <Chip size="small" label={activeProfile.reasoningEffort ?? "unknown"} />
-                    <Chip
-                      size="small"
-                      className={`state-chip ${activeProfile.isRunning ? "running" : "idle"}`}
-                      label={activeProfile.isRunning ? `运行 ${activeProfile.runningProcessCount}` : "空闲"}
-                    />
-                    <Chip
-                      size="small"
-                      color={activeProfile.websocketFeaturesEnabled ? "success" : "warning"}
-                      label={activeProfile.websocketFeaturesEnabled ? "WS 已启用" : "WS 待修复"}
-                    />
                   </Box>
 
                   <AccountBlock profile={activeProfile} />
+
+                  <SessionBlock session={activeProfile.latestSession} />
 
                   <QuotaBlock
                     profile={activeProfile}
@@ -623,14 +664,15 @@ function App() {
                   />
 
                   <Box className="action-panel">
-                    <Box className="primary-actions">
+                    <Box className="action-strip runtime-actions">
                       <Button
-                        variant="contained"
+                        className={`launch-action ${activeProfile.isRunning ? "running" : ""}`}
+                        variant={activeProfile.isRunning ? "outlined" : "contained"}
                         startIcon={<PlayArrowRoundedIcon />}
                         onClick={() => void handleLaunchProfile(activeProfile)}
                         disabled={Boolean(busyLabel) || activeProfile.isRunning}
                       >
-                        启动
+                        {activeProfile.isRunning ? "运行中" : "启动"}
                       </Button>
                       <Button
                         color="warning"
@@ -642,16 +684,18 @@ function App() {
                         终止
                       </Button>
                     </Box>
-                    <Button
-                      className="network-action"
-                      variant="outlined"
-                      startIcon={<SettingsEthernetRoundedIcon />}
-                      onClick={() => void handleRepairNetwork(activeProfile)}
-                      disabled={Boolean(busyLabel)}
-                    >
-                      修复 WS
-                    </Button>
-                    <Box className="secondary-actions">
+                    <Box className="action-strip tool-actions">
+                      <Button
+                        className={`network-action ${
+                          activeProfile.websocketFeaturesEnabled ? "enabled" : ""
+                        }`}
+                        variant="outlined"
+                        startIcon={<SettingsEthernetRoundedIcon />}
+                        onClick={() => void handleRepairNetwork(activeProfile)}
+                        disabled={Boolean(busyLabel)}
+                      >
+                        {activeProfile.websocketFeaturesEnabled ? "WS 已启用" : "修复 WS"}
+                      </Button>
                       <Button
                         variant="outlined"
                         startIcon={<EditRoundedIcon />}
@@ -660,6 +704,8 @@ function App() {
                       >
                         编辑
                       </Button>
+                    </Box>
+                    <Box className="action-strip management-actions">
                       <Button
                         variant="outlined"
                         startIcon={<FileUploadRoundedIcon />}
@@ -929,26 +975,46 @@ function ProfileCard({
   const iconTitle = profile.isDefault && profile.isRunning ? "默认 codex 请手动退出" : profile.isRunning ? "终止" : "启动";
 
   return (
-    <Box
-      className={`profile-card ${selected ? "selected" : ""}`}
-      role="button"
-      tabIndex={0}
-      onClick={onSelect}
-      onKeyDown={(event) => {
-        if (event.key === "Enter" || event.key === " ") {
-          event.preventDefault();
-          onSelect();
-        }
-      }}
-    >
-      <Box className="profile-card-top">
-        <Box>
-          <Typography variant="subtitle1">{profile.alias || profile.name}</Typography>
-          <Typography variant="caption">{profile.name}</Typography>
+    <Box className={`profile-card ${selected ? "selected" : ""}`}>
+      <button
+        type="button"
+        className="profile-card-main"
+        aria-pressed={selected}
+        onClick={onSelect}
+      >
+        <Box className="profile-card-top">
+          <Box sx={{ minWidth: 0 }}>
+            <Typography variant="subtitle1" translate="no">
+              {profile.alias || profile.name}
+            </Typography>
+            <Typography variant="caption" translate="no">
+              {profile.name}
+            </Typography>
+          </Box>
         </Box>
+        <Box className="profile-card-subline">
+          <Stack direction="row" spacing={0.7} sx={{ alignItems: "center", minWidth: 0 }}>
+            <AccountCircleRoundedIcon fontSize="small" />
+            <Typography variant="caption">{accountLabel(profile)}</Typography>
+          </Stack>
+        </Box>
+        {profile.latestSession ? (
+          <Box
+            className="profile-session-line"
+            title={profile.latestSession.summary ?? profile.latestSession.title}
+          >
+            <TerminalRoundedIcon fontSize="small" />
+            <Typography variant="caption" translate="no">
+              {profile.latestSession.title}
+            </Typography>
+          </Box>
+        ) : null}
+      </button>
+      <Box className="profile-card-action">
         <Tooltip title={iconTitle}>
           <span>
             <IconButton
+              className={`profile-action-button ${profile.isRunning ? "running" : "idle"}`}
               aria-label={`${profile.isRunning ? "终止" : "启动"} ${profile.name}`}
               onClick={(event) => {
                 event.stopPropagation();
@@ -969,13 +1035,62 @@ function ProfileCard({
           </span>
         </Tooltip>
       </Box>
-      <Box className="profile-card-subline">
-        <Stack direction="row" spacing={0.7} sx={{ alignItems: "center", minWidth: 0 }}>
-          <AccountCircleRoundedIcon fontSize="small" />
-          <Typography variant="caption">{accountLabel(profile)}</Typography>
+    </Box>
+  );
+}
+
+function SessionBlock({ session }: { session: CodexSessionSummary | null }) {
+  return (
+    <Box className="session-block">
+      <Stack direction="row" spacing={1} sx={{ alignItems: "center", justifyContent: "space-between" }}>
+        <Stack direction="row" spacing={1} sx={{ alignItems: "center", minWidth: 0 }}>
+          <TerminalRoundedIcon fontSize="small" />
+          <Typography variant="subtitle2">最新会话</Typography>
         </Stack>
-        <Box className={`status-dot ${profile.isRunning ? "running" : "idle"}`} />
-      </Box>
+        {session ? (
+          <Button
+            size="small"
+            variant="text"
+            onClick={() => {
+              if (session.path) {
+                void revealPath(session.path);
+              }
+            }}
+            disabled={!session.path}
+          >
+            打开
+          </Button>
+        ) : null}
+      </Stack>
+
+      {session ? (
+        <Box className="session-content">
+          <Typography className="session-title" variant="subtitle2" translate="no" title={session.title}>
+            {session.title}
+          </Typography>
+          {session.summary ? (
+            <Typography className="session-summary" variant="body2" title={session.summary}>
+              {session.summary}
+            </Typography>
+          ) : (
+            <Typography className="session-muted" variant="caption">
+              暂无摘要内容
+            </Typography>
+          )}
+          <Stack className="session-meta" direction="row" spacing={0.8}>
+            <Typography variant="caption">{formatSessionTime(session.updatedAt ?? session.startedAt)}</Typography>
+            {session.cwd ? (
+              <Typography variant="caption" translate="no" title={session.cwd}>
+                {compactPath(session.cwd)}
+              </Typography>
+            ) : null}
+          </Stack>
+        </Box>
+      ) : (
+        <Typography className="session-muted" variant="caption">
+          暂无会话摘要
+        </Typography>
+      )}
     </Box>
   );
 }
@@ -1081,9 +1196,9 @@ function accountLabel(profile: ProfileInfo): string {
 
 function profileSourceLabel(profile: ProfileInfo): string {
   if (profile.isDefault) {
-    return "default";
+    return "默认";
   }
-  return profile.managedByApp ? "managed" : "zshrc";
+  return profile.managedByApp ? "托管" : "zshrc";
 }
 
 function clampPercent(value: number | null): number | null {
@@ -1125,19 +1240,45 @@ function formatResetAt(value: number | null): string {
   }).format(new Date(value * 1000));
 }
 
+function formatSessionTime(value: string | null): string {
+  if (!value) {
+    return "时间 --";
+  }
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) {
+    return value;
+  }
+  return new Intl.DateTimeFormat("zh-CN", {
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+  }).format(date);
+}
+
+function compactPath(path: string): string {
+  const parts = path.split("/").filter(Boolean);
+  if (parts.length <= 2) {
+    return path;
+  }
+  return `.../${parts.slice(-2).join("/")}`;
+}
+
 function PathBlock({ title, path, exists }: { title: string; path: string; exists: boolean }) {
   return (
     <Box className="path-block">
       <Stack direction="row" spacing={1} sx={{ alignItems: "center", justifyContent: "space-between" }}>
-        <Stack direction="row" spacing={1} sx={{ alignItems: "center" }}>
+        <Stack direction="row" spacing={1} sx={{ alignItems: "center", minWidth: 0 }}>
           <FolderRoundedIcon fontSize="small" />
           <Typography variant="subtitle2">{title}</Typography>
         </Stack>
-        <Chip size="small" label={exists ? "exists" : "missing"} color={exists ? "success" : "warning"} />
+        <Chip size="small" label={exists ? "已存在" : "缺失"} color={exists ? "success" : "warning"} />
       </Stack>
-      <Typography variant="caption">{path}</Typography>
+      <Typography variant="caption" translate="no">
+        {path}
+      </Typography>
       <Button size="small" variant="text" onClick={() => void revealPath(path)} disabled={!exists}>
-        Finder
+        打开
       </Button>
     </Box>
   );

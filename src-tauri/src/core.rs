@@ -4,9 +4,10 @@ use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
 use std::collections::BTreeMap;
 use std::fs;
+use std::io::{BufRead, BufReader};
 use std::path::{Path, PathBuf};
 use std::process::Command;
-use std::time::Duration;
+use std::time::{Duration, SystemTime};
 
 const MANAGED_BLOCK_START: &str = "# >>> rCodexManager profiles >>>";
 const MANAGED_BLOCK_END: &str = "# <<< rCodexManager profiles <<<";
@@ -112,6 +113,19 @@ pub struct ProfileInfo {
     pub running_pids: Vec<u32>,
     pub running_process_count: usize,
     pub account: Option<CodexAccountInfo>,
+    pub latest_session: Option<CodexSessionSummary>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CodexSessionSummary {
+    pub id: String,
+    pub title: String,
+    pub summary: Option<String>,
+    pub updated_at: Option<String>,
+    pub started_at: Option<String>,
+    pub cwd: Option<String>,
+    pub path: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -288,6 +302,7 @@ pub fn list_profiles(context: &ProfileContext) -> Result<ProfileReport, String> 
         let user_data_dir = expand_shell_path(&user_data_raw, &context.home_dir);
         let config_path = codex_home.join("config.toml");
         let config = read_codex_config(&config_path);
+        let latest_session = read_latest_session_summary(&codex_home);
         let metadata = metadata_store
             .profiles
             .get(&function.name)
@@ -326,6 +341,7 @@ pub fn list_profiles(context: &ProfileContext) -> Result<ProfileReport, String> 
                 running_process_count: running_pids.len(),
                 running_pids,
                 account: read_codex_account(&codex_home),
+                latest_session,
             },
         );
     }
@@ -805,6 +821,7 @@ fn default_profile_info(
     let (codex_home, user_data_dir) = default_main_profile_paths(context);
     let config_path = codex_home.join("config.toml");
     let running_pids = matching_default_profile_pids(running_processes, &user_data_dir);
+    let latest_session = read_latest_session_summary(&codex_home);
     let should_show = codex_home.exists() || user_data_dir.exists();
     if !should_show {
         return None;
@@ -843,6 +860,7 @@ fn default_profile_info(
         running_process_count: running_pids.len(),
         running_pids,
         account: read_codex_account(&codex_home),
+        latest_session,
     })
 }
 
@@ -958,6 +976,272 @@ fn format_pids(pids: &[u32]) -> String {
         .map(u32::to_string)
         .collect::<Vec<_>>()
         .join(", ")
+}
+
+#[derive(Debug, Clone, Deserialize)]
+struct SessionIndexEntry {
+    id: String,
+    thread_name: Option<String>,
+    updated_at: Option<String>,
+}
+
+#[derive(Debug, Default)]
+struct SessionFileDetails {
+    id: Option<String>,
+    started_at: Option<String>,
+    cwd: Option<String>,
+    summary: Option<String>,
+}
+
+fn read_latest_session_summary(codex_home: &Path) -> Option<CodexSessionSummary> {
+    let index_entry = read_latest_session_index_entry(codex_home);
+    let sessions_dir = codex_home.join("sessions");
+    let session_path = index_entry
+        .as_ref()
+        .and_then(|entry| find_session_file_by_id(&sessions_dir, &entry.id))
+        .or_else(|| newest_session_file(&sessions_dir));
+    let details = session_path
+        .as_ref()
+        .map(|path| read_session_file_details(path))
+        .unwrap_or_default();
+
+    let id = index_entry
+        .as_ref()
+        .map(|entry| entry.id.clone())
+        .or(details.id)
+        .or_else(|| {
+            session_path
+                .as_ref()
+                .and_then(|path| path.file_stem())
+                .map(|value| value.to_string_lossy().to_string())
+        })?;
+    let title = index_entry
+        .as_ref()
+        .and_then(|entry| normalize_session_title(entry.thread_name.as_deref()))
+        .or_else(|| details.summary.as_deref().and_then(summary_title_from_text))
+        .unwrap_or_else(|| "未命名会话".to_string());
+    let path = session_path.as_ref().map(|value| path_string(value));
+
+    Some(CodexSessionSummary {
+        id,
+        title,
+        summary: details.summary,
+        updated_at: index_entry.and_then(|entry| entry.updated_at),
+        started_at: details.started_at,
+        cwd: details.cwd,
+        path,
+    })
+}
+
+fn read_latest_session_index_entry(codex_home: &Path) -> Option<SessionIndexEntry> {
+    let file = fs::File::open(codex_home.join("session_index.jsonl")).ok()?;
+    let reader = BufReader::new(file);
+    let mut latest: Option<SessionIndexEntry> = None;
+    for line in reader.lines().map_while(Result::ok) {
+        let trimmed = line.trim();
+        if trimmed.is_empty() {
+            continue;
+        }
+        let Ok(entry) = serde_json::from_str::<SessionIndexEntry>(trimmed) else {
+            continue;
+        };
+        if entry.id.trim().is_empty() {
+            continue;
+        }
+        if is_newer_session_index_entry(&entry, latest.as_ref()) {
+            latest = Some(entry);
+        }
+    }
+    latest
+}
+
+fn is_newer_session_index_entry(
+    candidate: &SessionIndexEntry,
+    current: Option<&SessionIndexEntry>,
+) -> bool {
+    let Some(current) = current else {
+        return true;
+    };
+    candidate.updated_at.as_deref().unwrap_or_default()
+        > current.updated_at.as_deref().unwrap_or_default()
+}
+
+fn find_session_file_by_id(sessions_dir: &Path, id: &str) -> Option<PathBuf> {
+    let id = id.trim();
+    if id.is_empty() {
+        return None;
+    }
+    let mut files = Vec::new();
+    collect_session_files(sessions_dir, &mut files);
+    files
+        .into_iter()
+        .filter(|path| {
+            path.file_name()
+                .map(|name| name.to_string_lossy().contains(id))
+                .unwrap_or(false)
+        })
+        .max_by_key(session_modified_at)
+}
+
+fn newest_session_file(sessions_dir: &Path) -> Option<PathBuf> {
+    let mut files = Vec::new();
+    collect_session_files(sessions_dir, &mut files);
+    files.into_iter().max_by_key(session_modified_at)
+}
+
+fn collect_session_files(dir: &Path, out: &mut Vec<PathBuf>) {
+    let Ok(entries) = fs::read_dir(dir) else {
+        return;
+    };
+    for entry in entries.flatten() {
+        let path = entry.path();
+        if path.is_dir() {
+            collect_session_files(&path, out);
+        } else if path.extension().and_then(|value| value.to_str()) == Some("jsonl") {
+            out.push(path);
+        }
+    }
+}
+
+fn session_modified_at(path: &PathBuf) -> SystemTime {
+    path.metadata()
+        .and_then(|metadata| metadata.modified())
+        .unwrap_or(SystemTime::UNIX_EPOCH)
+}
+
+fn read_session_file_details(path: &Path) -> SessionFileDetails {
+    let Ok(file) = fs::File::open(path) else {
+        return SessionFileDetails::default();
+    };
+    let reader = BufReader::new(file);
+    let mut details = SessionFileDetails::default();
+
+    for line in reader.lines().map_while(Result::ok) {
+        let trimmed = line.trim();
+        if trimmed.is_empty() {
+            continue;
+        }
+        let Ok(root) = serde_json::from_str::<Value>(trimmed) else {
+            continue;
+        };
+        match string_at(&root, &["type"]).as_deref() {
+            Some("session_meta") => {
+                if let Some(payload) = root.get("payload") {
+                    if details.id.is_none() {
+                        details.id = string_at(payload, &["id"]);
+                    }
+                    if details.started_at.is_none() {
+                        details.started_at = string_at(payload, &["timestamp"]);
+                    }
+                    if details.cwd.is_none() {
+                        details.cwd = string_at(payload, &["cwd"]);
+                    }
+                }
+            }
+            Some("response_item") => {
+                if let Some(message) = root
+                    .get("payload")
+                    .and_then(extract_user_response_item_text)
+                {
+                    if let Some(candidate) = session_summary_candidate(&message) {
+                        details.summary = Some(candidate);
+                    }
+                }
+            }
+            Some("event_msg") => {
+                if let Some(payload) = root.get("payload") {
+                    if string_at(payload, &["type"]).as_deref() == Some("user_message") {
+                        if let Some(message) = string_at(payload, &["message"]) {
+                            if let Some(candidate) = session_summary_candidate(&message) {
+                                details.summary = Some(candidate);
+                            }
+                        }
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+
+    details
+}
+
+fn extract_user_response_item_text(payload: &Value) -> Option<String> {
+    if string_at(payload, &["type"]).as_deref() != Some("message")
+        || string_at(payload, &["role"]).as_deref() != Some("user")
+    {
+        return None;
+    }
+    let items = payload.get("content")?.as_array()?;
+    let text = items
+        .iter()
+        .filter(|item| string_at(item, &["type"]).as_deref() == Some("input_text"))
+        .filter_map(|item| string_at(item, &["text"]))
+        .collect::<Vec<_>>()
+        .join("\n");
+    if text.trim().is_empty() {
+        None
+    } else {
+        Some(text)
+    }
+}
+
+fn session_summary_candidate(value: &str) -> Option<String> {
+    let normalized = normalize_session_text(value);
+    if normalized.is_empty() || is_technical_session_text(&normalized) {
+        return None;
+    }
+    Some(truncate_chars(&normalized, 220))
+}
+
+fn normalize_session_title(value: Option<&str>) -> Option<String> {
+    value
+        .map(normalize_session_text)
+        .filter(|value| !value.is_empty())
+        .map(|value| truncate_chars(&value, 64))
+}
+
+fn summary_title_from_text(value: &str) -> Option<String> {
+    let title = truncate_chars(value, 36);
+    if title.is_empty() {
+        None
+    } else {
+        Some(title)
+    }
+}
+
+fn normalize_session_text(value: &str) -> String {
+    value
+        .replace("<image>", "")
+        .replace("</image>", "")
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ")
+}
+
+fn is_technical_session_text(value: &str) -> bool {
+    let trimmed = value.trim_start();
+    [
+        "<environment_context>",
+        "<skill>",
+        "<permissions instructions>",
+        "<app-context>",
+        "<collaboration_mode>",
+        "<skills_instructions>",
+        "<plugins_instructions>",
+        "<developer",
+        "<system",
+    ]
+    .iter()
+    .any(|prefix| trimmed.starts_with(prefix))
+}
+
+fn truncate_chars(value: &str, max_chars: usize) -> String {
+    if value.chars().count() <= max_chars {
+        return value.to_string();
+    }
+    let keep = max_chars.saturating_sub(3);
+    format!("{}...", value.chars().take(keep).collect::<String>())
 }
 
 fn read_codex_account(codex_home: &Path) -> Option<CodexAccountInfo> {

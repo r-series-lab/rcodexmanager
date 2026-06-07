@@ -22,6 +22,15 @@ const mockProfiles: ProfileInfo[] = [
     runningPids: [],
     runningProcessCount: 0,
     account: null,
+    latestSession: {
+      id: "019e86f9-09aa-73b0-989a-fe792db41e7a",
+      title: "优惠券配置优化",
+      summary: "梳理优惠券配置表单、校验规则和发布流程的交互细节。",
+      updatedAt: "2026-06-02T06:17:04.571447Z",
+      startedAt: "2026-06-02T05:52:11.231Z",
+      cwd: "/Users/ikiru/Documents/r-series-public",
+      path: "/Users/ikiru/.codex/sessions/2026/06/02/rollout-2026-06-02T13-52-11-019e86f9-09aa-73b0-989a-fe792db41e7a.jsonl",
+    },
   },
   {
     name: "codex-b",
@@ -53,6 +62,15 @@ const mockProfiles: ProfileInfo[] = [
       organizationTitle: "Personal",
       lastRefresh: new Date().toISOString(),
     },
+    latestSession: {
+      id: "019e8b38-c4f3-7281-8b15-acc716cd7a3f",
+      title: "优化 Codex Manage",
+      summary: "能展示最新的会话摘要标题、摘要信息吗;",
+      updatedAt: "2026-06-03T02:47:55.000000Z",
+      startedAt: "2026-06-03T02:03:34.047Z",
+      cwd: "/Users/ikiru/Documents/r-series-public",
+      path: "/Users/ikiru/.codex-isolated-test/sessions/2026/06/03/rollout-2026-06-03T10-03-34-019e8b38-c4f3-7281-8b15-acc716cd7a3f.jsonl",
+    },
   },
   {
     name: "codex-e",
@@ -75,6 +93,7 @@ const mockProfiles: ProfileInfo[] = [
     runningPids: [],
     runningProcessCount: 0,
     account: null,
+    latestSession: null,
   },
 ];
 

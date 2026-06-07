@@ -19,6 +19,17 @@ export interface ProfileInfo {
   runningPids: number[];
   runningProcessCount: number;
   account: CodexAccountInfo | null;
+  latestSession: CodexSessionSummary | null;
+}
+
+export interface CodexSessionSummary {
+  id: string;
+  title: string;
+  summary: string | null;
+  updatedAt: string | null;
+  startedAt: string | null;
+  cwd: string | null;
+  path: string | null;
 }
 
 export interface CodexAccountInfo {

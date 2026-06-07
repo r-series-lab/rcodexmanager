@@ -14,11 +14,13 @@
       {
         "label": "main",
         "title": "rCodexManager",
-        "width": 760,
+        "width": 1080,
         "height": 640,
-        "minWidth": 560,
+        "minWidth": 1000,
         "minHeight": 520,
-        "center": true
+        "center": true,
+        "titleBarStyle": "Overlay",
+        "hiddenTitle": true
       }
     ],
     "security": {

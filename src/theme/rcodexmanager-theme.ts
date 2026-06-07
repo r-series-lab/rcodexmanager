@@ -12,25 +12,25 @@ const fontFamily = [
 ].join(", ");
 
 const lightTokens = {
-  bg: "#f4f7fb",
-  panel: "rgba(255,255,255,0.92)",
-  line: "rgba(42,82,132,0.16)",
-  text: "#172133",
-  muted: "#66758a",
-  accent: "#2563eb",
-  accentHover: "#3778ff",
+  bg: "#f5f7fa",
+  panel: "rgba(255,255,255,0.86)",
+  line: "rgba(62,78,99,0.14)",
+  text: "#182231",
+  muted: "#69788c",
+  accent: "#315fbb",
+  accentHover: "#3d6fcd",
   success: "#168a55",
   warning: "#b7791f",
 };
 
 const darkTokens = {
-  bg: "#090d13",
-  panel: "rgba(16,22,31,0.92)",
-  line: "rgba(139,169,208,0.14)",
+  bg: "#080d13",
+  panel: "rgba(16,22,31,0.86)",
+  line: "rgba(139,169,208,0.13)",
   text: "#f2f6fb",
   muted: "rgba(218,226,238,0.62)",
-  accent: "#4f8cff",
-  accentHover: "#6aa0ff",
+  accent: "#80a6e8",
+  accentHover: "#96b7f0",
   success: "#54d98f",
   warning: "#f2bc5b",
 };
@@ -49,7 +49,7 @@ export function createRcodexManagerTheme(styleMode: CodexManagerStyleMode) {
       h5: {
         letterSpacing: 0,
         fontWeight: 800,
-        fontSize: "1.08rem",
+        fontSize: "1.02rem",
       },
       h6: {
         letterSpacing: 0,
@@ -77,7 +77,7 @@ export function createRcodexManagerTheme(styleMode: CodexManagerStyleMode) {
       primary: {
         main: tokens.accent,
         light: tokens.accentHover,
-        contrastText: "#ffffff",
+        contrastText: dark ? "#07111d" : "#ffffff",
       },
       secondary: {
         main: dark ? "#9fb4d8" : "#64748b",
@@ -113,13 +113,19 @@ export function createRcodexManagerTheme(styleMode: CodexManagerStyleMode) {
         },
         styleOverrides: {
           root: {
-            minHeight: 28,
+            minHeight: 30,
             borderRadius: 8,
-            paddingInline: 9,
+            paddingInline: 10,
+            transition:
+              "background-color 140ms ease, border-color 140ms ease, color 140ms ease, box-shadow 140ms ease",
             "&.MuiButton-containedPrimary": {
               boxShadow: dark
-                ? "0 12px 24px rgba(11,78,190,0.22), inset 0 1px 0 rgba(255,255,255,0.16)"
-                : "0 10px 22px rgba(37,99,235,0.18)",
+                ? "0 10px 22px rgba(0,0,0,0.22), inset 0 1px 0 rgba(255,255,255,0.14)"
+                : "0 10px 22px rgba(49,95,187,0.14)",
+            },
+            "&.Mui-focusVisible": {
+              outline: `2px solid ${dark ? "rgba(128,166,232,0.72)" : "rgba(49,95,187,0.62)"}`,
+              outlineOffset: 2,
             },
           },
         },
@@ -130,15 +136,20 @@ export function createRcodexManagerTheme(styleMode: CodexManagerStyleMode) {
         },
         styleOverrides: {
           root: {
-            width: 29,
-            height: 29,
+            width: 30,
+            height: 30,
             borderRadius: 9,
             border: `1px solid ${tokens.line}`,
-            backgroundColor: dark ? "rgba(255,255,255,0.018)" : "rgba(255,255,255,0.66)",
+            backgroundColor: dark ? "rgba(255,255,255,0.02)" : "rgba(255,255,255,0.64)",
             color: tokens.text,
+            transition: "background-color 140ms ease, border-color 140ms ease, color 140ms ease",
             "&:hover": {
               borderColor: tokens.accent,
-              backgroundColor: dark ? "rgba(255,255,255,0.04)" : "rgba(37,99,235,0.07)",
+              backgroundColor: dark ? "rgba(128,166,232,0.09)" : "rgba(49,95,187,0.07)",
+            },
+            "&.Mui-focusVisible": {
+              outline: `2px solid ${dark ? "rgba(128,166,232,0.72)" : "rgba(49,95,187,0.62)"}`,
+              outlineOffset: 2,
             },
           },
         },
@@ -150,6 +161,11 @@ export function createRcodexManagerTheme(styleMode: CodexManagerStyleMode) {
             borderRadius: 8,
             fontWeight: 800,
             fontSize: "0.68rem",
+            maxWidth: "100%",
+          },
+          label: {
+            overflow: "hidden",
+            textOverflow: "ellipsis",
           },
         },
       },
@@ -163,8 +179,12 @@ export function createRcodexManagerTheme(styleMode: CodexManagerStyleMode) {
           root: {
             minHeight: 30,
             borderRadius: 9,
-            backgroundColor: dark ? "rgba(255,255,255,0.018)" : "rgba(255,255,255,0.72)",
+            backgroundColor: dark ? "rgba(255,255,255,0.025)" : "rgba(255,255,255,0.7)",
             fontSize: "0.78rem",
+            transition: "background-color 140ms ease, border-color 140ms ease",
+            "&.Mui-focused": {
+              backgroundColor: dark ? "rgba(255,255,255,0.04)" : "rgba(255,255,255,0.96)",
+            },
           },
           input: {
             padding: "6px 9px",
@@ -209,6 +229,18 @@ export function createRcodexManagerTheme(styleMode: CodexManagerStyleMode) {
         styleOverrides: {
           root: {
             padding: "8px 16px 14px",
+          },
+        },
+      },
+      MuiDialog: {
+        styleOverrides: {
+          paper: {
+            borderRadius: 12,
+            border: `1px solid ${tokens.line}`,
+            backgroundImage: "none",
+            boxShadow: dark
+              ? "0 28px 72px rgba(0,0,0,0.46)"
+              : "0 24px 64px rgba(37,55,79,0.18)",
           },
         },
       },
