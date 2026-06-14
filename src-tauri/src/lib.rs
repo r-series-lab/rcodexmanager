@@ -12,6 +12,16 @@ async fn list_profiles_command() -> Result<core::ProfileReport, String> {
 }
 
 #[tauri::command]
+async fn list_profile_sessions_command() -> Result<core::ProfileSessionReport, String> {
+    tauri::async_runtime::spawn_blocking(|| {
+        let context = core::ProfileContext::from_options(None, None)?;
+        core::list_profile_sessions(&context)
+    })
+    .await
+    .map_err(|error| error.to_string())?
+}
+
+#[tauri::command]
 async fn create_profile_command(
     input: core::CreateProfileInput,
 ) -> Result<core::ProfileActionReport, String> {
@@ -124,6 +134,7 @@ pub fn run() {
     tauri::Builder::default()
         .invoke_handler(tauri::generate_handler![
             list_profiles_command,
+            list_profile_sessions_command,
             create_profile_command,
             delete_profile_command,
             update_profile_metadata_command,

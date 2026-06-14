@@ -2,17 +2,21 @@ import { useEffect, useMemo, useState, type MouseEvent } from "react";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import AccountCircleRoundedIcon from "@mui/icons-material/AccountCircleRounded";
 import AddRoundedIcon from "@mui/icons-material/AddRounded";
+import ContentCopyRoundedIcon from "@mui/icons-material/ContentCopyRounded";
 import DarkModeRoundedIcon from "@mui/icons-material/DarkModeRounded";
 import DataUsageRoundedIcon from "@mui/icons-material/DataUsageRounded";
 import DeleteOutlineRoundedIcon from "@mui/icons-material/DeleteOutlineRounded";
 import EditRoundedIcon from "@mui/icons-material/EditRounded";
 import FileUploadRoundedIcon from "@mui/icons-material/FileUploadRounded";
 import FolderRoundedIcon from "@mui/icons-material/FolderRounded";
+import KeyboardArrowLeftRoundedIcon from "@mui/icons-material/KeyboardArrowLeftRounded";
+import KeyboardArrowRightRoundedIcon from "@mui/icons-material/KeyboardArrowRightRounded";
 import LightModeRoundedIcon from "@mui/icons-material/LightModeRounded";
 import PlayArrowRoundedIcon from "@mui/icons-material/PlayArrowRounded";
 import RefreshRoundedIcon from "@mui/icons-material/RefreshRounded";
 import RestartAltRoundedIcon from "@mui/icons-material/RestartAltRounded";
 import SearchRoundedIcon from "@mui/icons-material/SearchRounded";
+import ShortcutRoundedIcon from "@mui/icons-material/ShortcutRounded";
 import SettingsEthernetRoundedIcon from "@mui/icons-material/SettingsEthernetRounded";
 import StopCircleRoundedIcon from "@mui/icons-material/StopCircleRounded";
 import TerminalRoundedIcon from "@mui/icons-material/TerminalRounded";
@@ -31,6 +35,7 @@ import {
   IconButton,
   InputAdornment,
   LinearProgress,
+  MenuItem,
   Paper,
   Stack,
   TextField,
@@ -44,6 +49,7 @@ import {
   deleteProfile,
   importProfileAuth,
   launchProfile,
+  listProfileSessions,
   listProfiles,
   readProfileQuota,
   repairProfileNetwork,
@@ -52,7 +58,13 @@ import {
   terminateProfile,
   updateProfileMetadata,
 } from "./lib/api";
-import type { CodexSessionSummary, CreateProfileInput, ProfileInfo, ProfileReport } from "./lib/types";
+import type {
+  CodexSessionSummary,
+  CreateProfileInput,
+  ProfileInfo,
+  ProfileReport,
+  ProfileSessionReport,
+} from "./lib/types";
 import type { ProfileQuotaReport, QuotaWindowInfo } from "./lib/types";
 import {
   createRcodexManagerTheme,
@@ -74,6 +86,15 @@ type QuotaState = {
   report: ProfileQuotaReport | null;
   error: string | null;
 };
+
+type SessionSourceProfile = Pick<ProfileInfo, "name" | "alias" | "category" | "isDefault">;
+
+type SessionCenterItem = {
+  profile: SessionSourceProfile;
+  session: CodexSessionSummary;
+};
+
+const SESSION_PAGE_SIZE = 10;
 
 const DEFAULT_FORM: CreateProfileInput = {
   name: "codex-f",
@@ -111,12 +132,34 @@ function isTauriRuntime(): boolean {
   return "__TAURI_INTERNALS__" in window;
 }
 
+function textFieldSlotProps(name: string) {
+  return {
+    htmlInput: {
+      name,
+      autoComplete: "off",
+      spellCheck: false,
+    },
+  };
+}
+
+function sessionTimestamp(session: CodexSessionSummary): number {
+  const value = session.updatedAt ?? session.startedAt;
+  if (!value) {
+    return 0;
+  }
+  const timestamp = Date.parse(value);
+  return Number.isFinite(timestamp) ? timestamp : 0;
+}
+
+function profileLabel(profile: Pick<ProfileInfo, "name" | "alias">): string {
+  return profile.alias || profile.name;
+}
+
 function App() {
   const [styleMode, setStyleMode] = useState<CodexManagerStyleMode>(initialStyleMode);
   const theme = useMemo(() => createRcodexManagerTheme(styleMode), [styleMode]);
   const [report, setReport] = useState<ProfileReport | null>(null);
   const [activeName, setActiveName] = useState("");
-  const [categoryFilter, setCategoryFilter] = useState("全部");
   const [query, setQuery] = useState("");
   const [createDialogOpen, setCreateDialogOpen] = useState(false);
   const [createDraft, setCreateDraft] = useState<CreateProfileInput>(DEFAULT_FORM);
@@ -139,6 +182,12 @@ function App() {
   const [busyLabel, setBusyLabel] = useState("");
   const [feedback, setFeedback] = useState<FeedbackState | null>(null);
   const [quotaByProfile, setQuotaByProfile] = useState<Record<string, QuotaState>>({});
+  const [sessionDialogOpen, setSessionDialogOpen] = useState(false);
+  const [sessionReport, setSessionReport] = useState<ProfileSessionReport | null>(null);
+  const [sessionLoading, setSessionLoading] = useState(false);
+  const [sessionQuery, setSessionQuery] = useState("");
+  const [sessionCategory, setSessionCategory] = useState("all");
+  const [sessionPage, setSessionPage] = useState(1);
 
   const profiles = report?.profiles ?? [];
   const activeProfile = useMemo(
@@ -146,17 +195,9 @@ function App() {
     [activeName, profiles],
   );
   const existingNames = useMemo(() => new Set(profiles.map((profile) => profile.name)), [profiles]);
-  const categoryOptions = useMemo(
-    () => ["全部", ...Array.from(new Set(profiles.map((profile) => profile.category)))],
-    [profiles],
-  );
   const visibleProfiles = useMemo(() => {
     const normalizedQuery = query.trim().toLowerCase();
     return profiles.filter((profile) => {
-      const categoryOk = categoryFilter === "全部" || profile.category === categoryFilter;
-      if (!categoryOk) {
-        return false;
-      }
       if (!normalizedQuery) {
         return true;
       }
@@ -170,12 +211,45 @@ function App() {
         profile.latestSession?.title ?? "",
         profile.latestSession?.summary ?? "",
         profile.latestSession?.cwd ?? "",
+        ...profile.recentSessions.flatMap((session) => [
+          session.title,
+          session.summary ?? "",
+          session.cwd ?? "",
+        ]),
       ]
         .join(" ")
         .toLowerCase()
         .includes(normalizedQuery);
     });
-  }, [categoryFilter, profiles, query]);
+  }, [profiles, query]);
+  const sessionItems = useMemo<SessionCenterItem[]>(() => {
+    if (sessionReport) {
+      return sessionReport.sessions.map((item) => ({
+        profile: {
+          name: item.profileName,
+          alias: item.profileAlias,
+          category: item.profileCategory,
+          isDefault: item.isDefault,
+        },
+        session: item.session,
+      }));
+    }
+
+    return profiles
+      .flatMap((profile) =>
+        profile.recentSessions.map((session) => ({
+          profile: {
+            name: profile.name,
+            alias: profile.alias,
+            category: profile.category,
+            isDefault: profile.isDefault,
+          },
+          session,
+        })),
+      )
+      .sort((left, right) => sessionTimestamp(right.session) - sessionTimestamp(left.session));
+  }, [profiles, sessionReport]);
+  const knownSessionCount = sessionReport?.sessionCount ?? sessionItems.length;
   const runningCount = useMemo(
     () => profiles.filter((profile) => profile.isRunning).length,
     [profiles],
@@ -207,12 +281,7 @@ function App() {
         }
         return nextReport.profiles[0]?.name ?? "";
       });
-      setCategoryFilter((current) => {
-        if (current === "全部" || nextReport.profiles.some((profile) => profile.category === current)) {
-          return current;
-        }
-        return "全部";
-      });
+      setSessionReport(null);
       setFeedback(nextFeedback ?? null);
     } catch (error) {
       setFeedback({
@@ -224,9 +293,38 @@ function App() {
     }
   }
 
+  async function refreshProfileSessions() {
+    try {
+      setSessionLoading(true);
+      const nextReport = await listProfileSessions();
+      setSessionReport(nextReport);
+      setSessionPage(1);
+    } catch (error) {
+      setFeedback({
+        severity: "error",
+        text: errorMessage(error, "读取会话中心失败"),
+      });
+    } finally {
+      setSessionLoading(false);
+    }
+  }
+
+  function handleOpenSessionCenter() {
+    setSessionDialogOpen(true);
+    if (!sessionReport && !sessionLoading) {
+      void refreshProfileSessions();
+    }
+  }
+
   useEffect(() => {
     void refreshProfiles();
   }, []);
+
+  useEffect(() => {
+    if (sessionDialogOpen && !sessionReport && !sessionLoading) {
+      void refreshProfileSessions();
+    }
+  }, [sessionDialogOpen, sessionReport, sessionLoading]);
 
   useEffect(() => {
     if (!feedback || feedback.severity === "error" || feedback.severity === "warning") {
@@ -498,6 +596,35 @@ function App() {
     }
   }
 
+  async function copyTextToClipboard(text: string, successText: string) {
+    try {
+      if (!navigator.clipboard?.writeText) {
+        throw new Error("当前环境不支持写入剪贴板");
+      }
+      await navigator.clipboard.writeText(text);
+      setFeedback({ severity: "success", text: successText });
+    } catch (error) {
+      setFeedback({
+        severity: "error",
+        text: errorMessage(error, "复制失败"),
+      });
+    }
+  }
+
+  function handleCopySessionSummary(item: SessionCenterItem) {
+    void copyTextToClipboard(
+      buildSessionSummaryText(item),
+      `已复制 ${profileLabel(item.profile)} 的会话摘要`,
+    );
+  }
+
+  function handleCopySessionReference(item: SessionCenterItem) {
+    void copyTextToClipboard(
+      buildSessionReferenceText(item, activeProfile),
+      `已复制给 ${activeProfile ? profileLabel(activeProfile) : "当前 profile"} 使用的引用`,
+    );
+  }
+
   function updateCreateDraft<K extends keyof CreateProfileInput>(key: K, value: CreateProfileInput[K]) {
     setCreateDraft((current) => ({ ...current, [key]: value }));
   }
@@ -555,57 +682,64 @@ function App() {
             <Paper className="browser-panel" elevation={0}>
               <Box className="browser-header">
                 <Box className="browser-title">
-                  <Typography variant="h5">Profiles</Typography>
+                  <Typography variant="h5" component="h1">Profiles</Typography>
+                  <Typography className="browser-subtitle" variant="caption">
+                    Codex profile 工作区
+                  </Typography>
+                </Box>
+                <Stack className="browser-actions" direction="row" spacing={0.7}>
+                  <Button
+                    className="session-launch-button"
+                    size="small"
+                    variant="outlined"
+                    startIcon={<TerminalRoundedIcon />}
+                    onClick={handleOpenSessionCenter}
+                  >
+                    会话中心
+                    <span className="session-launch-count">{knownSessionCount}</span>
+                  </Button>
                   <Stack className="browser-metrics" direction="row" spacing={0.6}>
                     <Chip size="small" label={`${visibleProfiles.length}/${profiles.length}`} />
                     <Chip size="small" label={`运行 ${runningCount}`} />
                     <Chip size="small" label={`账号 ${signedInCount}`} />
                   </Stack>
-                </Box>
-                {feedback ? (
-                  <Alert className="feedback-line" severity={feedback.severity} aria-live="polite">
-                    {feedback.text}
-                  </Alert>
-                ) : null}
+                </Stack>
               </Box>
 
-              <Box className="filter-row">
-                <TextField
-                  className="search-field"
-                  value={query}
-                  onChange={(event) => setQuery(event.target.value)}
-                  placeholder="搜索 profile"
-                  slotProps={{
-                    htmlInput: {
-                      "aria-label": "搜索 profile",
-                      name: "profile-search",
-                      autoComplete: "off",
-                      spellCheck: false,
-                    },
-                    input: {
-                      startAdornment: (
-                        <InputAdornment position="start">
-                          <SearchRoundedIcon fontSize="small" />
-                        </InputAdornment>
-                      ),
-                    },
-                  }}
-                />
-              </Box>
-
-              <Box className="category-bar">
-                {categoryOptions.map((category) => (
-                  <Chip
-                    key={category}
-                    label={category}
-                    onClick={() => setCategoryFilter(category)}
-                    color={categoryFilter === category ? "primary" : "default"}
-                    variant={categoryFilter === category ? "filled" : "outlined"}
+              <Box className="browser-tools">
+                <Box className="filter-row">
+                  <TextField
+                    className="search-field"
+                    value={query}
+                    onChange={(event) => setQuery(event.target.value)}
+                    placeholder="搜索 profile…"
+                    slotProps={{
+                      htmlInput: {
+                        "aria-label": "搜索 profile",
+                        name: "profile-search",
+                        autoComplete: "off",
+                        spellCheck: false,
+                      },
+                      input: {
+                        startAdornment: (
+                          <InputAdornment position="start">
+                            <SearchRoundedIcon fontSize="small" />
+                          </InputAdornment>
+                        ),
+                      },
+                    }}
                   />
-                ))}
+                </Box>
+                <Box className="feedback-slot">
+                  {feedback ? (
+                    <Alert className="feedback-line" severity={feedback.severity} aria-live="polite">
+                      {feedback.text}
+                    </Alert>
+                  ) : null}
+                </Box>
               </Box>
 
-              <Box className="profile-grid">
+              <Box className="profile-grid" aria-label="profile 列表">
                 {visibleProfiles.map((profile) => (
                   <ProfileCard
                     key={profile.name}
@@ -624,6 +758,11 @@ function App() {
                   <TerminalRoundedIcon />
                   <Typography variant="body2">没有 profile。</Typography>
                 </Box>
+              ) : visibleProfiles.length === 0 ? (
+                <Box className="empty-state">
+                  <SearchRoundedIcon />
+                  <Typography variant="body2">没有匹配结果。</Typography>
+                </Box>
               ) : null}
             </Paper>
           </main>
@@ -633,11 +772,11 @@ function App() {
               {activeProfile ? (
                 <Stack className="inspector-content">
                   <Box className="inspector-title">
-                    <Box>
+                    <Box sx={{ minWidth: 0 }}>
                       <Typography variant="caption" color="text.secondary">
                         当前 profile
                       </Typography>
-                      <Typography variant="h5" translate="no">
+                      <Typography variant="h5" component="h2" translate="no">
                         {activeProfile.alias || activeProfile.name}
                       </Typography>
                       <Typography variant="body2" color="text.secondary" translate="no">
@@ -651,6 +790,15 @@ function App() {
                     <Chip size="small" variant="outlined" label={activeProfile.category} />
                     <Chip size="small" label={activeProfile.model ?? "unknown"} />
                     <Chip size="small" label={activeProfile.reasoningEffort ?? "unknown"} />
+                  </Box>
+
+                  <Box className="path-list">
+                    <PathBlock title="CODEX_HOME" path={activeProfile.codexHome} exists={activeProfile.homeExists} />
+                    <PathBlock
+                      title="User Data"
+                      path={activeProfile.userDataDir}
+                      exists={activeProfile.userDataExists}
+                    />
                   </Box>
 
                   <AccountBlock profile={activeProfile} />
@@ -734,14 +882,6 @@ function App() {
                     </Box>
                   </Box>
 
-                  <Box className="path-list">
-                    <PathBlock title="CODEX_HOME" path={activeProfile.codexHome} exists={activeProfile.homeExists} />
-                    <PathBlock
-                      title="User Data"
-                      path={activeProfile.userDataDir}
-                      exists={activeProfile.userDataExists}
-                    />
-                  </Box>
                 </Stack>
               ) : (
                 <Box className="empty-state tall">
@@ -753,6 +893,34 @@ function App() {
           </aside>
         </Box>
 
+        <SessionCenterDialog
+          open={sessionDialogOpen}
+          items={sessionItems}
+          activeProfileName={activeProfile?.name ?? ""}
+          loading={sessionLoading}
+          query={sessionQuery}
+          category={sessionCategory}
+          page={sessionPage}
+          onClose={() => setSessionDialogOpen(false)}
+          onRefresh={() => void refreshProfileSessions()}
+          onQueryChange={(value) => {
+            setSessionQuery(value);
+            setSessionPage(1);
+          }}
+          onCategoryChange={(value) => {
+            setSessionCategory(value);
+            setSessionPage(1);
+          }}
+          onPageChange={setSessionPage}
+          onOpen={(session) => {
+            if (session.path) {
+              void revealPath(session.path);
+            }
+          }}
+          onCopySummary={handleCopySessionSummary}
+          onCopyReference={handleCopySessionReference}
+        />
+
         <Dialog open={createDialogOpen} onClose={() => setCreateDialogOpen(false)} fullWidth maxWidth="md">
           <DialogTitle>新增 profile</DialogTitle>
           <DialogContent>
@@ -763,38 +931,45 @@ function App() {
                 onChange={(event) => updateCreateDraft("name", event.target.value)}
                 error={createNameExists}
                 helperText={createNameExists ? "已存在" : "codex-*"}
+                slotProps={textFieldSlotProps("create-profile-name")}
               />
               <TextField
                 label="别名"
                 value={createDraft.alias ?? ""}
                 onChange={(event) => updateCreateDraft("alias", event.target.value)}
+                slotProps={textFieldSlotProps("create-profile-alias")}
               />
               <TextField
                 label="分类"
                 value={createDraft.category ?? ""}
                 onChange={(event) => updateCreateDraft("category", event.target.value)}
+                slotProps={textFieldSlotProps("create-profile-category")}
               />
               <TextField
                 label="模型"
                 value={createDraft.model ?? ""}
                 onChange={(event) => updateCreateDraft("model", event.target.value)}
+                slotProps={textFieldSlotProps("create-profile-model")}
               />
               <TextField
                 label="努力等级"
                 value={createDraft.reasoningEffort ?? ""}
                 onChange={(event) => updateCreateDraft("reasoningEffort", event.target.value)}
+                slotProps={textFieldSlotProps("create-profile-reasoning-effort")}
               />
               <TextField
                 label="CODEX_HOME"
                 value={createDraft.codexHome ?? ""}
                 onChange={(event) => updateCreateDraft("codexHome", event.target.value)}
-                placeholder="留空自动生成"
+                placeholder="留空自动生成…"
+                slotProps={textFieldSlotProps("create-profile-codex-home")}
               />
               <TextField
                 label="user-data-dir"
                 value={createDraft.userDataDir ?? ""}
                 onChange={(event) => updateCreateDraft("userDataDir", event.target.value)}
-                placeholder="留空自动生成"
+                placeholder="留空自动生成…"
+                slotProps={textFieldSlotProps("create-profile-user-data-dir")}
               />
             </Box>
           </DialogContent>
@@ -816,6 +991,7 @@ function App() {
                 onChange={(event) =>
                   setMetadataDraft((current) => ({ ...current, alias: event.target.value }))
                 }
+                slotProps={textFieldSlotProps("edit-profile-alias")}
               />
               <TextField
                 label="分类"
@@ -823,6 +999,7 @@ function App() {
                 onChange={(event) =>
                   setMetadataDraft((current) => ({ ...current, category: event.target.value }))
                 }
+                slotProps={textFieldSlotProps("edit-profile-category")}
               />
             </Stack>
           </DialogContent>
@@ -881,7 +1058,8 @@ function App() {
                 label="来源 JSON 路径"
                 value={importSourcePath}
                 onChange={(event) => setImportSourcePath(event.target.value)}
-                placeholder="另一个 profile 的 auth.json，或 ChatGPT session JSON"
+                placeholder="另一个 profile 的 auth.json，或 ChatGPT session JSON…"
+                slotProps={textFieldSlotProps("import-auth-source-path")}
               />
               <Typography variant="caption" color="text.secondary">
                 目标：{activeProfile ? `${activeProfile.codexHome}/auth.json` : ""}
@@ -923,6 +1101,7 @@ function App() {
                 label="模型"
                 value={resetDraft.model}
                 onChange={(event) => setResetDraft((current) => ({ ...current, model: event.target.value }))}
+                slotProps={textFieldSlotProps("reset-profile-model")}
               />
               <TextField
                 label="努力等级"
@@ -930,6 +1109,7 @@ function App() {
                 onChange={(event) =>
                   setResetDraft((current) => ({ ...current, reasoningEffort: event.target.value }))
                 }
+                slotProps={textFieldSlotProps("reset-profile-reasoning-effort")}
               />
               <FormControlLabel
                 control={
@@ -953,6 +1133,322 @@ function App() {
         </Dialog>
       </Box>
     </ThemeProvider>
+  );
+}
+
+function buildSessionSummaryText(item: SessionCenterItem): string {
+  const { profile, session } = item;
+  return [
+    `Profile: ${profileLabel(profile)} (${profile.name})`,
+    `Profile Type: ${profile.category}`,
+    `Title: ${session.title}`,
+    session.summary ? `Summary: ${session.summary}` : null,
+    session.cwd ? `CWD: ${session.cwd}` : null,
+    `Time: ${formatSessionTime(session.updatedAt ?? session.startedAt)}`,
+    session.path ? `Path: ${session.path}` : null,
+  ]
+    .filter(Boolean)
+    .join("\n");
+}
+
+function buildSessionReferenceText(item: SessionCenterItem, targetProfile: ProfileInfo | null): string {
+  const { profile, session } = item;
+  return [
+    "请参考下面这个 Codex 会话摘要继续工作。",
+    "",
+    `目标 profile: ${targetProfile ? `${profileLabel(targetProfile)} (${targetProfile.name})` : "当前 profile"}`,
+    `来源 profile: ${profileLabel(profile)} (${profile.name})`,
+    `来源类型: ${profile.category}`,
+    `会话标题: ${session.title}`,
+    session.summary ? `会话摘要: ${session.summary}` : null,
+    session.cwd ? `工作目录: ${session.cwd}` : null,
+    `时间: ${formatSessionTime(session.updatedAt ?? session.startedAt)}`,
+    session.path ? `源会话文件: ${session.path}` : null,
+    "",
+    "只把它作为只读背景参考，不要修改或迁移源会话文件。",
+  ]
+    .filter(Boolean)
+    .join("\n");
+}
+
+function SessionCenterDialog({
+  open,
+  items,
+  activeProfileName,
+  loading,
+  query,
+  category,
+  page,
+  onClose,
+  onRefresh,
+  onQueryChange,
+  onCategoryChange,
+  onPageChange,
+  onOpen,
+  onCopySummary,
+  onCopyReference,
+}: {
+  open: boolean;
+  items: SessionCenterItem[];
+  activeProfileName: string;
+  loading: boolean;
+  query: string;
+  category: string;
+  page: number;
+  onClose: () => void;
+  onRefresh: () => void;
+  onQueryChange: (value: string) => void;
+  onCategoryChange: (value: string) => void;
+  onPageChange: (page: number) => void;
+  onOpen: (session: CodexSessionSummary) => void;
+  onCopySummary: (item: SessionCenterItem) => void;
+  onCopyReference: (item: SessionCenterItem) => void;
+}) {
+  const categories = useMemo(
+    () =>
+      Array.from(new Set(items.map((item) => item.profile.category).filter(Boolean))).sort((left, right) =>
+        left.localeCompare(right, "zh-CN"),
+      ),
+    [items],
+  );
+  const normalizedQuery = query.trim().toLowerCase();
+  const filteredItems = useMemo(
+    () =>
+      items.filter((item) => {
+        if (category !== "all" && item.profile.category !== category) {
+          return false;
+        }
+        if (!normalizedQuery) {
+          return true;
+        }
+        return [
+          item.profile.name,
+          item.profile.alias ?? "",
+          item.profile.category,
+          item.session.id,
+          item.session.title,
+          item.session.summary ?? "",
+          item.session.cwd ?? "",
+          item.session.path ?? "",
+        ]
+          .join(" ")
+          .toLowerCase()
+          .includes(normalizedQuery);
+      }),
+    [category, items, normalizedQuery],
+  );
+  const pageCount = Math.max(1, Math.ceil(filteredItems.length / SESSION_PAGE_SIZE));
+  const currentPage = Math.min(Math.max(page, 1), pageCount);
+  const pageStart = filteredItems.length === 0 ? 0 : (currentPage - 1) * SESSION_PAGE_SIZE;
+  const pageEnd = Math.min(pageStart + SESSION_PAGE_SIZE, filteredItems.length);
+  const pageItems = filteredItems.slice(pageStart, pageEnd);
+
+  useEffect(() => {
+    if (page !== currentPage) {
+      onPageChange(currentPage);
+    }
+  }, [currentPage, onPageChange, page]);
+
+  return (
+    <Dialog open={open} onClose={onClose} fullWidth maxWidth="lg" className="session-center-dialog">
+      <DialogTitle className="session-dialog-title">
+        <Stack direction="row" spacing={1} sx={{ alignItems: "center", minWidth: 0 }}>
+          <TerminalRoundedIcon fontSize="small" />
+          <Box sx={{ minWidth: 0 }}>
+            <Typography variant="h6" component="span">
+              会话中心
+            </Typography>
+            <Typography variant="caption">
+              {items.length} 条会话
+            </Typography>
+          </Box>
+        </Stack>
+        <Stack direction="row" spacing={0.7} sx={{ alignItems: "center" }}>
+          <Button size="small" variant="text" startIcon={<RefreshRoundedIcon />} onClick={onRefresh} disabled={loading}>
+            刷新
+          </Button>
+          <Button size="small" variant="text" onClick={onClose}>
+            关闭
+          </Button>
+        </Stack>
+      </DialogTitle>
+
+      {loading ? <LinearProgress className="session-dialog-progress" /> : null}
+
+      <DialogContent className="session-dialog-content">
+        <Box className="session-dialog-tools">
+          <TextField
+            className="session-dialog-search"
+            size="small"
+            value={query}
+            onChange={(event) => onQueryChange(event.target.value)}
+            placeholder="搜索标题、摘要、路径或 profile…"
+            slotProps={{
+              htmlInput: {
+                "aria-label": "搜索会话",
+                name: "session-search",
+                autoComplete: "off",
+                spellCheck: false,
+              },
+              input: {
+                startAdornment: (
+                  <InputAdornment position="start">
+                    <SearchRoundedIcon fontSize="small" />
+                  </InputAdornment>
+                ),
+              },
+            }}
+          />
+          <TextField
+            className="session-dialog-category"
+            select
+            size="small"
+            label="Profile 类型"
+            value={category}
+            onChange={(event) => onCategoryChange(event.target.value)}
+            slotProps={textFieldSlotProps("session-profile-category")}
+          >
+            <MenuItem value="all">全部类型</MenuItem>
+            {categories.map((item) => (
+              <MenuItem key={item} value={item}>
+                {item}
+              </MenuItem>
+            ))}
+          </TextField>
+          <Button
+            className="session-dialog-clear"
+            size="small"
+            variant="text"
+            onClick={() => {
+              onQueryChange("");
+              onCategoryChange("all");
+            }}
+            disabled={!query.trim() && category === "all"}
+          >
+            清空
+          </Button>
+        </Box>
+
+        <Box className="session-dialog-list" aria-label="会话列表">
+          {pageItems.length > 0 ? (
+            pageItems.map((item) => (
+              <Box
+                key={`${item.profile.name}-${item.session.id}-${item.session.path ?? "index"}`}
+                className={`session-dialog-row ${
+                  item.profile.name === activeProfileName ? "current-profile" : ""
+                }`}
+              >
+                <Box className="session-dialog-row-main">
+                  <Stack direction="row" spacing={0.7} sx={{ alignItems: "center", minWidth: 0 }}>
+                    <Typography
+                      className="session-dialog-row-title"
+                      variant="subtitle2"
+                      component="span"
+                      translate="no"
+                      title={item.session.title}
+                    >
+                      {item.session.title}
+                    </Typography>
+                    <Chip
+                      className="session-profile-chip"
+                      size="small"
+                      variant={item.profile.name === activeProfileName ? "filled" : "outlined"}
+                      label={profileLabel(item.profile)}
+                    />
+                    <Chip className="session-type-chip" size="small" variant="outlined" label={item.profile.category} />
+                  </Stack>
+                  {item.session.summary ? (
+                    <Typography className="session-dialog-summary" variant="body2" title={item.session.summary}>
+                      {item.session.summary}
+                    </Typography>
+                  ) : (
+                    <Typography className="session-dialog-muted" variant="caption">
+                      暂无摘要内容
+                    </Typography>
+                  )}
+                  <Stack className="session-dialog-meta" direction="row" spacing={0.8}>
+                    <Typography variant="caption">
+                      {formatSessionTime(item.session.updatedAt ?? item.session.startedAt)}
+                    </Typography>
+                    {item.session.cwd ? (
+                      <Typography variant="caption" translate="no" title={item.session.cwd}>
+                        {compactPath(item.session.cwd)}
+                      </Typography>
+                    ) : null}
+                  </Stack>
+                </Box>
+                <Box className="session-dialog-actions">
+                  <Button
+                    size="small"
+                    variant="text"
+                    onClick={() => onOpen(item.session)}
+                    disabled={!item.session.path}
+                  >
+                    打开
+                  </Button>
+                  <Button
+                    size="small"
+                    variant="text"
+                    startIcon={<ContentCopyRoundedIcon />}
+                    onClick={() => onCopySummary(item)}
+                  >
+                    复制
+                  </Button>
+                  <Button
+                    size="small"
+                    variant="outlined"
+                    startIcon={<ShortcutRoundedIcon />}
+                    onClick={() => onCopyReference(item)}
+                  >
+                    引用
+                  </Button>
+                </Box>
+              </Box>
+            ))
+          ) : (
+            <Box className="session-dialog-empty">
+              <SearchRoundedIcon />
+              <Typography variant="body2">没有匹配会话。</Typography>
+            </Box>
+          )}
+        </Box>
+      </DialogContent>
+
+      <DialogActions className="session-dialog-footer">
+        <Typography variant="caption">
+          {filteredItems.length === 0 ? "0 / 0" : `${pageStart + 1}-${pageEnd} / ${filteredItems.length}`}
+        </Typography>
+        <Stack direction="row" spacing={0.5} sx={{ alignItems: "center" }}>
+          <Tooltip title="上一页">
+            <span>
+              <IconButton
+                size="small"
+                aria-label="上一页"
+                onClick={() => onPageChange(currentPage - 1)}
+                disabled={currentPage <= 1}
+              >
+                <KeyboardArrowLeftRoundedIcon />
+              </IconButton>
+            </span>
+          </Tooltip>
+          <Typography className="session-dialog-page" variant="caption">
+            {currentPage} / {pageCount}
+          </Typography>
+          <Tooltip title="下一页">
+            <span>
+              <IconButton
+                size="small"
+                aria-label="下一页"
+                onClick={() => onPageChange(currentPage + 1)}
+                disabled={currentPage >= pageCount}
+              >
+                <KeyboardArrowRightRoundedIcon />
+              </IconButton>
+            </span>
+          </Tooltip>
+        </Stack>
+      </DialogActions>
+    </Dialog>
   );
 }
 
@@ -984,13 +1480,18 @@ function ProfileCard({
       >
         <Box className="profile-card-top">
           <Box sx={{ minWidth: 0 }}>
-            <Typography variant="subtitle1" translate="no">
+            <Typography variant="subtitle1" component="span" translate="no">
               {profile.alias || profile.name}
             </Typography>
             <Typography variant="caption" translate="no">
               {profile.name}
             </Typography>
           </Box>
+        </Box>
+        <Box className="profile-card-meta">
+          <span>{profile.category}</span>
+          <span translate="no">{profile.model ?? "unknown"}</span>
+          <span translate="no">{profile.reasoningEffort ?? "unknown"}</span>
         </Box>
         <Box className="profile-card-subline">
           <Stack direction="row" spacing={0.7} sx={{ alignItems: "center", minWidth: 0 }}>
@@ -1045,7 +1546,7 @@ function SessionBlock({ session }: { session: CodexSessionSummary | null }) {
       <Stack direction="row" spacing={1} sx={{ alignItems: "center", justifyContent: "space-between" }}>
         <Stack direction="row" spacing={1} sx={{ alignItems: "center", minWidth: 0 }}>
           <TerminalRoundedIcon fontSize="small" />
-          <Typography variant="subtitle2">最新会话</Typography>
+          <Typography variant="subtitle2" component="span">最新会话</Typography>
         </Stack>
         {session ? (
           <Button
@@ -1065,7 +1566,7 @@ function SessionBlock({ session }: { session: CodexSessionSummary | null }) {
 
       {session ? (
         <Box className="session-content">
-          <Typography className="session-title" variant="subtitle2" translate="no" title={session.title}>
+          <Typography className="session-title" variant="subtitle2" component="span" translate="no" title={session.title}>
             {session.title}
           </Typography>
           {session.summary ? (
@@ -1102,7 +1603,7 @@ function AccountBlock({ profile }: { profile: ProfileInfo }) {
       <Stack direction="row" spacing={1} sx={{ alignItems: "center" }}>
         <AccountCircleRoundedIcon fontSize="small" />
         <Box sx={{ minWidth: 0 }}>
-          <Typography variant="subtitle2">{accountLabel(profile)}</Typography>
+          <Typography variant="subtitle2" component="span">{accountLabel(profile)}</Typography>
           <Typography variant="caption">
             {account
               ? [account.planType, account.organizationTitle, account.authMode].filter(Boolean).join(" · ")
@@ -1133,7 +1634,7 @@ function QuotaBlock({
       <Stack direction="row" spacing={1} sx={{ alignItems: "center", justifyContent: "space-between" }}>
         <Stack direction="row" spacing={0.8} sx={{ alignItems: "center", minWidth: 0 }}>
           <DataUsageRoundedIcon fontSize="small" />
-          <Typography variant="subtitle2">额度</Typography>
+          <Typography variant="subtitle2" component="span">额度</Typography>
         </Stack>
         <Button size="small" variant="text" onClick={onRefresh} disabled={disabled}>
           {report ? "刷新" : "查询"}
@@ -1261,7 +1762,7 @@ function compactPath(path: string): string {
   if (parts.length <= 2) {
     return path;
   }
-  return `.../${parts.slice(-2).join("/")}`;
+  return `…/${parts.slice(-2).join("/")}`;
 }
 
 function PathBlock({ title, path, exists }: { title: string; path: string; exists: boolean }) {
@@ -1270,16 +1771,18 @@ function PathBlock({ title, path, exists }: { title: string; path: string; exist
       <Stack direction="row" spacing={1} sx={{ alignItems: "center", justifyContent: "space-between" }}>
         <Stack direction="row" spacing={1} sx={{ alignItems: "center", minWidth: 0 }}>
           <FolderRoundedIcon fontSize="small" />
-          <Typography variant="subtitle2">{title}</Typography>
+          <Typography variant="subtitle2" component="span">{title}</Typography>
         </Stack>
-        <Chip size="small" label={exists ? "已存在" : "缺失"} color={exists ? "success" : "warning"} />
+        <Stack className="path-actions" direction="row" spacing={0.5} sx={{ alignItems: "center" }}>
+          <Chip size="small" label={exists ? "已存在" : "缺失"} color={exists ? "success" : "warning"} />
+          <Button size="small" variant="text" onClick={() => void revealPath(path)} disabled={!exists}>
+            打开
+          </Button>
+        </Stack>
       </Stack>
       <Typography variant="caption" translate="no">
         {path}
       </Typography>
-      <Button size="small" variant="text" onClick={() => void revealPath(path)} disabled={!exists}>
-        打开
-      </Button>
     </Box>
   );
 }

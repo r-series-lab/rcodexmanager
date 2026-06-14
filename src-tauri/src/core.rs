@@ -3,6 +3,7 @@ use chrono::{SecondsFormat, Utc};
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
 use std::collections::BTreeMap;
+use std::collections::BTreeSet;
 use std::fs;
 use std::io::{BufRead, BufReader};
 use std::path::{Path, PathBuf};
@@ -16,6 +17,7 @@ const DEFAULT_REASONING_EFFORT: &str = "xhigh";
 const CHATGPT_BASE_URL: &str = "https://chatgpt.com";
 const CHATGPT_USAGE_ENDPOINT: &str = "https://chatgpt.com/backend-api/wham/usage";
 const QUOTA_HTTP_TIMEOUT_SECONDS: u64 = 25;
+const RECENT_SESSION_LIMIT: usize = 8;
 const DEFAULT_NO_PROXY: &str = "localhost,127.0.0.1,::1,*.local";
 const CODEX_WEBSOCKET_FEATURE_FLAGS: &[&str] = &[
     "responses_websockets",
@@ -114,6 +116,7 @@ pub struct ProfileInfo {
     pub running_process_count: usize,
     pub account: Option<CodexAccountInfo>,
     pub latest_session: Option<CodexSessionSummary>,
+    pub recent_sessions: Vec<CodexSessionSummary>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -200,6 +203,24 @@ pub struct ProfileReport {
     pub home_dir: String,
     pub profile_count: usize,
     pub profiles: Vec<ProfileInfo>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ProfileSessionReport {
+    pub generated_at: String,
+    pub session_count: usize,
+    pub sessions: Vec<ProfileSessionSummary>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ProfileSessionSummary {
+    pub profile_name: String,
+    pub profile_alias: Option<String>,
+    pub profile_category: String,
+    pub is_default: bool,
+    pub session: CodexSessionSummary,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -302,7 +323,8 @@ pub fn list_profiles(context: &ProfileContext) -> Result<ProfileReport, String> 
         let user_data_dir = expand_shell_path(&user_data_raw, &context.home_dir);
         let config_path = codex_home.join("config.toml");
         let config = read_codex_config(&config_path);
-        let latest_session = read_latest_session_summary(&codex_home);
+        let recent_sessions = read_recent_session_summaries(&codex_home, RECENT_SESSION_LIMIT);
+        let latest_session = recent_sessions.first().cloned();
         let metadata = metadata_store
             .profiles
             .get(&function.name)
@@ -342,6 +364,7 @@ pub fn list_profiles(context: &ProfileContext) -> Result<ProfileReport, String> 
                 running_pids,
                 account: read_codex_account(&codex_home),
                 latest_session,
+                recent_sessions,
             },
         );
     }
@@ -355,6 +378,39 @@ pub fn list_profiles(context: &ProfileContext) -> Result<ProfileReport, String> 
         home_dir: path_string(&context.home_dir),
         profile_count: profiles.len(),
         profiles,
+    })
+}
+
+pub fn list_profile_sessions(context: &ProfileContext) -> Result<ProfileSessionReport, String> {
+    let report = list_profiles(context)?;
+    let mut sessions = Vec::new();
+
+    for profile in report.profiles {
+        let codex_home = PathBuf::from(&profile.codex_home);
+        sessions.extend(
+            read_recent_session_summaries(&codex_home, usize::MAX)
+                .into_iter()
+                .map(|session| ProfileSessionSummary {
+                    profile_name: profile.name.clone(),
+                    profile_alias: profile.alias.clone(),
+                    profile_category: profile.category.clone(),
+                    is_default: profile.is_default,
+                    session,
+                }),
+        );
+    }
+
+    sessions.sort_by(|left, right| {
+        session_sort_value(&right.session)
+            .cmp(session_sort_value(&left.session))
+            .then_with(|| left.profile_name.cmp(&right.profile_name))
+            .then_with(|| left.session.id.cmp(&right.session.id))
+    });
+
+    Ok(ProfileSessionReport {
+        generated_at: now_iso(),
+        session_count: sessions.len(),
+        sessions,
     })
 }
 
@@ -821,7 +877,8 @@ fn default_profile_info(
     let (codex_home, user_data_dir) = default_main_profile_paths(context);
     let config_path = codex_home.join("config.toml");
     let running_pids = matching_default_profile_pids(running_processes, &user_data_dir);
-    let latest_session = read_latest_session_summary(&codex_home);
+    let recent_sessions = read_recent_session_summaries(&codex_home, RECENT_SESSION_LIMIT);
+    let latest_session = recent_sessions.first().cloned();
     let should_show = codex_home.exists() || user_data_dir.exists();
     if !should_show {
         return None;
@@ -861,6 +918,7 @@ fn default_profile_info(
         running_pids,
         account: read_codex_account(&codex_home),
         latest_session,
+        recent_sessions,
     })
 }
 
@@ -993,16 +1051,54 @@ struct SessionFileDetails {
     summary: Option<String>,
 }
 
-fn read_latest_session_summary(codex_home: &Path) -> Option<CodexSessionSummary> {
-    let index_entry = read_latest_session_index_entry(codex_home);
+fn read_recent_session_summaries(codex_home: &Path, limit: usize) -> Vec<CodexSessionSummary> {
+    if limit == 0 {
+        return Vec::new();
+    }
+
+    let index_entries = read_session_index_entries(codex_home);
     let sessions_dir = codex_home.join("sessions");
-    let session_path = index_entry
-        .as_ref()
-        .and_then(|entry| find_session_file_by_id(&sessions_dir, &entry.id))
-        .or_else(|| newest_session_file(&sessions_dir));
+    let mut files = Vec::new();
+    collect_session_files(&sessions_dir, &mut files);
+    files.sort_by_key(session_modified_at);
+    files.reverse();
+
+    let mut summaries = Vec::new();
+    let mut seen_ids = BTreeSet::new();
+    let mut seen_paths = BTreeSet::new();
+
+    for entry in index_entries {
+        if summaries.len() >= limit {
+            break;
+        }
+        let session_path = find_session_file_by_id_in_files(&files, &entry.id);
+        if let Some(summary) = session_summary_from_parts(Some(entry), session_path.as_deref()) {
+            if remember_session_summary(&summary, &mut seen_ids, &mut seen_paths) {
+                summaries.push(summary);
+            }
+        }
+    }
+
+    for path in files {
+        if summaries.len() >= limit {
+            break;
+        }
+        if let Some(summary) = session_summary_from_parts(None, Some(path.as_path())) {
+            if remember_session_summary(&summary, &mut seen_ids, &mut seen_paths) {
+                summaries.push(summary);
+            }
+        }
+    }
+
+    summaries
+}
+
+fn session_summary_from_parts(
+    index_entry: Option<SessionIndexEntry>,
+    session_path: Option<&Path>,
+) -> Option<CodexSessionSummary> {
     let details = session_path
-        .as_ref()
-        .map(|path| read_session_file_details(path))
+        .map(read_session_file_details)
         .unwrap_or_default();
 
     let id = index_entry
@@ -1020,7 +1116,7 @@ fn read_latest_session_summary(codex_home: &Path) -> Option<CodexSessionSummary>
         .and_then(|entry| normalize_session_title(entry.thread_name.as_deref()))
         .or_else(|| details.summary.as_deref().and_then(summary_title_from_text))
         .unwrap_or_else(|| "未命名会话".to_string());
-    let path = session_path.as_ref().map(|value| path_string(value));
+    let path = session_path.map(path_string);
 
     Some(CodexSessionSummary {
         id,
@@ -1033,60 +1129,52 @@ fn read_latest_session_summary(codex_home: &Path) -> Option<CodexSessionSummary>
     })
 }
 
-fn read_latest_session_index_entry(codex_home: &Path) -> Option<SessionIndexEntry> {
-    let file = fs::File::open(codex_home.join("session_index.jsonl")).ok()?;
-    let reader = BufReader::new(file);
-    let mut latest: Option<SessionIndexEntry> = None;
-    for line in reader.lines().map_while(Result::ok) {
-        let trimmed = line.trim();
-        if trimmed.is_empty() {
-            continue;
-        }
-        let Ok(entry) = serde_json::from_str::<SessionIndexEntry>(trimmed) else {
-            continue;
-        };
-        if entry.id.trim().is_empty() {
-            continue;
-        }
-        if is_newer_session_index_entry(&entry, latest.as_ref()) {
-            latest = Some(entry);
-        }
-    }
-    latest
-}
-
-fn is_newer_session_index_entry(
-    candidate: &SessionIndexEntry,
-    current: Option<&SessionIndexEntry>,
-) -> bool {
-    let Some(current) = current else {
-        return true;
+fn read_session_index_entries(codex_home: &Path) -> Vec<SessionIndexEntry> {
+    let Ok(file) = fs::File::open(codex_home.join("session_index.jsonl")) else {
+        return Vec::new();
     };
-    candidate.updated_at.as_deref().unwrap_or_default()
-        > current.updated_at.as_deref().unwrap_or_default()
+    let reader = BufReader::new(file);
+    let mut entries = reader
+        .lines()
+        .map_while(Result::ok)
+        .filter_map(|line| {
+            let trimmed = line.trim();
+            if trimmed.is_empty() {
+                return None;
+            }
+            let entry = serde_json::from_str::<SessionIndexEntry>(trimmed).ok()?;
+            if entry.id.trim().is_empty() {
+                None
+            } else {
+                Some(entry)
+            }
+        })
+        .collect::<Vec<_>>();
+    entries.sort_by(|left, right| {
+        right
+            .updated_at
+            .as_deref()
+            .unwrap_or_default()
+            .cmp(left.updated_at.as_deref().unwrap_or_default())
+            .then_with(|| left.id.cmp(&right.id))
+    });
+    entries
 }
 
-fn find_session_file_by_id(sessions_dir: &Path, id: &str) -> Option<PathBuf> {
+fn find_session_file_by_id_in_files(files: &[PathBuf], id: &str) -> Option<PathBuf> {
     let id = id.trim();
     if id.is_empty() {
         return None;
     }
-    let mut files = Vec::new();
-    collect_session_files(sessions_dir, &mut files);
     files
-        .into_iter()
+        .iter()
         .filter(|path| {
             path.file_name()
                 .map(|name| name.to_string_lossy().contains(id))
                 .unwrap_or(false)
         })
-        .max_by_key(session_modified_at)
-}
-
-fn newest_session_file(sessions_dir: &Path) -> Option<PathBuf> {
-    let mut files = Vec::new();
-    collect_session_files(sessions_dir, &mut files);
-    files.into_iter().max_by_key(session_modified_at)
+        .max_by_key(|path| session_modified_at(path))
+        .cloned()
 }
 
 fn collect_session_files(dir: &Path, out: &mut Vec<PathBuf>) {
@@ -1107,6 +1195,27 @@ fn session_modified_at(path: &PathBuf) -> SystemTime {
     path.metadata()
         .and_then(|metadata| metadata.modified())
         .unwrap_or(SystemTime::UNIX_EPOCH)
+}
+
+fn session_sort_value(session: &CodexSessionSummary) -> &str {
+    session
+        .updated_at
+        .as_deref()
+        .or(session.started_at.as_deref())
+        .unwrap_or_default()
+}
+
+fn remember_session_summary(
+    summary: &CodexSessionSummary,
+    seen_ids: &mut BTreeSet<String>,
+    seen_paths: &mut BTreeSet<String>,
+) -> bool {
+    let id_seen = !summary.id.trim().is_empty() && !seen_ids.insert(summary.id.clone());
+    let path_seen = summary
+        .path
+        .as_ref()
+        .is_some_and(|path| !seen_paths.insert(path.clone()));
+    !(id_seen || path_seen)
 }
 
 fn read_session_file_details(path: &Path) -> SessionFileDetails {

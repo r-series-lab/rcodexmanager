@@ -1,20 +1,51 @@
 :root {
+  --window-drag-height: 44px;
+  --bg: #f4f7fb;
+  --panel: rgba(255, 255, 255, 0.9);
+  --panel-strong: rgba(251, 253, 255, 0.96);
+  --panel-soft: rgba(255, 255, 255, 0.46);
+  --line: rgba(42, 82, 132, 0.16);
+  --line-soft: rgba(42, 82, 132, 0.1);
+  --text: #172133;
+  --muted: #65758b;
+  --accent: #315fbb;
+  --accent-hover: #3d6fcd;
+  --accent-soft: rgba(49, 95, 187, 0.07);
+  --accent-line: rgba(49, 95, 187, 0.22);
+  --success: #138a56;
+  --danger: #c24141;
+  --shadow: 0 18px 42px rgba(46, 83, 126, 0.1);
   color-scheme: light;
   font-family:
     "SF Pro Display", "Avenir Next", "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei",
     sans-serif;
-  color: #182231;
-  background: #f5f7fa;
-  scrollbar-gutter: stable;
+  color: #172133;
+  background: #f4f7fb;
+  scrollbar-gutter: auto;
   scrollbar-width: thin;
-  scrollbar-color: rgba(103, 119, 139, 0.46) transparent;
+  scrollbar-color: rgba(101, 117, 139, 0.42) transparent;
 }
 
 :root[data-style="dark"] {
+  --bg: #080d13;
+  --panel: rgba(15, 22, 32, 0.9);
+  --panel-strong: rgba(19, 28, 40, 0.94);
+  --panel-soft: rgba(255, 255, 255, 0.025);
+  --line: rgba(139, 169, 208, 0.14);
+  --line-soft: rgba(139, 169, 208, 0.08);
+  --text: #f2f6fb;
+  --muted: rgba(218, 226, 238, 0.62);
+  --accent: #80a6e8;
+  --accent-hover: #96b7f0;
+  --accent-soft: rgba(128, 166, 232, 0.1);
+  --accent-line: rgba(128, 166, 232, 0.24);
+  --success: #54d98f;
+  --danger: #ff7d7d;
+  --shadow: 0 26px 60px rgba(0, 0, 0, 0.38);
   color-scheme: dark;
   color: #f2f6fb;
-  background: #090d13;
-  scrollbar-color: rgba(145, 157, 174, 0.42) transparent;
+  background: #080d13;
+  scrollbar-color: rgba(218, 226, 238, 0.28) transparent;
 }
 
 * {
@@ -37,72 +68,116 @@ body,
   min-height: 100%;
   min-width: 1000px;
   width: 100%;
+  overflow-x: hidden;
 }
 
 body {
   min-height: 100vh;
-  background: #f5f7fa;
+  background: #f4f7fb;
+  -webkit-tap-highlight-color: transparent;
 }
 
 :root[data-style="dark"] body {
-  background: #090d13;
+  background: #080d13;
+}
+
+button,
+input,
+select,
+textarea {
+  font: inherit;
+}
+
+button,
+[role="button"] {
+  touch-action: manipulation;
+}
+
+body::-webkit-scrollbar,
+*::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+
+body::-webkit-scrollbar-track,
+*::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+body::-webkit-scrollbar-thumb,
+*::-webkit-scrollbar-thumb {
+  background: color-mix(in srgb, var(--muted, #65758b) 24%, transparent);
+  border: 1.5px solid transparent;
+  border-radius: 999px;
+  background-clip: padding-box;
+}
+
+body::-webkit-scrollbar-thumb:hover,
+*::-webkit-scrollbar-thumb:hover {
+  background: color-mix(in srgb, var(--accent, #315fbb) 38%, transparent);
+  border: 1.5px solid transparent;
+  background-clip: padding-box;
+}
+
+body::-webkit-scrollbar-corner,
+*::-webkit-scrollbar-corner {
+  background: transparent;
 }
 
 .app-shell {
   --window-drag-height: 44px;
-  --bg: #f5f7fa;
-  --panel: rgba(255, 255, 255, 0.82);
-  --panel-strong: rgba(255, 255, 255, 0.96);
-  --line: rgba(62, 78, 99, 0.14);
-  --line-soft: rgba(62, 78, 99, 0.08);
-  --text: #182231;
-  --muted: #69788c;
+  --bg: #f4f7fb;
+  --panel: rgba(255, 255, 255, 0.9);
+  --panel-strong: rgba(251, 253, 255, 0.96);
+  --panel-soft: rgba(255, 255, 255, 0.46);
+  --line: rgba(42, 82, 132, 0.16);
+  --line-soft: rgba(42, 82, 132, 0.1);
+  --text: #172133;
+  --muted: #65758b;
   --accent: #315fbb;
-  --accent-soft: rgba(49, 95, 187, 0.08);
-  --accent-line: rgba(49, 95, 187, 0.24);
-  --success: #168a55;
+  --accent-hover: #3d6fcd;
+  --accent-soft: rgba(49, 95, 187, 0.07);
+  --accent-line: rgba(49, 95, 187, 0.22);
+  --success: #138a56;
   --danger: #c24141;
-  --shadow: 0 16px 44px rgba(37, 55, 79, 0.08);
+  --shadow: 0 18px 42px rgba(46, 83, 126, 0.1);
   min-height: 100vh;
   min-width: 1000px;
   padding: var(--window-drag-height) 8px 8px;
   color: var(--text);
-  background:
-    linear-gradient(180deg, #edf2f7 0, #f8fafc 230px, #f5f7fa 100%),
-    var(--bg);
+  background: var(--bg);
 }
 
 .app-shell[data-style="dark"] {
   --bg: #080d13;
-  --panel: rgba(16, 22, 31, 0.86);
-  --panel-strong: rgba(20, 28, 40, 0.94);
-  --line: rgba(139, 169, 208, 0.13);
-  --line-soft: rgba(139, 169, 208, 0.075);
+  --panel: rgba(15, 22, 32, 0.9);
+  --panel-strong: rgba(19, 28, 40, 0.94);
+  --panel-soft: rgba(255, 255, 255, 0.025);
+  --line: rgba(139, 169, 208, 0.14);
+  --line-soft: rgba(139, 169, 208, 0.08);
   --text: #f2f6fb;
   --muted: rgba(218, 226, 238, 0.62);
   --accent: #80a6e8;
-  --accent-soft: rgba(128, 166, 232, 0.11);
-  --accent-line: rgba(128, 166, 232, 0.25);
+  --accent-hover: #96b7f0;
+  --accent-soft: rgba(128, 166, 232, 0.1);
+  --accent-line: rgba(128, 166, 232, 0.24);
   --success: #54d98f;
   --danger: #ff7d7d;
-  --shadow: 0 24px 58px rgba(0, 0, 0, 0.34);
+  --shadow: 0 26px 60px rgba(0, 0, 0, 0.38);
   color-scheme: dark;
-  background:
-    linear-gradient(180deg, rgba(128, 166, 232, 0.07), transparent 250px),
-    var(--bg);
 }
 
 .skip-link {
   position: fixed;
   z-index: 60;
   top: 8px;
-  left: 88px;
+  left: 92px;
   transform: translateY(-160%);
   padding: 6px 10px;
+  border: 1px solid var(--line);
   border-radius: 9px;
   color: var(--text);
   background: var(--panel-strong);
-  border: 1px solid var(--line);
   box-shadow: var(--shadow);
   text-decoration: none;
   font-size: 12px;
@@ -119,18 +194,13 @@ body {
   z-index: 20;
   inset: 0 0 auto;
   height: var(--window-drag-height);
-  background:
-    linear-gradient(180deg, rgba(237, 242, 247, 0.94), rgba(248, 250, 252, 0.86)),
-    var(--bg);
   border-bottom: 1px solid var(--line-soft);
+  background: var(--bg);
   cursor: default;
   user-select: none;
 }
 
 .app-shell[data-style="dark"] .window-drag-region {
-  background:
-    linear-gradient(180deg, rgba(15, 22, 31, 0.95), rgba(9, 13, 19, 0.9)),
-    var(--bg);
   border-bottom-color: rgba(139, 169, 208, 0.08);
 }
 
@@ -151,36 +221,42 @@ body {
 }
 
 .window-toolbar .MuiChip-root {
-  max-width: 128px;
+  max-width: 132px;
+  border: 1px solid var(--line-soft);
+  background: var(--panel-strong);
+  color: var(--muted);
 }
 
 .window-toolbar .MuiIconButton-root {
   width: 32px;
   height: 32px;
-  border-radius: 9px;
   border-color: transparent;
+  border-radius: 9px;
   background: transparent;
   color: var(--muted);
   box-shadow: none;
 }
 
 .window-toolbar .MuiIconButton-root:hover {
-  color: var(--text);
   border-color: var(--line-soft);
+  color: var(--text);
   background: var(--panel-strong);
 }
 
-.workbench-grid {
-  height: calc(100vh - var(--window-drag-height) - 8px);
-  min-height: 0;
-  display: grid;
-  grid-template-columns: minmax(620px, 1fr) minmax(320px, 340px);
-  gap: 8px;
+.app-shell[data-style="dark"] .window-toolbar .MuiIconButton-root:hover {
+  border-color: var(--accent-line);
+  color: var(--accent-hover);
+  background: var(--accent-soft);
 }
 
-.profile-browser,
-.inspector-rail {
+.workbench-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(340px, 372px);
+  gap: 8px;
+  height: calc(100vh - var(--window-drag-height) - 8px);
   min-height: 0;
+  width: 100%;
+  min-width: 0;
 }
 
 .browser-panel,
@@ -192,63 +268,321 @@ body {
   backdrop-filter: saturate(130%) blur(16px);
 }
 
+.profile-browser,
+.inspector-rail {
+  min-width: 0;
+  min-height: 0;
+}
+
 .browser-panel {
   height: 100%;
-  padding: 10px;
+  min-width: 0;
   display: grid;
-  grid-template-rows: auto auto auto minmax(0, 1fr);
+  grid-template-rows: auto auto minmax(0, 1fr);
   gap: 8px;
+  padding: 10px;
   overflow: hidden;
 }
 
 .browser-header {
+  min-width: 0;
+  min-height: 30px;
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 8px;
-  min-height: 28px;
+  gap: 10px;
 }
 
 .browser-title {
   min-width: 0;
   display: flex;
-  align-items: center;
-  gap: 9px;
+  align-items: baseline;
+  gap: 8px;
 }
 
 .browser-title .MuiTypography-h5 {
   line-height: 1;
-  font-size: 1.02rem;
+  text-wrap: balance;
+}
+
+.browser-subtitle {
+  color: var(--muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .browser-metrics {
+  flex: 0 0 auto;
   min-width: 0;
   flex-wrap: wrap;
+  justify-content: flex-end;
 }
 
-.feedback-line {
-  min-width: 180px;
-  max-width: 280px;
-  padding-top: 0;
-  padding-bottom: 0;
+.browser-actions {
+  flex: 0 0 auto;
+  min-width: 0;
   align-items: center;
+  justify-content: flex-end;
+}
+
+.session-launch-button {
+  flex: 0 0 auto;
+  min-height: 28px;
+  border-color: var(--line);
+  background: var(--panel-soft);
+  color: var(--text);
+}
+
+.session-launch-button .MuiButton-startIcon {
+  margin-left: 0;
+  margin-right: 5px;
+}
+
+.session-launch-count {
+  min-width: 20px;
+  height: 18px;
+  display: inline-grid;
+  place-items: center;
+  margin-left: 7px;
+  padding-inline: 5px;
+  border-radius: 7px;
+  color: var(--accent);
+  background: var(--accent-soft);
+  font-size: 12px;
+  font-weight: 850;
+  font-variant-numeric: tabular-nums;
+}
+
+.browser-tools {
+  min-width: 0;
+  display: grid;
+  grid-template-columns: minmax(220px, 300px) minmax(0, 1fr);
+  align-items: center;
+  gap: 8px;
 }
 
 .filter-row {
+  min-width: 0;
   display: flex;
   align-items: center;
 }
 
 .search-field {
-  width: min(100%, 260px);
-  min-width: 180px;
+  width: 100%;
+  min-width: 0;
 }
 
-.category-bar {
+.feedback-slot {
+  min-width: 0;
   display: flex;
+  justify-content: flex-end;
+}
+
+.feedback-line {
+  min-width: 0;
+  max-width: 100%;
+  padding-top: 0;
+  padding-bottom: 0;
+  align-items: center;
+}
+
+.feedback-line .MuiAlert-message {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.session-center-dialog .MuiDialog-paper {
+  height: min(760px, calc(100vh - 88px));
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: var(--panel-strong);
+  color: var(--text);
+  box-shadow: var(--shadow);
+  overflow: hidden;
+}
+
+.session-dialog-title {
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 12px 14px 10px;
+  border-bottom: 1px solid var(--line-soft);
+}
+
+.session-dialog-title .MuiSvgIcon-root {
+  color: var(--accent);
+}
+
+.session-dialog-title .MuiTypography-h6,
+.session-dialog-title .MuiTypography-caption {
+  display: block;
+  line-height: 1.1;
+}
+
+.session-dialog-title .MuiTypography-caption {
+  margin-top: 3px;
+  color: var(--muted);
+}
+
+.session-dialog-progress {
+  height: 2px;
+}
+
+.session-dialog-content {
+  min-height: 0;
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr);
+  gap: 9px;
+  padding: 10px 12px 8px;
+}
+
+.session-dialog-tools {
+  min-width: 0;
+  display: grid;
+  grid-template-columns: minmax(280px, 1fr) 180px auto;
+  gap: 8px;
+  align-items: center;
+}
+
+.session-dialog-search,
+.session-dialog-category {
+  min-width: 0;
+}
+
+.session-dialog-clear {
+  min-height: 34px;
+  white-space: nowrap;
+}
+
+.session-dialog-list {
+  min-height: 0;
+  display: grid;
+  align-content: start;
   gap: 6px;
-  overflow-x: auto;
-  padding: 0 0 2px;
+  overflow: auto;
+  padding-right: 2px;
+}
+
+.session-dialog-row {
+  min-width: 0;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 10px;
+  align-items: center;
+  padding: 8px 8px 8px 10px;
+  border: 1px solid var(--line-soft);
+  border-radius: 9px;
+  background: color-mix(in srgb, var(--panel) 66%, transparent);
+}
+
+.app-shell[data-style="dark"] .session-dialog-row {
+  background: rgba(255, 255, 255, 0.028);
+}
+
+.session-dialog-row.current-profile {
+  border-color: var(--accent-line);
+  background: var(--accent-soft);
+}
+
+.session-dialog-row-main {
+  min-width: 0;
+  display: grid;
+  gap: 3px;
+}
+
+.session-dialog-row-title {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-weight: 850;
+}
+
+.session-profile-chip,
+.session-type-chip {
+  flex: 0 0 auto;
+  max-width: 116px;
+}
+
+.session-dialog-summary {
+  display: -webkit-box;
+  min-width: 0;
+  color: var(--text);
+  line-height: 1.35;
+  overflow: hidden;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+}
+
+.session-dialog-muted {
+  color: var(--muted);
+}
+
+.session-dialog-meta {
+  min-width: 0;
+  flex-wrap: wrap;
+  color: var(--muted);
+}
+
+.session-dialog-meta .MuiTypography-caption {
+  min-width: 0;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.session-dialog-actions {
+  flex: 0 0 auto;
+  display: grid;
+  grid-auto-flow: column;
+  align-items: center;
+  gap: 4px;
+}
+
+.session-dialog-actions .MuiButton-root {
+  min-width: 0;
+  min-height: 28px;
+  padding-inline: 7px;
+}
+
+.session-dialog-actions .MuiButton-startIcon {
+  margin-left: 0;
+  margin-right: 3px;
+}
+
+.session-dialog-actions .MuiSvgIcon-root {
+  width: 15px;
+  height: 15px;
+}
+
+.session-dialog-empty {
+  min-height: 220px;
+  display: grid;
+  place-items: center;
+  align-content: center;
+  gap: 8px;
+  color: var(--muted);
+  text-align: center;
+}
+
+.session-dialog-footer {
+  min-height: 46px;
+  justify-content: space-between;
+  padding: 8px 12px;
+  border-top: 1px solid var(--line-soft);
+}
+
+.session-dialog-page {
+  min-width: 52px;
+  text-align: center;
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
 }
 
 .profile-grid {
@@ -256,36 +590,42 @@ body {
   overflow: auto;
   display: grid;
   grid-template-columns: 1fr;
-  gap: 5px;
   align-content: start;
+  gap: 6px;
   padding: 1px 3px 4px 1px;
 }
 
 .profile-card {
   width: 100%;
-  min-height: 74px;
+  min-height: 126px;
   display: grid;
-  grid-template-columns: minmax(0, 1fr) 38px;
-  align-items: center;
+  grid-template-columns: minmax(0, 1fr) 58px;
+  align-items: stretch;
   position: relative;
   border: 1px solid var(--line);
-  border-radius: 9px;
+  border-radius: 10px;
   color: inherit;
-  background: rgba(255, 255, 255, 0.58);
+  background: color-mix(in srgb, var(--panel-strong) 62%, transparent);
+  content-visibility: auto;
+  contain-intrinsic-size: 126px;
   transition:
     border-color 140ms ease,
     box-shadow 140ms ease,
-    background 140ms ease;
+    background-color 140ms ease;
 }
 
 .app-shell[data-style="dark"] .profile-card {
-  background: rgba(255, 255, 255, 0.025);
+  background: rgba(255, 255, 255, 0.024);
 }
 
 .profile-card:hover {
   border-color: var(--accent-line);
   background: var(--panel-strong);
   box-shadow: 0 10px 22px rgba(37, 55, 79, 0.06);
+}
+
+.app-shell[data-style="dark"] .profile-card:hover {
+  box-shadow: 0 12px 28px rgba(0, 0, 0, 0.24);
 }
 
 .profile-card.selected {
@@ -299,12 +639,14 @@ body {
 .profile-card-main {
   width: 100%;
   min-width: 0;
-  min-height: 72px;
+  min-height: 124px;
   display: grid;
-  gap: 5px;
-  padding: 8px 8px 8px 10px;
+  grid-template-rows: auto auto auto auto;
+  align-content: start;
+  gap: 7px;
+  padding: 12px 10px 12px 14px;
   border: 0;
-  border-radius: 9px;
+  border-radius: 10px;
   color: inherit;
   background: transparent;
   cursor: pointer;
@@ -320,109 +662,128 @@ body {
   display: flex;
   align-items: center;
   justify-content: center;
-  padding-right: 5px;
+  padding-right: 10px;
+}
+
+.profile-card-action .MuiIconButton-root {
+  width: 42px;
+  height: 42px;
+  border-radius: 13px;
 }
 
 .profile-card-top {
+  min-width: 0;
   display: flex;
   align-items: flex-start;
   justify-content: space-between;
-  gap: 7px;
+  gap: 8px;
+}
+
+.profile-card-top .MuiTypography-subtitle1,
+.profile-card-top .MuiTypography-caption {
+  display: block;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .profile-card-top .MuiTypography-subtitle1 {
-  line-height: 1.08;
+  line-height: 1.12;
   font-weight: 850;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  font-size: 1.2rem;
 }
 
 .profile-card-top .MuiTypography-caption {
-  display: block;
   color: var(--muted);
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
 }
 
-.profile-card-subline {
+.profile-card-meta {
+  min-width: 0;
   display: flex;
-  align-items: center;
-  justify-content: flex-start;
-  gap: 8px;
+  gap: 7px;
   color: var(--muted);
 }
 
-.profile-card-subline .MuiTypography-caption {
-  display: block;
-  max-width: 160px;
+.profile-card-meta span {
+  max-width: 33%;
+  min-width: 0;
+  padding: 3px 9px;
+  border: 1px solid var(--line-soft);
+  border-radius: 9px;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+  background: color-mix(in srgb, var(--panel-strong) 58%, transparent);
+  font-size: 0.78rem;
+  font-weight: 800;
+  line-height: 1.2;
 }
 
-.profile-card-subline .MuiSvgIcon-root {
-  width: 17px;
-  height: 17px;
-  color: var(--muted);
+.app-shell[data-style="dark"] .profile-card-meta span {
+  background: rgba(255, 255, 255, 0.026);
 }
 
+.profile-card-subline,
 .profile-session-line {
   min-width: 0;
   display: flex;
   align-items: center;
-  gap: 6px;
+  gap: 7px;
   color: var(--muted);
 }
 
+.profile-card-subline .MuiSvgIcon-root,
 .profile-session-line .MuiSvgIcon-root {
   width: 16px;
   height: 16px;
   flex: 0 0 auto;
+  color: var(--muted);
+}
+
+.profile-session-line .MuiSvgIcon-root {
   color: var(--accent);
 }
 
+.profile-card-subline .MuiTypography-caption,
 .profile-session-line .MuiTypography-caption {
   display: block;
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+  font-size: 0.8rem;
+  line-height: 1.25;
 }
 
 .profile-action-button.running,
 .profile-action-button.running.Mui-disabled {
   color: var(--success);
-  border-color: rgba(22, 138, 85, 0.52);
-  background: rgba(22, 138, 85, 0.08);
+  border-color: color-mix(in srgb, var(--success) 52%, transparent);
+  background: color-mix(in srgb, var(--success) 10%, transparent);
   -webkit-text-fill-color: var(--success);
 }
 
 .profile-action-button.running:hover {
   border-color: var(--success);
-  background: rgba(22, 138, 85, 0.12);
-}
-
-.app-shell[data-style="dark"] .profile-action-button.running,
-.app-shell[data-style="dark"] .profile-action-button.running.Mui-disabled {
-  border-color: rgba(84, 217, 143, 0.46);
-  background: rgba(84, 217, 143, 0.09);
+  background: color-mix(in srgb, var(--success) 14%, transparent);
 }
 
 .inspector-panel {
   height: 100%;
-  padding: 10px;
+  min-width: 0;
+  padding: 8px;
   overflow: auto;
 }
 
 .inspector-content {
   display: flex;
   flex-direction: column;
-  gap: 8px;
+  gap: 7px;
 }
 
 .inspector-title {
+  min-width: 0;
   display: flex;
   align-items: flex-start;
   justify-content: space-between;
@@ -430,12 +791,19 @@ body {
   padding-bottom: 2px;
 }
 
-.inspector-title .MuiTypography-h5 {
-  max-width: 220px;
-  line-height: 1.14;
+.inspector-title .MuiTypography-h5,
+.inspector-title .MuiTypography-body2,
+.inspector-title .MuiTypography-caption {
+  display: block;
+  max-width: 230px;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.inspector-title .MuiTypography-h5 {
+  line-height: 1.14;
+  text-wrap: balance;
 }
 
 .detail-tags {
@@ -448,17 +816,42 @@ body {
   max-width: 100%;
 }
 
+.account-block,
+.session-block,
+.quota-block,
+.path-block,
 .action-panel {
-  display: grid;
-  gap: 6px;
-  padding: 7px;
   border: 1px solid var(--line-soft);
   border-radius: 9px;
-  background: rgba(255, 255, 255, 0.34);
+  background: var(--panel-soft);
 }
 
-.app-shell[data-style="dark"] .action-panel {
-  background: rgba(255, 255, 255, 0.025);
+.account-block,
+.session-block,
+.quota-block,
+.path-block {
+  padding: 8px 9px;
+}
+
+.account-block .MuiTypography-subtitle2,
+.account-block .MuiTypography-caption,
+.path-block .MuiTypography-caption {
+  display: block;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.account-block .MuiTypography-caption,
+.path-block .MuiTypography-caption {
+  color: var(--muted);
+}
+
+.action-panel {
+  display: grid;
+  gap: 5px;
+  padding: 6px;
 }
 
 .action-strip {
@@ -479,20 +872,20 @@ body {
   width: 100%;
   min-width: 0;
   justify-content: center;
-  min-height: 31px;
+  min-height: 29px;
   padding-inline: 7px;
+}
+
+.action-panel .MuiButton-startIcon {
+  margin-right: 4px;
+  margin-left: 0;
 }
 
 .launch-action.running.Mui-disabled {
   color: var(--success);
-  border-color: rgba(22, 138, 85, 0.58);
-  background: rgba(22, 138, 85, 0.08);
+  border-color: color-mix(in srgb, var(--success) 58%, transparent);
+  background: color-mix(in srgb, var(--success) 10%, transparent);
   -webkit-text-fill-color: var(--success);
-}
-
-.app-shell[data-style="dark"] .launch-action.running.Mui-disabled {
-  border-color: rgba(84, 217, 143, 0.48);
-  background: rgba(84, 217, 143, 0.09);
 }
 
 .network-action {
@@ -502,41 +895,13 @@ body {
 
 .network-action.enabled {
   color: var(--success);
-  border-color: rgba(22, 138, 85, 0.5);
-  background: rgba(22, 138, 85, 0.07);
+  border-color: color-mix(in srgb, var(--success) 50%, transparent);
+  background: color-mix(in srgb, var(--success) 8%, transparent);
 }
 
-.app-shell[data-style="dark"] .network-action.enabled {
-  border-color: rgba(84, 217, 143, 0.42);
-  background: rgba(84, 217, 143, 0.08);
-}
-
-.account-block,
-.session-block {
-  padding: 8px 9px;
-  border: 1px solid var(--line-soft);
-  border-radius: 9px;
-  background: rgba(255, 255, 255, 0.34);
-}
-
-.app-shell[data-style="dark"] .account-block,
-.app-shell[data-style="dark"] .session-block {
-  background: rgba(255, 255, 255, 0.025);
-}
-
-.account-block .MuiTypography-subtitle2,
-.account-block .MuiTypography-caption {
-  display: block;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.account-block .MuiTypography-caption {
-  color: var(--muted);
-}
-
-.session-block .MuiButton-root {
+.session-block .MuiButton-root,
+.quota-block .MuiButton-root,
+.path-block .MuiButton-root {
   min-height: 22px;
   padding: 0 2px;
 }
@@ -585,25 +950,9 @@ body {
   white-space: nowrap;
 }
 
-.quota-block {
-  padding: 8px 9px;
-  border: 1px solid var(--line-soft);
-  border-radius: 9px;
-  background: rgba(255, 255, 255, 0.34);
-}
-
-.app-shell[data-style="dark"] .quota-block {
-  background: rgba(255, 255, 255, 0.025);
-}
-
-.quota-block .MuiButton-root {
-  min-height: 22px;
-  padding: 0 2px;
-}
-
 .quota-progress {
-  margin-top: 5px;
   height: 3px;
+  margin-top: 5px;
   border-radius: 999px;
 }
 
@@ -636,6 +985,7 @@ body {
 
 .quota-window-row .MuiTypography-caption {
   color: var(--muted);
+  font-variant-numeric: tabular-nums;
 }
 
 .quota-window-row.available .MuiLinearProgress-bar {
@@ -656,35 +1006,27 @@ body {
   background-color: rgba(148, 163, 184, 0.22);
 }
 
-.path-block {
-  padding: 8px 9px;
-  border: 1px solid var(--line-soft);
-  border-radius: 9px;
-  background: rgba(255, 255, 255, 0.34);
-}
-
 .path-list {
   display: grid;
+  grid-template-columns: 1fr;
   gap: 6px;
 }
 
-.app-shell[data-style="dark"] .path-block {
-  background: rgba(255, 255, 255, 0.025);
-}
-
 .path-block .MuiTypography-caption {
-  display: block;
   margin: 3px 0 0;
-  color: var(--muted);
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
   line-height: 1.35;
 }
 
-.path-block .MuiButton-root {
-  min-height: 24px;
-  padding: 0;
+.path-actions {
+  flex: 0 0 auto;
+}
+
+.path-actions .MuiChip-root {
+  max-width: 72px;
+}
+
+.path-actions .MuiButton-root {
+  min-width: 0;
 }
 
 .create-dialog-grid {
@@ -707,131 +1049,17 @@ body {
   min-height: 220px;
 }
 
-@media (max-width: 900px) {
-  .app-shell {
-    min-height: 100vh;
-  }
-
-  .workbench-grid {
-    height: auto;
-    min-height: calc(100vh - var(--window-drag-height) - 8px);
-    grid-template-columns: 1fr;
-    grid-template-rows: auto auto;
-    align-content: start;
-    overflow: visible;
-  }
-
-  .browser-panel {
-    height: auto;
-    min-height: 0;
-  }
-
-  .profile-grid {
-    max-height: min(48vh, 380px);
-  }
-
-  .inspector-panel {
-    height: auto;
-    max-height: none;
-    overflow: visible;
-  }
-
-  .path-list {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
-  }
-}
-
-@media (max-width: 720px) {
-  .window-toolbar {
-    right: 8px;
-  }
-
-  .window-toolbar .MuiIconButton-root {
-    width: 30px;
-    height: 30px;
-  }
-
-  .workbench-grid {
-    min-height: calc(100vh - var(--window-drag-height) - 8px);
-    gap: 6px;
-  }
-
-  .browser-panel,
-  .inspector-panel {
-    border-radius: 12px;
-  }
-
-  .browser-panel {
-    padding: 7px;
-    gap: 6px;
-  }
-
-  .browser-header {
-    display: flex;
-    gap: 6px;
-  }
-
-  .browser-header .MuiTypography-h5 {
-    font-size: 1.08rem;
-  }
-
-  .feedback-line {
-    min-width: 0;
-    max-width: none;
-  }
-
-  .category-bar {
-    gap: 5px;
-  }
-
-  .profile-grid {
-    grid-template-columns: 1fr;
-    gap: 6px;
-    padding: 1px 1px 3px;
-  }
-
+@media (max-height: 620px) {
   .profile-card {
-    min-height: 74px;
-    border-radius: 10px;
+    min-height: 118px;
+    contain-intrinsic-size: 118px;
   }
 
-  .profile-card-top {
+  .profile-card-main {
+    min-height: 116px;
     gap: 6px;
-  }
-
-  .profile-card-action .MuiIconButton-root {
-    width: 28px;
-    height: 28px;
-    border-radius: 9px;
-  }
-
-  .profile-card-top .MuiTypography-subtitle1 {
-    font-size: 0.86rem;
-  }
-
-  .profile-card-top .MuiTypography-caption {
-    font-size: 0.66rem;
-  }
-
-  .profile-card-subline {
-    margin-top: 2px;
-  }
-
-  .profile-card-subline .MuiTypography-caption {
-    max-width: 150px;
-    font-size: 0.66rem;
-  }
-
-  .inspector-panel {
-    padding: 8px;
-  }
-
-  .inspector-title .MuiTypography-h5 {
-    font-size: 1rem;
-  }
-
-  .inspector-content {
-    gap: 7px;
+    padding-top: 10px;
+    padding-bottom: 10px;
   }
 
   .account-block,
@@ -840,33 +1068,44 @@ body {
   .path-block {
     padding: 7px;
   }
+}
 
-  .create-dialog-grid {
-    grid-template-columns: 1fr;
+@media (max-width: 1040px) {
+  .workbench-grid {
+    grid-template-columns: minmax(0, 1fr) minmax(334px, 348px);
+  }
+
+  .browser-panel,
+  .inspector-panel {
+    border-radius: 10px;
+  }
+
+  .browser-metrics {
+    display: none;
+  }
+
+  .browser-tools {
+    grid-template-columns: minmax(210px, 280px) minmax(0, 1fr);
+  }
+
+  .session-dialog-tools {
+    grid-template-columns: minmax(260px, 1fr) 168px auto;
+  }
+
+  .inspector-title .MuiTypography-h5,
+  .inspector-title .MuiTypography-body2,
+  .inspector-title .MuiTypography-caption {
+    max-width: 196px;
   }
 }
 
-@media (max-width: 520px) {
-  .window-toolbar .MuiChip-root {
-    display: none;
-  }
-
-  .browser-title {
-    align-items: flex-start;
-    flex-direction: column;
-    gap: 5px;
-  }
-
-  .profile-grid {
-    grid-template-columns: 1fr;
-    max-height: none;
-  }
-
-  .feedback-line {
-    display: none;
-  }
-
-  .path-list {
-    grid-template-columns: 1fr;
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    scroll-behavior: auto !important;
+    transition-duration: 0.01ms !important;
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
   }
 }

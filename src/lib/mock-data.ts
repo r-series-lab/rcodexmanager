@@ -1,4 +1,4 @@
-import type { ProfileActionReport, ProfileInfo, ProfileReport } from "./types";
+import type { ProfileActionReport, ProfileInfo, ProfileReport, ProfileSessionReport } from "./types";
 
 const mockProfiles: ProfileInfo[] = [
   {
@@ -31,6 +31,26 @@ const mockProfiles: ProfileInfo[] = [
       cwd: "/Users/ikiru/Documents/r-series-public",
       path: "/Users/ikiru/.codex/sessions/2026/06/02/rollout-2026-06-02T13-52-11-019e86f9-09aa-73b0-989a-fe792db41e7a.jsonl",
     },
+    recentSessions: [
+      {
+        id: "019e86f9-09aa-73b0-989a-fe792db41e7a",
+        title: "优惠券配置优化",
+        summary: "梳理优惠券配置表单、校验规则和发布流程的交互细节。",
+        updatedAt: "2026-06-02T06:17:04.571447Z",
+        startedAt: "2026-06-02T05:52:11.231Z",
+        cwd: "/Users/ikiru/Documents/r-series-public",
+        path: "/Users/ikiru/.codex/sessions/2026/06/02/rollout-2026-06-02T13-52-11-019e86f9-09aa-73b0-989a-fe792db41e7a.jsonl",
+      },
+      {
+        id: "019e82be-9c4f-7a22-b3e6-1f0fd4a2b518",
+        title: "rDevTool 标题栏规范",
+        summary: "沉淀 rDevTool 风格的标题栏、shell、按钮和拖动区域规范。",
+        updatedAt: "2026-06-01T12:11:20.000000Z",
+        startedAt: "2026-06-01T11:48:02.000Z",
+        cwd: "/Users/ikiru/Documents/r-series-public",
+        path: "/Users/ikiru/.codex/sessions/2026/06/01/rollout-2026-06-01T19-48-02-019e82be-9c4f-7a22-b3e6-1f0fd4a2b518.jsonl",
+      },
+    ],
   },
   {
     name: "codex-b",
@@ -71,6 +91,26 @@ const mockProfiles: ProfileInfo[] = [
       cwd: "/Users/ikiru/Documents/r-series-public",
       path: "/Users/ikiru/.codex-isolated-test/sessions/2026/06/03/rollout-2026-06-03T10-03-34-019e8b38-c4f3-7281-8b15-acc716cd7a3f.jsonl",
     },
+    recentSessions: [
+      {
+        id: "019e8b38-c4f3-7281-8b15-acc716cd7a3f",
+        title: "优化 Codex Manage",
+        summary: "能展示最新的会话摘要标题、摘要信息吗;",
+        updatedAt: "2026-06-03T02:47:55.000000Z",
+        startedAt: "2026-06-03T02:03:34.047Z",
+        cwd: "/Users/ikiru/Documents/r-series-public",
+        path: "/Users/ikiru/.codex-isolated-test/sessions/2026/06/03/rollout-2026-06-03T10-03-34-019e8b38-c4f3-7281-8b15-acc716cd7a3f.jsonl",
+      },
+      {
+        id: "019e8a44-4eb2-7085-8fe2-cf95bd57fd21",
+        title: "配置 profile 登录态",
+        summary: "检查不同 CODEX_HOME 的 auth.json、账号展示和额度查询边界。",
+        updatedAt: "2026-06-02T15:22:41.000000Z",
+        startedAt: "2026-06-02T15:01:19.000Z",
+        cwd: "/Users/ikiru/Documents/r-series-public/rcodexmanager",
+        path: "/Users/ikiru/.codex-isolated-test/sessions/2026/06/02/rollout-2026-06-02T23-01-19-019e8a44-4eb2-7085-8fe2-cf95bd57fd21.jsonl",
+      },
+    ],
   },
   {
     name: "codex-e",
@@ -94,6 +134,7 @@ const mockProfiles: ProfileInfo[] = [
     runningProcessCount: 0,
     account: null,
     latestSession: null,
+    recentSessions: [],
   },
 ];
 
@@ -105,6 +146,30 @@ export function createMockProfileReport(): ProfileReport {
     homeDir: "/Users/ikiru",
     profileCount: mockProfiles.length,
     profiles: mockProfiles,
+  };
+}
+
+export function createMockProfileSessionReport(): ProfileSessionReport {
+  const sessions = mockProfiles.flatMap((profile) =>
+    profile.recentSessions.map((session) => ({
+      profileName: profile.name,
+      profileAlias: profile.alias,
+      profileCategory: profile.category,
+      isDefault: profile.isDefault,
+      session,
+    })),
+  );
+
+  sessions.sort((left, right) => {
+    const leftTime = Date.parse(left.session.updatedAt ?? left.session.startedAt ?? "");
+    const rightTime = Date.parse(right.session.updatedAt ?? right.session.startedAt ?? "");
+    return (Number.isFinite(rightTime) ? rightTime : 0) - (Number.isFinite(leftTime) ? leftTime : 0);
+  });
+
+  return {
+    generatedAt: new Date().toISOString(),
+    sessionCount: sessions.length,
+    sessions,
   };
 }
 

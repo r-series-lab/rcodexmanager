@@ -20,6 +20,7 @@ export interface ProfileInfo {
   runningProcessCount: number;
   account: CodexAccountInfo | null;
   latestSession: CodexSessionSummary | null;
+  recentSessions: CodexSessionSummary[];
 }
 
 export interface CodexSessionSummary {
@@ -92,6 +93,20 @@ export interface ProfileReport {
   homeDir: string;
   profileCount: number;
   profiles: ProfileInfo[];
+}
+
+export interface ProfileSessionReport {
+  generatedAt: string;
+  sessionCount: number;
+  sessions: ProfileSessionSummary[];
+}
+
+export interface ProfileSessionSummary {
+  profileName: string;
+  profileAlias: string | null;
+  profileCategory: string;
+  isDefault: boolean;
+  session: CodexSessionSummary;
 }
 
 export interface BackupInfo {

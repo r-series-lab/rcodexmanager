@@ -1,5 +1,5 @@
 import { invoke } from "@tauri-apps/api/core";
-import { createMockActionReport, createMockProfileReport } from "./mock-data";
+import { createMockActionReport, createMockProfileReport, createMockProfileSessionReport } from "./mock-data";
 import type {
   CreateProfileInput,
   ImportAuthInput,
@@ -8,6 +8,7 @@ import type {
   ProfileActionReport,
   ProfileQuotaReport,
   ProfileReport,
+  ProfileSessionReport,
   ResetProfileInput,
 } from "./types";
 
@@ -20,6 +21,13 @@ export async function listProfiles(): Promise<ProfileReport> {
     return createMockProfileReport();
   }
   return invoke<ProfileReport>("list_profiles_command");
+}
+
+export async function listProfileSessions(): Promise<ProfileSessionReport> {
+  if (!isTauriRuntime()) {
+    return createMockProfileSessionReport();
+  }
+  return invoke<ProfileSessionReport>("list_profile_sessions_command");
 }
 
 export async function createProfile(input: CreateProfileInput): Promise<ProfileActionReport> {
