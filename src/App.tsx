@@ -1,5 +1,4 @@
-import { useEffect, useMemo, useState, type MouseEvent } from "react";
-import { getCurrentWindow } from "@tauri-apps/api/window";
+import { useEffect, useMemo, useRef, useState } from "react";
 import AccountCircleRoundedIcon from "@mui/icons-material/AccountCircleRounded";
 import AddRoundedIcon from "@mui/icons-material/AddRounded";
 import ContentCopyRoundedIcon from "@mui/icons-material/ContentCopyRounded";
@@ -11,15 +10,20 @@ import FileUploadRoundedIcon from "@mui/icons-material/FileUploadRounded";
 import FolderRoundedIcon from "@mui/icons-material/FolderRounded";
 import KeyboardArrowLeftRoundedIcon from "@mui/icons-material/KeyboardArrowLeftRounded";
 import KeyboardArrowRightRoundedIcon from "@mui/icons-material/KeyboardArrowRightRounded";
+import KeyboardDoubleArrowLeftRoundedIcon from "@mui/icons-material/KeyboardDoubleArrowLeftRounded";
+import KeyboardDoubleArrowRightRoundedIcon from "@mui/icons-material/KeyboardDoubleArrowRightRounded";
 import LightModeRoundedIcon from "@mui/icons-material/LightModeRounded";
 import PlayArrowRoundedIcon from "@mui/icons-material/PlayArrowRounded";
 import RefreshRoundedIcon from "@mui/icons-material/RefreshRounded";
 import RestartAltRoundedIcon from "@mui/icons-material/RestartAltRounded";
+import SaveRoundedIcon from "@mui/icons-material/SaveRounded";
 import SearchRoundedIcon from "@mui/icons-material/SearchRounded";
+import SecurityRoundedIcon from "@mui/icons-material/SecurityRounded";
 import ShortcutRoundedIcon from "@mui/icons-material/ShortcutRounded";
 import SettingsEthernetRoundedIcon from "@mui/icons-material/SettingsEthernetRounded";
 import StopCircleRoundedIcon from "@mui/icons-material/StopCircleRounded";
 import TerminalRoundedIcon from "@mui/icons-material/TerminalRounded";
+import VpnKeyRoundedIcon from "@mui/icons-material/VpnKeyRounded";
 import {
   Alert,
   Box,
@@ -45,9 +49,13 @@ import {
 } from "@mui/material";
 import "./App.css";
 import {
+  applyAuthBackup,
+  createAuthBackup,
   createProfile,
   deleteProfile,
+  deleteAuthBackup,
   importProfileAuth,
+  listAuthVault,
   launchProfile,
   listProfileSessions,
   listProfiles,
@@ -59,6 +67,9 @@ import {
   updateProfileMetadata,
 } from "./lib/api";
 import type {
+  AuthBackupEntry,
+  AuthProfileSlot,
+  AuthVaultReport,
   CodexSessionSummary,
   CreateProfileInput,
   ProfileInfo,
@@ -128,10 +139,6 @@ function errorMessage(error: unknown, fallback: string): string {
   return fallback;
 }
 
-function isTauriRuntime(): boolean {
-  return "__TAURI_INTERNALS__" in window;
-}
-
 function textFieldSlotProps(name: string) {
   return {
     htmlInput: {
@@ -140,15 +147,6 @@ function textFieldSlotProps(name: string) {
       spellCheck: false,
     },
   };
-}
-
-function sessionTimestamp(session: CodexSessionSummary): number {
-  const value = session.updatedAt ?? session.startedAt;
-  if (!value) {
-    return 0;
-  }
-  const timestamp = Date.parse(value);
-  return Number.isFinite(timestamp) ? timestamp : 0;
 }
 
 function profileLabel(profile: Pick<ProfileInfo, "name" | "alias">): string {
@@ -186,8 +184,19 @@ function App() {
   const [sessionReport, setSessionReport] = useState<ProfileSessionReport | null>(null);
   const [sessionLoading, setSessionLoading] = useState(false);
   const [sessionQuery, setSessionQuery] = useState("");
+  const [sessionProfileName, setSessionProfileName] = useState("all");
   const [sessionCategory, setSessionCategory] = useState("all");
   const [sessionPage, setSessionPage] = useState(1);
+  const [inspectorCollapsed, setInspectorCollapsed] = useState(false);
+  const [authDialogOpen, setAuthDialogOpen] = useState(false);
+  const [authReport, setAuthReport] = useState<AuthVaultReport | null>(null);
+  const [authLoading, setAuthLoading] = useState(false);
+  const [authProfileName, setAuthProfileName] = useState("");
+  const [authBackupLabel, setAuthBackupLabel] = useState("");
+  const [selectedAuthBackupId, setSelectedAuthBackupId] = useState("");
+  const [selectedAuthProfileNames, setSelectedAuthProfileNames] = useState<string[]>([]);
+  const [confirmAuthApply, setConfirmAuthApply] = useState(false);
+  const sessionRequestIdRef = useRef(0);
 
   const profiles = report?.profiles ?? [];
   const activeProfile = useMemo(
@@ -222,34 +231,21 @@ function App() {
         .includes(normalizedQuery);
     });
   }, [profiles, query]);
-  const sessionItems = useMemo<SessionCenterItem[]>(() => {
-    if (sessionReport) {
-      return sessionReport.sessions.map((item) => ({
-        profile: {
-          name: item.profileName,
-          alias: item.profileAlias,
-          category: item.profileCategory,
-          isDefault: item.isDefault,
-        },
-        session: item.session,
-      }));
-    }
-
-    return profiles
-      .flatMap((profile) =>
-        profile.recentSessions.map((session) => ({
-          profile: {
-            name: profile.name,
-            alias: profile.alias,
-            category: profile.category,
-            isDefault: profile.isDefault,
-          },
-          session,
-        })),
-      )
-      .sort((left, right) => sessionTimestamp(right.session) - sessionTimestamp(left.session));
-  }, [profiles, sessionReport]);
-  const knownSessionCount = sessionReport?.sessionCount ?? sessionItems.length;
+  const sessionItems = useMemo<SessionCenterItem[]>(
+    () =>
+      sessionReport
+        ? sessionReport.sessions.map((item) => ({
+            profile: {
+              name: item.profileName,
+              alias: item.profileAlias,
+              category: item.profileCategory,
+              isDefault: item.isDefault,
+            },
+            session: item.session,
+          }))
+        : [],
+    [sessionReport],
+  );
   const runningCount = useMemo(
     () => profiles.filter((profile) => profile.isRunning).length,
     [profiles],
@@ -282,6 +278,7 @@ function App() {
         return nextReport.profiles[0]?.name ?? "";
       });
       setSessionReport(null);
+      setSessionProfileName("all");
       setFeedback(nextFeedback ?? null);
     } catch (error) {
       setFeedback({
@@ -293,26 +290,100 @@ function App() {
     }
   }
 
-  async function refreshProfileSessions() {
+  async function refreshProfileSessions(options?: {
+    query?: string;
+    profileName?: string;
+    category?: string;
+    page?: number;
+  }) {
+    const requestId = sessionRequestIdRef.current + 1;
+    sessionRequestIdRef.current = requestId;
+    const nextPage = options?.page ?? sessionPage;
+    const nextProfileName = options?.profileName ?? sessionProfileName;
+    const nextCategory = options?.category ?? sessionCategory;
+    const nextQuery = options?.query ?? sessionQuery;
+
     try {
       setSessionLoading(true);
-      const nextReport = await listProfileSessions();
+      const nextReport = await listProfileSessions({
+        profileName: nextProfileName === "all" ? null : nextProfileName,
+        category: nextCategory === "all" ? null : nextCategory,
+        query: nextQuery.trim() || null,
+        offset: (Math.max(nextPage, 1) - 1) * SESSION_PAGE_SIZE,
+        limit: SESSION_PAGE_SIZE,
+      });
+      if (requestId !== sessionRequestIdRef.current) {
+        return;
+      }
       setSessionReport(nextReport);
-      setSessionPage(1);
     } catch (error) {
+      if (requestId !== sessionRequestIdRef.current) {
+        return;
+      }
       setFeedback({
         severity: "error",
         text: errorMessage(error, "读取会话中心失败"),
       });
     } finally {
-      setSessionLoading(false);
+      if (requestId === sessionRequestIdRef.current) {
+        setSessionLoading(false);
+      }
+    }
+  }
+
+  async function refreshAuthVault() {
+    try {
+      setAuthLoading(true);
+      const nextReport = await listAuthVault();
+      setAuthReport(nextReport);
+      setAuthProfileName((current) => {
+        if (current && nextReport.profiles.some((profile) => profile.profileName === current)) {
+          return current;
+        }
+        if (activeProfile && nextReport.profiles.some((profile) => profile.profileName === activeProfile.name)) {
+          return activeProfile.name;
+        }
+        return nextReport.profiles[0]?.profileName ?? "";
+      });
+      setSelectedAuthBackupId((current) => {
+        if (current && nextReport.backups.some((backup) => backup.id === current)) {
+          return current;
+        }
+        return nextReport.backups[0]?.id ?? "";
+      });
+      setSelectedAuthProfileNames((current) => {
+        const backupableNames = new Set(
+          nextReport.profiles.filter((profile) => profile.authExists).map((profile) => profile.profileName),
+        );
+        const kept = current.filter((name) => backupableNames.has(name));
+        if (kept.length > 0) {
+          return kept;
+        }
+        if (activeProfile?.name && backupableNames.has(activeProfile.name)) {
+          return [activeProfile.name];
+        }
+        return [];
+      });
+    } catch (error) {
+      setFeedback({
+        severity: "error",
+        text: errorMessage(error, "读取认证库失败"),
+      });
+    } finally {
+      setAuthLoading(false);
     }
   }
 
   function handleOpenSessionCenter() {
     setSessionDialogOpen(true);
-    if (!sessionReport && !sessionLoading) {
-      void refreshProfileSessions();
+  }
+
+  function handleOpenAuthVault() {
+    setAuthDialogOpen(true);
+    setConfirmAuthApply(false);
+    setAuthProfileName(activeProfile?.name ?? authProfileName);
+    if (!authReport && !authLoading) {
+      void refreshAuthVault();
     }
   }
 
@@ -321,10 +392,25 @@ function App() {
   }, []);
 
   useEffect(() => {
-    if (sessionDialogOpen && !sessionReport && !sessionLoading) {
-      void refreshProfileSessions();
+    if (!sessionDialogOpen) {
+      return;
     }
-  }, [sessionDialogOpen, sessionReport, sessionLoading]);
+    const timeout = window.setTimeout(() => {
+      void refreshProfileSessions({
+        query: sessionQuery,
+        profileName: sessionProfileName,
+        category: sessionCategory,
+        page: sessionPage,
+      });
+    }, sessionQuery.trim() ? 280 : 0);
+    return () => window.clearTimeout(timeout);
+  }, [sessionDialogOpen, sessionQuery, sessionProfileName, sessionCategory, sessionPage]);
+
+  useEffect(() => {
+    if (authDialogOpen && !authReport && !authLoading) {
+      void refreshAuthVault();
+    }
+  }, [authDialogOpen, authReport, authLoading]);
 
   useEffect(() => {
     if (!feedback || feedback.severity === "error" || feedback.severity === "warning") {
@@ -578,6 +664,101 @@ function App() {
     }
   }
 
+  async function handleCreateAuthBackups(profileNames: string[]) {
+    const requestedNames = new Set(profileNames);
+    const selectedProfiles =
+      authReport?.profiles.filter(
+        (profile) => requestedNames.has(profile.profileName) && profile.authExists,
+      ) ?? [];
+    if (selectedProfiles.length === 0) {
+      setFeedback({ severity: "warning", text: "请选择至少一个已有 auth.json 的 profile。" });
+      return;
+    }
+
+    try {
+      setBusyLabel(selectedProfiles.length > 1 ? "批量备份" : "备份认证");
+      let nextReport: AuthVaultReport | null = authReport;
+      for (const profile of selectedProfiles) {
+        nextReport = await createAuthBackup({
+          name: profile.profileName,
+          label: selectedProfiles.length === 1 ? authBackupLabel.trim() || null : null,
+        });
+      }
+      if (nextReport) {
+        setAuthReport(nextReport);
+        setSelectedAuthBackupId(nextReport.backups[0]?.id ?? "");
+      }
+      setAuthBackupLabel("");
+      setFeedback({ severity: "success", text: `已备份 ${selectedProfiles.length} 个认证信息` });
+    } catch (error) {
+      setFeedback({
+        severity: "error",
+        text: errorMessage(error, "备份认证失败"),
+      });
+    } finally {
+      setBusyLabel("");
+    }
+  }
+
+  async function handleApplyAuthBackup(backupId: string, targetProfileName: string) {
+    if (!backupId || !targetProfileName) {
+      setFeedback({ severity: "warning", text: "请选择备份和目标 profile。" });
+      return;
+    }
+
+    try {
+      setBusyLabel("应用认证");
+      const result = await applyAuthBackup({
+        backupId,
+        targetProfileName,
+        confirmSensitive: confirmAuthApply,
+      });
+      setConfirmAuthApply(false);
+      setQuotaByProfile((current) => {
+        const next = { ...current };
+        delete next[targetProfileName];
+        return next;
+      });
+      await refreshProfiles({ severity: "success", text: result.message });
+      await refreshAuthVault();
+    } catch (error) {
+      setFeedback({
+        severity: "error",
+        text: errorMessage(error, "应用认证失败"),
+      });
+    } finally {
+      setBusyLabel("");
+    }
+  }
+
+  async function handleDeleteAuthBackup(backupId: string) {
+    if (!backupId) {
+      return;
+    }
+    const backup = authReport?.backups.find((item) => item.id === backupId);
+    const label = backup?.label ?? backupId;
+    if (!window.confirm(`删除认证备份「${label}」？`)) {
+      return;
+    }
+
+    try {
+      setBusyLabel("删除备份");
+      const nextReport = await deleteAuthBackup({ backupId });
+      setAuthReport(nextReport);
+      setSelectedAuthBackupId((current) =>
+        current === backupId ? nextReport.backups[0]?.id ?? "" : current,
+      );
+      setFeedback({ severity: "success", text: "已删除认证备份" });
+    } catch (error) {
+      setFeedback({
+        severity: "error",
+        text: errorMessage(error, "删除认证备份失败"),
+      });
+    } finally {
+      setBusyLabel("");
+    }
+  }
+
   async function handleRepairNetwork(profile: ProfileInfo) {
     try {
       setBusyLabel("修复网络");
@@ -629,13 +810,6 @@ function App() {
     setCreateDraft((current) => ({ ...current, [key]: value }));
   }
 
-  function handleWindowDragMouseDown(event: MouseEvent<HTMLElement>) {
-    if (event.button !== 0 || !isTauriRuntime()) {
-      return;
-    }
-    void getCurrentWindow().startDragging().catch(() => undefined);
-  }
-
   return (
     <ThemeProvider theme={theme}>
       <CssBaseline />
@@ -643,17 +817,24 @@ function App() {
         <a className="skip-link" href="#profile-browser">
           跳到 profile 列表
         </a>
-        <Box
-          className="window-drag-region"
-          onMouseDown={handleWindowDragMouseDown}
-        />
+        <Box className="window-drag-region" data-tauri-drag-region />
         <Box className="window-toolbar" aria-label="窗口工具">
           <Stack direction="row" spacing={0.75} sx={{ alignItems: "center" }}>
             {busyLabel ? <Chip size="small" label={busyLabel} /> : null}
-            <Tooltip title="新增 profile">
-              <IconButton aria-label="新增 profile" onClick={() => setCreateDialogOpen(true)}>
-                <AddRoundedIcon />
-              </IconButton>
+            <Tooltip title={inspectorCollapsed ? "展开详情栏" : "收起详情栏"}>
+              <button
+                type="button"
+                className="inspector-toggle-button window-inspector-toggle"
+                aria-label={inspectorCollapsed ? "展开详情栏" : "收起详情栏"}
+                aria-expanded={!inspectorCollapsed}
+                onClick={() => setInspectorCollapsed((current) => !current)}
+              >
+                {inspectorCollapsed ? (
+                  <KeyboardDoubleArrowLeftRoundedIcon fontSize="small" />
+                ) : (
+                  <KeyboardDoubleArrowRightRoundedIcon fontSize="small" />
+                )}
+              </button>
             </Tooltip>
             <Tooltip title={styleMode === "light" ? "暗色模式" : "亮色模式"}>
               <IconButton
@@ -663,21 +844,10 @@ function App() {
                 {styleMode === "light" ? <DarkModeRoundedIcon /> : <LightModeRoundedIcon />}
               </IconButton>
             </Tooltip>
-            <Tooltip title="刷新">
-              <span>
-                <IconButton
-                  aria-label="刷新 profile 列表"
-                  onClick={() => void refreshProfiles()}
-                  disabled={Boolean(busyLabel)}
-                >
-                  <RefreshRoundedIcon />
-                </IconButton>
-              </span>
-            </Tooltip>
           </Stack>
         </Box>
 
-        <Box className="workbench-grid">
+        <Box className={`workbench-grid ${inspectorCollapsed ? "inspector-collapsed" : ""}`}>
           <main id="profile-browser" className="profile-browser">
             <Paper className="browser-panel" elevation={0}>
               <Box className="browser-header">
@@ -687,6 +857,9 @@ function App() {
                     Codex profile 工作区
                   </Typography>
                 </Box>
+              </Box>
+
+              <Box className="browser-action-row">
                 <Stack className="browser-actions" direction="row" spacing={0.7}>
                   <Button
                     className="session-launch-button"
@@ -696,12 +869,47 @@ function App() {
                     onClick={handleOpenSessionCenter}
                   >
                     会话中心
-                    <span className="session-launch-count">{knownSessionCount}</span>
+                    {sessionReport ? (
+                      <span className="session-launch-count">
+                        {sessionReport.sessionCount}
+                        {sessionReport.hasMore ? "+" : ""}
+                      </span>
+                    ) : null}
+                  </Button>
+                  <Button
+                    className="auth-vault-button"
+                    size="small"
+                    variant="outlined"
+                    startIcon={<VpnKeyRoundedIcon />}
+                    onClick={handleOpenAuthVault}
+                  >
+                    认证库
+                    {authReport ? (
+                      <span className="session-launch-count">{authReport.backupCount}</span>
+                    ) : null}
                   </Button>
                   <Stack className="browser-metrics" direction="row" spacing={0.6}>
                     <Chip size="small" label={`${visibleProfiles.length}/${profiles.length}`} />
                     <Chip size="small" label={`运行 ${runningCount}`} />
                     <Chip size="small" label={`账号 ${signedInCount}`} />
+                  </Stack>
+                  <Stack className="profile-icon-actions" direction="row" spacing={0.4}>
+                    <Tooltip title="新增 profile">
+                      <IconButton aria-label="新增 profile" onClick={() => setCreateDialogOpen(true)}>
+                        <AddRoundedIcon />
+                      </IconButton>
+                    </Tooltip>
+                    <Tooltip title="刷新 profile">
+                      <span>
+                        <IconButton
+                          aria-label="刷新 profile 列表"
+                          onClick={() => void refreshProfiles()}
+                          disabled={Boolean(busyLabel)}
+                        >
+                          <RefreshRoundedIcon />
+                        </IconButton>
+                      </span>
+                    </Tooltip>
                   </Stack>
                 </Stack>
               </Box>
@@ -767,7 +975,7 @@ function App() {
             </Paper>
           </main>
 
-          <aside className="inspector-rail" aria-label="profile 详情">
+          <aside className="inspector-rail" aria-label="profile 详情" hidden={inspectorCollapsed}>
             <Paper className="inspector-panel" elevation={0}>
               {activeProfile ? (
                 <Stack className="inspector-content">
@@ -896,15 +1104,22 @@ function App() {
         <SessionCenterDialog
           open={sessionDialogOpen}
           items={sessionItems}
+          profiles={profiles}
+          report={sessionReport}
           activeProfileName={activeProfile?.name ?? ""}
           loading={sessionLoading}
           query={sessionQuery}
+          profileName={sessionProfileName}
           category={sessionCategory}
           page={sessionPage}
           onClose={() => setSessionDialogOpen(false)}
           onRefresh={() => void refreshProfileSessions()}
           onQueryChange={(value) => {
             setSessionQuery(value);
+            setSessionPage(1);
+          }}
+          onProfileChange={(value) => {
+            setSessionProfileName(value);
             setSessionPage(1);
           }}
           onCategoryChange={(value) => {
@@ -919,6 +1134,30 @@ function App() {
           }}
           onCopySummary={handleCopySessionSummary}
           onCopyReference={handleCopySessionReference}
+        />
+
+        <AuthVaultDialog
+          open={authDialogOpen}
+          report={authReport}
+          loading={authLoading}
+          busy={Boolean(busyLabel)}
+          activeProfileName={activeProfile?.name ?? ""}
+          selectedProfileName={authProfileName}
+          selectedProfileNames={selectedAuthProfileNames}
+          selectedBackupId={selectedAuthBackupId}
+          backupLabel={authBackupLabel}
+          confirmApply={confirmAuthApply}
+          onClose={() => setAuthDialogOpen(false)}
+          onRefresh={() => void refreshAuthVault()}
+          onProfileChange={setAuthProfileName}
+          onSelectedProfileNamesChange={setSelectedAuthProfileNames}
+          onBackupSelect={setSelectedAuthBackupId}
+          onBackupLabelChange={setAuthBackupLabel}
+          onConfirmApplyChange={setConfirmAuthApply}
+          onCreateBackups={(profileNames) => void handleCreateAuthBackups(profileNames)}
+          onApplyBackup={(backupId, targetProfileName) => void handleApplyAuthBackup(backupId, targetProfileName)}
+          onDeleteBackup={(backupId) => void handleDeleteAuthBackup(backupId)}
+          onReveal={(path) => void revealPath(path)}
         />
 
         <Dialog open={createDialogOpen} onClose={() => setCreateDialogOpen(false)} fullWidth maxWidth="md">
@@ -1142,6 +1381,7 @@ function buildSessionSummaryText(item: SessionCenterItem): string {
     `Profile: ${profileLabel(profile)} (${profile.name})`,
     `Profile Type: ${profile.category}`,
     `Title: ${session.title}`,
+    session.renamedTitle ? `Renamed Title: ${session.renamedTitle}` : null,
     session.summary ? `Summary: ${session.summary}` : null,
     session.cwd ? `CWD: ${session.cwd}` : null,
     `Time: ${formatSessionTime(session.updatedAt ?? session.startedAt)}`,
@@ -1160,6 +1400,7 @@ function buildSessionReferenceText(item: SessionCenterItem, targetProfile: Profi
     `来源 profile: ${profileLabel(profile)} (${profile.name})`,
     `来源类型: ${profile.category}`,
     `会话标题: ${session.title}`,
+    session.renamedTitle ? `重命名标题: ${session.renamedTitle}` : null,
     session.summary ? `会话摘要: ${session.summary}` : null,
     session.cwd ? `工作目录: ${session.cwd}` : null,
     `时间: ${formatSessionTime(session.updatedAt ?? session.startedAt)}`,
@@ -1171,17 +1412,29 @@ function buildSessionReferenceText(item: SessionCenterItem, targetProfile: Profi
     .join("\n");
 }
 
+function sessionReportLabel(count: number, hasMore = false): string {
+  return count > 0 ? `${count}${hasMore ? "+" : ""} 条会话` : "没有会话";
+}
+
+function sessionCenterKey(item: SessionCenterItem): string {
+  return `${item.profile.name}:${item.session.id}:${item.session.path ?? ""}`;
+}
+
 function SessionCenterDialog({
   open,
   items,
+  profiles,
+  report,
   activeProfileName,
   loading,
   query,
+  profileName,
   category,
   page,
   onClose,
   onRefresh,
   onQueryChange,
+  onProfileChange,
   onCategoryChange,
   onPageChange,
   onOpen,
@@ -1190,64 +1443,65 @@ function SessionCenterDialog({
 }: {
   open: boolean;
   items: SessionCenterItem[];
+  profiles: ProfileInfo[];
+  report: ProfileSessionReport | null;
   activeProfileName: string;
   loading: boolean;
   query: string;
+  profileName: string;
   category: string;
   page: number;
   onClose: () => void;
   onRefresh: () => void;
   onQueryChange: (value: string) => void;
+  onProfileChange: (value: string) => void;
   onCategoryChange: (value: string) => void;
   onPageChange: (page: number) => void;
   onOpen: (session: CodexSessionSummary) => void;
   onCopySummary: (item: SessionCenterItem) => void;
   onCopyReference: (item: SessionCenterItem) => void;
 }) {
+  const [selectedKey, setSelectedKey] = useState("");
+  const profileOptions = useMemo(() => {
+    return profiles.map((profile) => ({
+      name: profile.name,
+      alias: profile.alias,
+      category: profile.category,
+      isDefault: profile.isDefault,
+    })).sort((left, right) =>
+      profileLabel(left).localeCompare(profileLabel(right), "zh-CN"),
+    );
+  }, [profiles]);
   const categories = useMemo(
     () =>
-      Array.from(new Set(items.map((item) => item.profile.category).filter(Boolean))).sort((left, right) =>
+      Array.from(new Set(profiles.map((profile) => profile.category).filter(Boolean))).sort((left, right) =>
         left.localeCompare(right, "zh-CN"),
       ),
-    [items],
+    [profiles],
   );
-  const normalizedQuery = query.trim().toLowerCase();
-  const filteredItems = useMemo(
-    () =>
-      items.filter((item) => {
-        if (category !== "all" && item.profile.category !== category) {
-          return false;
-        }
-        if (!normalizedQuery) {
-          return true;
-        }
-        return [
-          item.profile.name,
-          item.profile.alias ?? "",
-          item.profile.category,
-          item.session.id,
-          item.session.title,
-          item.session.summary ?? "",
-          item.session.cwd ?? "",
-          item.session.path ?? "",
-        ]
-          .join(" ")
-          .toLowerCase()
-          .includes(normalizedQuery);
-      }),
-    [category, items, normalizedQuery],
-  );
-  const pageCount = Math.max(1, Math.ceil(filteredItems.length / SESSION_PAGE_SIZE));
+  const pageCount = Math.max(1, Math.ceil((report?.sessionCount ?? 0) / SESSION_PAGE_SIZE));
   const currentPage = Math.min(Math.max(page, 1), pageCount);
-  const pageStart = filteredItems.length === 0 ? 0 : (currentPage - 1) * SESSION_PAGE_SIZE;
-  const pageEnd = Math.min(pageStart + SESSION_PAGE_SIZE, filteredItems.length);
-  const pageItems = filteredItems.slice(pageStart, pageEnd);
+  const pageStart = report && items.length > 0 ? report.offset : 0;
+  const pageEnd = report ? report.offset + items.length : 0;
+  const pageItems = items;
+  const selectedItem =
+    pageItems.find((item) => sessionCenterKey(item) === selectedKey) ?? pageItems[0] ?? null;
 
   useEffect(() => {
     if (page !== currentPage) {
       onPageChange(currentPage);
     }
   }, [currentPage, onPageChange, page]);
+
+  useEffect(() => {
+    if (pageItems.length === 0) {
+      setSelectedKey("");
+      return;
+    }
+    if (pageItems.length > 0 && !pageItems.some((item) => sessionCenterKey(item) === selectedKey)) {
+      setSelectedKey(sessionCenterKey(pageItems[0]));
+    }
+  }, [pageItems, selectedKey]);
 
   return (
     <Dialog open={open} onClose={onClose} fullWidth maxWidth="lg" className="session-center-dialog">
@@ -1259,14 +1513,22 @@ function SessionCenterDialog({
               会话中心
             </Typography>
             <Typography variant="caption">
-              {items.length} 条会话
+              {loading
+                ? "正在读取当前页…"
+                : report
+                  ? sessionReportLabel(report.sessionCount, report.hasMore)
+                  : "按页读取会话"}
             </Typography>
           </Box>
         </Stack>
         <Stack direction="row" spacing={0.7} sx={{ alignItems: "center" }}>
-          <Button size="small" variant="text" startIcon={<RefreshRoundedIcon />} onClick={onRefresh} disabled={loading}>
-            刷新
-          </Button>
+          <Tooltip title="刷新">
+            <span>
+              <IconButton size="small" aria-label="刷新会话" onClick={onRefresh} disabled={loading}>
+                <RefreshRoundedIcon />
+              </IconButton>
+            </span>
+          </Tooltip>
           <Button size="small" variant="text" onClick={onClose}>
             关闭
           </Button>
@@ -1300,10 +1562,24 @@ function SessionCenterDialog({
             }}
           />
           <TextField
+            className="session-dialog-profile"
+            select
+            size="small"
+            value={profileName}
+            onChange={(event) => onProfileChange(event.target.value)}
+            slotProps={textFieldSlotProps("session-profile-name")}
+          >
+            <MenuItem value="all">全部 profile</MenuItem>
+            {profileOptions.map((profile) => (
+              <MenuItem key={profile.name} value={profile.name}>
+                {profileLabel(profile)}
+              </MenuItem>
+            ))}
+          </TextField>
+          <TextField
             className="session-dialog-category"
             select
             size="small"
-            label="Profile 类型"
             value={category}
             onChange={(event) => onCategoryChange(event.target.value)}
             slotProps={textFieldSlotProps("session-profile-category")}
@@ -1321,102 +1597,157 @@ function SessionCenterDialog({
             variant="text"
             onClick={() => {
               onQueryChange("");
+              onProfileChange("all");
               onCategoryChange("all");
             }}
-            disabled={!query.trim() && category === "all"}
+            disabled={!query.trim() && profileName === "all" && category === "all"}
           >
             清空
           </Button>
         </Box>
 
-        <Box className="session-dialog-list" aria-label="会话列表">
-          {pageItems.length > 0 ? (
-            pageItems.map((item) => (
-              <Box
-                key={`${item.profile.name}-${item.session.id}-${item.session.path ?? "index"}`}
-                className={`session-dialog-row ${
-                  item.profile.name === activeProfileName ? "current-profile" : ""
-                }`}
-              >
-                <Box className="session-dialog-row-main">
-                  <Stack direction="row" spacing={0.7} sx={{ alignItems: "center", minWidth: 0 }}>
-                    <Typography
-                      className="session-dialog-row-title"
-                      variant="subtitle2"
-                      component="span"
-                      translate="no"
-                      title={item.session.title}
-                    >
-                      {item.session.title}
+        <Box className="session-dialog-layout">
+          <Box className="session-list-pane" aria-label="会话列表">
+            {pageItems.length > 0 ? (
+              pageItems.map((item) => {
+                const key = sessionCenterKey(item);
+                return (
+                  <button
+                    key={key}
+                    type="button"
+                    className={`session-list-item ${key === selectedKey ? "selected" : ""} ${
+                      item.profile.name === activeProfileName ? "current-profile" : ""
+                    }`}
+                    onClick={() => setSelectedKey(key)}
+                  >
+                    <Box className="session-dialog-row-main">
+                      <Stack direction="row" spacing={0.7} sx={{ alignItems: "center", minWidth: 0 }}>
+                        <Typography
+                          className="session-dialog-row-title"
+                          variant="subtitle2"
+                          component="span"
+                          translate="no"
+                          title={item.session.title}
+                        >
+                          {item.session.title}
+                        </Typography>
+                        {item.session.renamedTitle ? (
+                          <Chip className="session-rename-chip" size="small" variant="outlined" label="重命名" />
+                        ) : null}
+                      </Stack>
+                      <Stack className="session-dialog-meta" direction="row" spacing={0.8}>
+                        <Typography variant="caption">
+                          {profileLabel(item.profile)}
+                        </Typography>
+                        <Typography variant="caption">
+                          {formatSessionTime(item.session.updatedAt ?? item.session.startedAt)}
+                        </Typography>
+                      </Stack>
+                      {item.session.summary ? (
+                        <Typography className="session-dialog-summary compact" variant="body2" title={item.session.summary}>
+                          {item.session.summary}
+                        </Typography>
+                      ) : null}
+                    </Box>
+                  </button>
+                );
+              })
+            ) : (
+              <Box className="session-dialog-empty">
+                {loading ? <RefreshRoundedIcon /> : <SearchRoundedIcon />}
+                <Typography variant="body2">{loading ? "正在读取会话…" : "没有匹配会话。"}</Typography>
+              </Box>
+            )}
+          </Box>
+
+          <Box className="session-detail-pane">
+            {selectedItem ? (
+              <>
+                <Stack className="session-detail-head" direction="row" spacing={1} sx={{ alignItems: "flex-start" }}>
+                  <TerminalRoundedIcon fontSize="small" />
+                  <Box sx={{ minWidth: 0, flex: 1 }}>
+                    <Typography variant="h6" translate="no" title={selectedItem.session.title}>
+                      {selectedItem.session.title}
                     </Typography>
-                    <Chip
-                      className="session-profile-chip"
-                      size="small"
-                      variant={item.profile.name === activeProfileName ? "filled" : "outlined"}
-                      label={profileLabel(item.profile)}
-                    />
-                    <Chip className="session-type-chip" size="small" variant="outlined" label={item.profile.category} />
-                  </Stack>
-                  {item.session.summary ? (
-                    <Typography className="session-dialog-summary" variant="body2" title={item.session.summary}>
-                      {item.session.summary}
+                    <Stack className="session-detail-chips" direction="row" spacing={0.6}>
+                      <Chip
+                        size="small"
+                        variant={selectedItem.profile.name === activeProfileName ? "filled" : "outlined"}
+                        label={profileLabel(selectedItem.profile)}
+                      />
+                      <Chip size="small" variant="outlined" label={selectedItem.profile.category} />
+                      {selectedItem.session.renamedTitle ? (
+                        <Chip className="session-rename-chip" size="small" variant="outlined" label="已重命名" />
+                      ) : null}
+                    </Stack>
+                  </Box>
+                </Stack>
+                {selectedItem.session.renamedTitle ? (
+                  <Typography className="session-rename-line" variant="caption" translate="no">
+                    重命名：{selectedItem.session.renamedTitle}
+                  </Typography>
+                ) : null}
+                {selectedItem.session.summary ? (
+                  <Typography className="session-detail-summary" variant="body2">
+                    {selectedItem.session.summary}
+                  </Typography>
+                ) : (
+                  <Typography className="session-dialog-muted" variant="caption">
+                    暂无摘要内容
+                  </Typography>
+                )}
+                <Box className="session-detail-meta">
+                  <Typography variant="caption">
+                    时间：{formatSessionTime(selectedItem.session.updatedAt ?? selectedItem.session.startedAt)}
+                  </Typography>
+                  {selectedItem.session.cwd ? (
+                    <Typography variant="caption" translate="no" title={selectedItem.session.cwd}>
+                      目录：{compactPath(selectedItem.session.cwd)}
                     </Typography>
-                  ) : (
-                    <Typography className="session-dialog-muted" variant="caption">
-                      暂无摘要内容
+                  ) : null}
+                  {selectedItem.session.path ? (
+                    <Typography variant="caption" translate="no" title={selectedItem.session.path}>
+                      文件：{compactPath(selectedItem.session.path)}
                     </Typography>
-                  )}
-                  <Stack className="session-dialog-meta" direction="row" spacing={0.8}>
-                    <Typography variant="caption">
-                      {formatSessionTime(item.session.updatedAt ?? item.session.startedAt)}
-                    </Typography>
-                    {item.session.cwd ? (
-                      <Typography variant="caption" translate="no" title={item.session.cwd}>
-                        {compactPath(item.session.cwd)}
-                      </Typography>
-                    ) : null}
-                  </Stack>
+                  ) : null}
                 </Box>
                 <Box className="session-dialog-actions">
-                  <Button
-                    size="small"
-                    variant="text"
-                    onClick={() => onOpen(item.session)}
-                    disabled={!item.session.path}
-                  >
+                  <Button size="small" variant="outlined" onClick={() => onOpen(selectedItem.session)} disabled={!selectedItem.session.path}>
                     打开
                   </Button>
                   <Button
                     size="small"
-                    variant="text"
+                    variant="outlined"
                     startIcon={<ContentCopyRoundedIcon />}
-                    onClick={() => onCopySummary(item)}
+                    onClick={() => onCopySummary(selectedItem)}
                   >
-                    复制
+                    复制摘要
                   </Button>
                   <Button
                     size="small"
-                    variant="outlined"
+                    variant="contained"
                     startIcon={<ShortcutRoundedIcon />}
-                    onClick={() => onCopyReference(item)}
+                    onClick={() => onCopyReference(selectedItem)}
                   >
-                    引用
+                    引用到当前
                   </Button>
                 </Box>
+              </>
+            ) : (
+              <Box className="session-dialog-empty tall">
+                <TerminalRoundedIcon />
+                <Typography variant="body2">选择一个会话查看摘要。</Typography>
               </Box>
-            ))
-          ) : (
-            <Box className="session-dialog-empty">
-              <SearchRoundedIcon />
-              <Typography variant="body2">没有匹配会话。</Typography>
-            </Box>
-          )}
+            )}
+          </Box>
         </Box>
       </DialogContent>
 
       <DialogActions className="session-dialog-footer">
         <Typography variant="caption">
-          {filteredItems.length === 0 ? "0 / 0" : `${pageStart + 1}-${pageEnd} / ${filteredItems.length}`}
+          {items.length === 0
+            ? "0 / 0"
+            : `${pageStart + 1}-${pageEnd} / ${report?.sessionCount ?? items.length}${report?.hasMore ? "+" : ""}`}
         </Typography>
         <Stack direction="row" spacing={0.5} sx={{ alignItems: "center" }}>
           <Tooltip title="上一页">
@@ -1440,7 +1771,7 @@ function SessionCenterDialog({
                 size="small"
                 aria-label="下一页"
                 onClick={() => onPageChange(currentPage + 1)}
-                disabled={currentPage >= pageCount}
+                disabled={!report?.hasMore && currentPage >= pageCount}
               >
                 <KeyboardArrowRightRoundedIcon />
               </IconButton>
@@ -1448,6 +1779,352 @@ function SessionCenterDialog({
           </Tooltip>
         </Stack>
       </DialogActions>
+    </Dialog>
+  );
+}
+
+function AuthVaultDialog({
+  open,
+  report,
+  loading,
+  busy,
+  activeProfileName,
+  selectedProfileName,
+  selectedProfileNames,
+  selectedBackupId,
+  backupLabel,
+  confirmApply,
+  onClose,
+  onRefresh,
+  onProfileChange,
+  onSelectedProfileNamesChange,
+  onBackupSelect,
+  onBackupLabelChange,
+  onConfirmApplyChange,
+  onCreateBackups,
+  onApplyBackup,
+  onDeleteBackup,
+  onReveal,
+}: {
+  open: boolean;
+  report: AuthVaultReport | null;
+  loading: boolean;
+  busy: boolean;
+  activeProfileName: string;
+  selectedProfileName: string;
+  selectedProfileNames: string[];
+  selectedBackupId: string;
+  backupLabel: string;
+  confirmApply: boolean;
+  onClose: () => void;
+  onRefresh: () => void;
+  onProfileChange: (value: string) => void;
+  onSelectedProfileNamesChange: (value: string[]) => void;
+  onBackupSelect: (value: string) => void;
+  onBackupLabelChange: (value: string) => void;
+  onConfirmApplyChange: (value: boolean) => void;
+  onCreateBackups: (profileNames: string[]) => void;
+  onApplyBackup: (backupId: string, targetProfileName: string) => void;
+  onDeleteBackup: (backupId: string) => void;
+  onReveal: (path: string) => void;
+}) {
+  const profiles = report?.profiles ?? [];
+  const backups = report?.backups ?? [];
+  const selectedProfile =
+    profiles.find((profile) => profile.profileName === selectedProfileName) ?? profiles[0] ?? null;
+  const selectedBackup = backups.find((backup) => backup.id === selectedBackupId) ?? backups[0] ?? null;
+  const backupableProfiles = profiles.filter((profile) => profile.authExists);
+  const selectedBackupableNames = selectedProfileNames.filter((name) =>
+    backupableProfiles.some((profile) => profile.profileName === name),
+  );
+  const allBackupableSelected =
+    backupableProfiles.length > 0 &&
+    backupableProfiles.every((profile) => selectedBackupableNames.includes(profile.profileName));
+  const targetLocked = Boolean(selectedProfile?.isDefault || selectedProfile?.isRunning);
+  const canCreateBackup = selectedBackupableNames.length > 0 && !busy && !loading;
+  const canApplyBackup = Boolean(selectedProfile && selectedBackup?.exists && confirmApply && !targetLocked) && !busy;
+  const targetHint = selectedProfile?.isDefault
+    ? "默认 codex 受保护，不能覆盖。"
+    : selectedProfile?.isRunning
+      ? "目标 profile 正在运行，先终止再应用。"
+      : selectedBackup?.exists
+        ? "应用前会自动备份目标现有 auth.json。"
+        : "选择一个可用备份。";
+
+  function toggleBackupProfile(profileName: string, checked: boolean) {
+    const next = new Set(selectedBackupableNames);
+    if (checked) {
+      next.add(profileName);
+    } else {
+      next.delete(profileName);
+    }
+    onSelectedProfileNamesChange(Array.from(next));
+  }
+
+  return (
+    <Dialog open={open} onClose={onClose} fullWidth maxWidth="lg" className="auth-vault-dialog">
+      <DialogTitle className="auth-dialog-title">
+        <Stack direction="row" spacing={1} sx={{ alignItems: "center", minWidth: 0 }}>
+          <SecurityRoundedIcon fontSize="small" />
+          <Box sx={{ minWidth: 0 }}>
+            <Typography variant="h6" component="span">
+              认证库
+            </Typography>
+            <Typography variant="caption">
+              {loading ? "正在读取…" : `${backups.length} 个备份 · ${profiles.length} 个 profile`}
+            </Typography>
+          </Box>
+        </Stack>
+        <Stack direction="row" spacing={0.7} sx={{ alignItems: "center" }}>
+          {report ? (
+            <Button size="small" variant="text" onClick={() => onReveal(report.vaultPath)}>
+              打开目录
+            </Button>
+          ) : null}
+          <Tooltip title="刷新">
+            <span>
+              <IconButton size="small" aria-label="刷新认证库" onClick={onRefresh} disabled={loading}>
+                <RefreshRoundedIcon />
+              </IconButton>
+            </span>
+          </Tooltip>
+          <Button size="small" variant="text" onClick={onClose}>
+            关闭
+          </Button>
+        </Stack>
+      </DialogTitle>
+
+      {loading ? <LinearProgress className="auth-dialog-progress" /> : null}
+
+      <DialogContent className="auth-dialog-content">
+        <Box className="auth-dialog-tools">
+          <TextField
+            select
+            size="small"
+            value={selectedProfile?.profileName ?? ""}
+            onChange={(event) => onProfileChange(event.target.value)}
+            slotProps={textFieldSlotProps("auth-target-profile")}
+          >
+            {profiles.map((profile) => (
+              <MenuItem key={profile.profileName} value={profile.profileName}>
+                {authSlotLabel(profile)}
+              </MenuItem>
+            ))}
+          </TextField>
+          <TextField
+            size="small"
+            label="备份名称"
+            value={backupLabel}
+            onChange={(event) => onBackupLabelChange(event.target.value)}
+            placeholder={selectedBackupableNames.length === 1 ? "可自定义单个备份名称" : "批量备份时自动命名"}
+            slotProps={textFieldSlotProps("auth-backup-label")}
+          />
+          <Stack className="auth-dialog-tool-actions" direction="row" spacing={0.6}>
+            <Button
+              className="auth-backup-action"
+              size="small"
+              variant="outlined"
+              startIcon={<SaveRoundedIcon />}
+              onClick={() => onCreateBackups(selectedBackupableNames)}
+              disabled={!canCreateBackup}
+            >
+              备份已选
+              {selectedBackupableNames.length > 0 ? (
+                <span className="session-launch-count">{selectedBackupableNames.length}</span>
+              ) : null}
+            </Button>
+            <Button
+              className="auth-backup-action"
+              size="small"
+              variant="outlined"
+              onClick={() => onCreateBackups(backupableProfiles.map((profile) => profile.profileName))}
+              disabled={backupableProfiles.length === 0 || busy || loading}
+            >
+              全部备份
+            </Button>
+            <Button
+              className="auth-backup-action"
+              size="small"
+              variant="text"
+              onClick={() =>
+                onSelectedProfileNamesChange(
+                  allBackupableSelected ? [] : backupableProfiles.map((profile) => profile.profileName),
+                )
+              }
+              disabled={backupableProfiles.length === 0}
+            >
+              {allBackupableSelected ? "清空" : "全选"}
+            </Button>
+          </Stack>
+        </Box>
+
+        <Box className="auth-dialog-grid">
+          <Box className="auth-pane auth-profile-pane">
+            <Stack className="auth-pane-title" direction="row" spacing={1} sx={{ alignItems: "center" }}>
+              <AccountCircleRoundedIcon fontSize="small" />
+              <Typography variant="subtitle2">当前认证</Typography>
+            </Stack>
+            <Box className="auth-list">
+              {profiles.length > 0 ? (
+                profiles.map((profile) => {
+                  const checked = selectedBackupableNames.includes(profile.profileName);
+                  return (
+                    <Box
+                      key={profile.profileName}
+                      className={`auth-profile-row ${
+                        profile.profileName === selectedProfile?.profileName ? "selected" : ""
+                      } ${profile.profileName === activeProfileName ? "current" : ""}`}
+                    >
+                      <Checkbox
+                        size="small"
+                        checked={checked}
+                        disabled={!profile.authExists}
+                        onChange={(event) => toggleBackupProfile(profile.profileName, event.target.checked)}
+                        slotProps={{ input: { "aria-label": `选择备份 ${authSlotLabel(profile)}` } }}
+                      />
+                      <button
+                        type="button"
+                        className="auth-row-select"
+                        onClick={() => onProfileChange(profile.profileName)}
+                      >
+                        <Box className="auth-row-main">
+                          <Typography variant="subtitle2" translate="no">
+                            {authSlotLabel(profile)}
+                          </Typography>
+                          <Typography variant="caption">{accountInfoLabel(profile.account)}</Typography>
+                          <Typography variant="caption" translate="no" title={profile.codexHome}>
+                            {compactPath(profile.codexHome)}
+                          </Typography>
+                        </Box>
+                      </button>
+                      <Box className="auth-row-tags">
+                        {profile.isDefault ? <Chip size="small" label="默认" /> : null}
+                        {profile.isRunning ? <Chip size="small" color="success" label="运行" /> : null}
+                        <Chip
+                          size="small"
+                          variant="outlined"
+                          label={profile.authExists ? "有 auth" : "无 auth"}
+                          color={profile.authExists ? "success" : "warning"}
+                        />
+                      </Box>
+                    </Box>
+                  );
+                })
+              ) : (
+                <Box className="auth-empty">
+                  <AccountCircleRoundedIcon />
+                  <Typography variant="body2">暂无 profile。</Typography>
+                </Box>
+              )}
+            </Box>
+          </Box>
+
+          <Box className="auth-pane auth-backup-pane">
+            <Stack className="auth-pane-title" direction="row" spacing={1} sx={{ alignItems: "center" }}>
+              <VpnKeyRoundedIcon fontSize="small" />
+              <Typography variant="subtitle2">认证备份</Typography>
+            </Stack>
+            <Box className="auth-list">
+              {backups.length > 0 ? (
+                backups.map((backup) => (
+                  <button
+                    key={backup.id}
+                    type="button"
+                    className={`auth-backup-row ${backup.id === selectedBackup?.id ? "selected" : ""}`}
+                    onClick={() => onBackupSelect(backup.id)}
+                  >
+                    <Box className="auth-row-main">
+                      <Typography variant="subtitle2" translate="no" title={backup.label}>
+                        {backup.label}
+                      </Typography>
+                      <Typography variant="caption">{accountInfoLabel(backup.account)}</Typography>
+                      <Typography variant="caption">
+                        {formatSessionTime(backup.createdAt)}
+                        {backup.sourceProfileName ? ` · ${backup.sourceProfileLabel ?? backup.sourceProfileName}` : ""}
+                      </Typography>
+                    </Box>
+                    <Box className="auth-row-tags">
+                      {backup.hasRefreshToken ? <Chip size="small" color="success" label="可刷新" /> : null}
+                      <Chip size="small" variant="outlined" label={backup.exists ? "可用" : "缺失"} />
+                    </Box>
+                  </button>
+                ))
+              ) : (
+                <Box className="auth-empty">
+                  <VpnKeyRoundedIcon />
+                  <Typography variant="body2">还没有认证备份。</Typography>
+                </Box>
+              )}
+            </Box>
+          </Box>
+
+          <Box className="auth-detail-pane">
+            <Stack className="auth-pane-title" direction="row" spacing={1} sx={{ alignItems: "center" }}>
+              <SecurityRoundedIcon fontSize="small" />
+              <Typography variant="subtitle2">应用到 profile</Typography>
+            </Stack>
+            {selectedBackup ? (
+              <Box className="auth-detail-card">
+                <Typography variant="h6" translate="no" title={selectedBackup.label}>
+                  {selectedBackup.label}
+                </Typography>
+                <Typography variant="body2">{accountInfoLabel(selectedBackup.account)}</Typography>
+                <Typography variant="caption" title={selectedBackup.path} translate="no">
+                  {compactPath(selectedBackup.path)}
+                </Typography>
+                <Stack className="auth-detail-tags" direction="row" spacing={0.6}>
+                  <Chip size="small" label={selectedBackup.exists ? "文件可用" : "文件缺失"} />
+                  {selectedBackup.hasRefreshToken ? <Chip size="small" color="success" label="含 refresh_token" /> : null}
+                </Stack>
+                <Alert className="auth-detail-alert" severity={targetLocked ? "warning" : "info"}>
+                  {targetHint}
+                </Alert>
+                <FormControlLabel
+                  control={
+                    <Checkbox
+                      checked={confirmApply}
+                      onChange={(event) => onConfirmApplyChange(event.target.checked)}
+                    />
+                  }
+                  label="我确认要覆盖目标 profile 的登录状态"
+                />
+                <Box className="auth-detail-actions">
+                  <Button
+                    variant="contained"
+                    startIcon={<VpnKeyRoundedIcon />}
+                    disabled={!canApplyBackup}
+                    onClick={() => selectedProfile && onApplyBackup(selectedBackup.id, selectedProfile.profileName)}
+                  >
+                    应用到 {selectedProfile ? authSlotLabel(selectedProfile) : "profile"}
+                  </Button>
+                  <Button
+                    variant="outlined"
+                    startIcon={<FolderRoundedIcon />}
+                    onClick={() => onReveal(selectedBackup.path)}
+                    disabled={!selectedBackup.exists}
+                  >
+                    定位
+                  </Button>
+                  <Button
+                    color="error"
+                    variant="outlined"
+                    startIcon={<DeleteOutlineRoundedIcon />}
+                    onClick={() => onDeleteBackup(selectedBackup.id)}
+                    disabled={busy}
+                  >
+                    删除
+                  </Button>
+                </Box>
+              </Box>
+            ) : (
+              <Box className="auth-empty tall">
+                <VpnKeyRoundedIcon />
+                <Typography variant="body2">选择或创建一个认证备份。</Typography>
+              </Box>
+            )}
+          </Box>
+        </Box>
+      </DialogContent>
     </Dialog>
   );
 }
@@ -1493,23 +2170,26 @@ function ProfileCard({
           <span translate="no">{profile.model ?? "unknown"}</span>
           <span translate="no">{profile.reasoningEffort ?? "unknown"}</span>
         </Box>
-        <Box className="profile-card-subline">
-          <Stack direction="row" spacing={0.7} sx={{ alignItems: "center", minWidth: 0 }}>
+        <Box className="profile-card-foot">
+          <Box className="profile-card-subline">
             <AccountCircleRoundedIcon fontSize="small" />
             <Typography variant="caption">{accountLabel(profile)}</Typography>
-          </Stack>
-        </Box>
-        {profile.latestSession ? (
-          <Box
-            className="profile-session-line"
-            title={profile.latestSession.summary ?? profile.latestSession.title}
-          >
-            <TerminalRoundedIcon fontSize="small" />
-            <Typography variant="caption" translate="no">
-              {profile.latestSession.title}
-            </Typography>
           </Box>
-        ) : null}
+          {profile.latestSession ? (
+            <Box
+              className="profile-session-line"
+              title={profile.latestSession.summary ?? profile.latestSession.title}
+            >
+              <TerminalRoundedIcon fontSize="small" />
+              <Typography variant="caption" translate="no">
+                {profile.latestSession.title}
+              </Typography>
+              {profile.latestSession.renamedTitle ? (
+                <span className="profile-session-rename">重命名</span>
+              ) : null}
+            </Box>
+          ) : null}
+        </Box>
       </button>
       <Box className="profile-card-action">
         <Tooltip title={iconTitle}>
@@ -1578,6 +2258,11 @@ function SessionBlock({ session }: { session: CodexSessionSummary | null }) {
               暂无摘要内容
             </Typography>
           )}
+          {session.renamedTitle ? (
+            <Typography className="session-rename-line" variant="caption" translate="no">
+              重命名：{session.renamedTitle}
+            </Typography>
+          ) : null}
           <Stack className="session-meta" direction="row" spacing={0.8}>
             <Typography variant="caption">{formatSessionTime(session.updatedAt ?? session.startedAt)}</Typography>
             {session.cwd ? (
@@ -1688,11 +2373,18 @@ function QuotaWindowRow({ window }: { window: QuotaWindowInfo }) {
 }
 
 function accountLabel(profile: ProfileInfo): string {
-  const account = profile.account;
+  return accountInfoLabel(profile.account);
+}
+
+function accountInfoLabel(account: ProfileInfo["account"] | AuthBackupEntry["account"]): string {
   if (!account) {
     return "未登录";
   }
   return account.email ?? account.name ?? account.accountId ?? account.authMode ?? "已登录";
+}
+
+function authSlotLabel(profile: AuthProfileSlot): string {
+  return profile.profileAlias || profile.profileName;
 }
 
 function profileSourceLabel(profile: ProfileInfo): string {
@@ -1769,7 +2461,7 @@ function PathBlock({ title, path, exists }: { title: string; path: string; exist
   return (
     <Box className="path-block">
       <Stack direction="row" spacing={1} sx={{ alignItems: "center", justifyContent: "space-between" }}>
-        <Stack direction="row" spacing={1} sx={{ alignItems: "center", minWidth: 0 }}>
+        <Stack className="path-title" direction="row" spacing={1} sx={{ alignItems: "center", minWidth: 0 }}>
           <FolderRoundedIcon fontSize="small" />
           <Typography variant="subtitle2" component="span">{title}</Typography>
         </Stack>

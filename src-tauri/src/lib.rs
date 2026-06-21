@@ -12,10 +12,58 @@ async fn list_profiles_command() -> Result<core::ProfileReport, String> {
 }
 
 #[tauri::command]
-async fn list_profile_sessions_command() -> Result<core::ProfileSessionReport, String> {
+async fn list_profile_sessions_command(
+    input: core::ListProfileSessionsInput,
+) -> Result<core::ProfileSessionReport, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let context = core::ProfileContext::from_options(None, None)?;
+        core::list_profile_sessions(&context, input)
+    })
+    .await
+    .map_err(|error| error.to_string())?
+}
+
+#[tauri::command]
+async fn list_auth_vault_command() -> Result<core::AuthVaultReport, String> {
     tauri::async_runtime::spawn_blocking(|| {
         let context = core::ProfileContext::from_options(None, None)?;
-        core::list_profile_sessions(&context)
+        core::list_auth_vault(&context)
+    })
+    .await
+    .map_err(|error| error.to_string())?
+}
+
+#[tauri::command]
+async fn create_auth_backup_command(
+    input: core::CreateAuthBackupInput,
+) -> Result<core::AuthVaultReport, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let context = core::ProfileContext::from_options(None, None)?;
+        core::create_auth_backup(&context, input)
+    })
+    .await
+    .map_err(|error| error.to_string())?
+}
+
+#[tauri::command]
+async fn apply_auth_backup_command(
+    input: core::ApplyAuthBackupInput,
+) -> Result<core::ProfileActionReport, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let context = core::ProfileContext::from_options(None, None)?;
+        core::apply_auth_backup(&context, input)
+    })
+    .await
+    .map_err(|error| error.to_string())?
+}
+
+#[tauri::command]
+async fn delete_auth_backup_command(
+    input: core::DeleteAuthBackupInput,
+) -> Result<core::AuthVaultReport, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let context = core::ProfileContext::from_options(None, None)?;
+        core::delete_auth_backup(&context, input)
     })
     .await
     .map_err(|error| error.to_string())?
@@ -135,6 +183,10 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             list_profiles_command,
             list_profile_sessions_command,
+            list_auth_vault_command,
+            create_auth_backup_command,
+            apply_auth_backup_command,
+            delete_auth_backup_command,
             create_profile_command,
             delete_profile_command,
             update_profile_metadata_command,

@@ -26,6 +26,7 @@ export interface ProfileInfo {
 export interface CodexSessionSummary {
   id: string;
   title: string;
+  renamedTitle: string | null;
   summary: string | null;
   updatedAt: string | null;
   startedAt: string | null;
@@ -98,6 +99,9 @@ export interface ProfileReport {
 export interface ProfileSessionReport {
   generatedAt: string;
   sessionCount: number;
+  offset: number;
+  limit: number;
+  hasMore: boolean;
   sessions: ProfileSessionSummary[];
 }
 
@@ -107,6 +111,49 @@ export interface ProfileSessionSummary {
   profileCategory: string;
   isDefault: boolean;
   session: CodexSessionSummary;
+}
+
+export interface ListProfileSessionsInput {
+  profileName: string | null;
+  category: string | null;
+  query: string | null;
+  offset: number;
+  limit: number;
+}
+
+export interface AuthProfileSlot {
+  profileName: string;
+  profileAlias: string | null;
+  profileCategory: string;
+  isDefault: boolean;
+  isRunning: boolean;
+  codexHome: string;
+  authPath: string;
+  authExists: boolean;
+  account: CodexAccountInfo | null;
+}
+
+export interface AuthBackupEntry {
+  id: string;
+  label: string;
+  createdAt: string;
+  sourceProfileName: string | null;
+  sourceProfileLabel: string | null;
+  sourceCodexHome: string | null;
+  path: string;
+  exists: boolean;
+  account: CodexAccountInfo | null;
+  hasRefreshToken: boolean;
+}
+
+export interface AuthVaultReport {
+  generatedAt: string;
+  vaultPath: string;
+  indexPath: string;
+  profileCount: number;
+  backupCount: number;
+  profiles: AuthProfileSlot[];
+  backups: AuthBackupEntry[];
 }
 
 export interface BackupInfo {
@@ -146,6 +193,21 @@ export interface ImportAuthInput {
   name: string;
   sourcePath: string;
   confirmSensitive: boolean;
+}
+
+export interface CreateAuthBackupInput {
+  name: string;
+  label: string | null;
+}
+
+export interface ApplyAuthBackupInput {
+  backupId: string;
+  targetProfileName: string;
+  confirmSensitive: boolean;
+}
+
+export interface DeleteAuthBackupInput {
+  backupId: string;
 }
 
 export interface ProfileMetadataInput {

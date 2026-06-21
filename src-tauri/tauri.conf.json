@@ -16,7 +16,7 @@
         "title": "rCodexManager",
         "width": 1080,
         "height": 640,
-        "minWidth": 1000,
+        "minWidth": 900,
         "minHeight": 520,
         "center": true,
         "titleBarStyle": "Overlay",

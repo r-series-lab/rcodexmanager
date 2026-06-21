@@ -1,8 +1,18 @@
 import { invoke } from "@tauri-apps/api/core";
-import { createMockActionReport, createMockProfileReport, createMockProfileSessionReport } from "./mock-data";
+import {
+  createMockActionReport,
+  createMockAuthVaultReport,
+  createMockProfileReport,
+  createMockProfileSessionReport,
+} from "./mock-data";
 import type {
+  ApplyAuthBackupInput,
+  AuthVaultReport,
   CreateProfileInput,
+  CreateAuthBackupInput,
+  DeleteAuthBackupInput,
   ImportAuthInput,
+  ListProfileSessionsInput,
   CodexNetworkRepairReport,
   ProfileMetadataInput,
   ProfileActionReport,
@@ -23,11 +33,39 @@ export async function listProfiles(): Promise<ProfileReport> {
   return invoke<ProfileReport>("list_profiles_command");
 }
 
-export async function listProfileSessions(): Promise<ProfileSessionReport> {
+export async function listProfileSessions(input: ListProfileSessionsInput): Promise<ProfileSessionReport> {
   if (!isTauriRuntime()) {
-    return createMockProfileSessionReport();
+    return createMockProfileSessionReport(input);
   }
-  return invoke<ProfileSessionReport>("list_profile_sessions_command");
+  return invoke<ProfileSessionReport>("list_profile_sessions_command", { input });
+}
+
+export async function listAuthVault(): Promise<AuthVaultReport> {
+  if (!isTauriRuntime()) {
+    return createMockAuthVaultReport();
+  }
+  return invoke<AuthVaultReport>("list_auth_vault_command");
+}
+
+export async function createAuthBackup(input: CreateAuthBackupInput): Promise<AuthVaultReport> {
+  if (!isTauriRuntime()) {
+    return createMockAuthVaultReport();
+  }
+  return invoke<AuthVaultReport>("create_auth_backup_command", { input });
+}
+
+export async function applyAuthBackup(input: ApplyAuthBackupInput): Promise<ProfileActionReport> {
+  if (!isTauriRuntime()) {
+    return createMockActionReport("applyAuthBackup", input.targetProfileName);
+  }
+  return invoke<ProfileActionReport>("apply_auth_backup_command", { input });
+}
+
+export async function deleteAuthBackup(input: DeleteAuthBackupInput): Promise<AuthVaultReport> {
+  if (!isTauriRuntime()) {
+    return createMockAuthVaultReport();
+  }
+  return invoke<AuthVaultReport>("delete_auth_backup_command", { input });
 }
 
 export async function createProfile(input: CreateProfileInput): Promise<ProfileActionReport> {

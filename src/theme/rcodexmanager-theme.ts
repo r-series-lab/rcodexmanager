@@ -12,27 +12,27 @@ const fontFamily = [
 ].join(", ");
 
 const lightTokens = {
-  bg: "#f5f7fa",
-  panel: "rgba(255,255,255,0.86)",
-  line: "rgba(62,78,99,0.14)",
-  text: "#182231",
-  muted: "#69788c",
-  accent: "#315fbb",
-  accentHover: "#3d6fcd",
-  success: "#168a55",
-  warning: "#b7791f",
+  bg: "rgba(243,246,250,0.58)",
+  panel: "rgba(250,252,255,0.72)",
+  line: "rgba(52,76,96,0.14)",
+  text: "#17202b",
+  muted: "rgba(63,79,97,0.68)",
+  accent: "#5c7085",
+  accentHover: "#455a70",
+  success: "#3f8269",
+  warning: "#a86c1c",
 };
 
 const darkTokens = {
-  bg: "#080d13",
-  panel: "rgba(16,22,31,0.86)",
-  line: "rgba(139,169,208,0.13)",
-  text: "#f2f6fb",
-  muted: "rgba(218,226,238,0.62)",
-  accent: "#80a6e8",
-  accentHover: "#96b7f0",
-  success: "#54d98f",
-  warning: "#f2bc5b",
+  bg: "rgba(10,12,15,0.78)",
+  panel: "rgba(24,29,36,0.72)",
+  line: "rgba(226,232,240,0.12)",
+  text: "#f2f6f4",
+  muted: "rgba(221,231,229,0.62)",
+  accent: "#8fb8ea",
+  accentHover: "#b6d2f4",
+  success: "#86c2a0",
+  warning: "#ecc26f",
 };
 
 export function createRcodexManagerTheme(styleMode: CodexManagerStyleMode) {
@@ -145,7 +145,7 @@ export function createRcodexManagerTheme(styleMode: CodexManagerStyleMode) {
             transition: "background-color 140ms ease, border-color 140ms ease, color 140ms ease",
             "&:hover": {
               borderColor: tokens.accent,
-              backgroundColor: dark ? "rgba(128,166,232,0.09)" : "rgba(49,95,187,0.07)",
+              backgroundColor: dark ? "rgba(143,184,234,0.1)" : "rgba(92,112,133,0.1)",
             },
             "&.Mui-focusVisible": {
               outline: `2px solid ${dark ? "rgba(128,166,232,0.72)" : "rgba(49,95,187,0.62)"}`,
@@ -240,7 +240,8 @@ export function createRcodexManagerTheme(styleMode: CodexManagerStyleMode) {
             backgroundImage: "none",
             boxShadow: dark
               ? "0 28px 72px rgba(0,0,0,0.46)"
-              : "0 24px 64px rgba(37,55,79,0.18)",
+              : "0 24px 64px rgba(28,48,68,0.18)",
+            backdropFilter: "blur(28px) saturate(1.22)",
           },
         },
       },

@@ -1,5 +1,5 @@
 use base64::{engine::general_purpose, Engine as _};
-use chrono::{SecondsFormat, Utc};
+use chrono::{DateTime, Duration as ChronoDuration, SecondsFormat, Utc};
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
 use std::collections::BTreeMap;
@@ -17,7 +17,7 @@ const DEFAULT_REASONING_EFFORT: &str = "xhigh";
 const CHATGPT_BASE_URL: &str = "https://chatgpt.com";
 const CHATGPT_USAGE_ENDPOINT: &str = "https://chatgpt.com/backend-api/wham/usage";
 const QUOTA_HTTP_TIMEOUT_SECONDS: u64 = 25;
-const RECENT_SESSION_LIMIT: usize = 8;
+const PROFILE_SESSION_PREVIEW_LIMIT: usize = 1;
 const DEFAULT_NO_PROXY: &str = "localhost,127.0.0.1,::1,*.local";
 const CODEX_WEBSOCKET_FEATURE_FLAGS: &[&str] = &[
     "responses_websockets",
@@ -92,6 +92,40 @@ pub struct ImportAuthInput {
     pub confirm_sensitive: bool,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ListProfileSessionsInput {
+    pub profile_name: Option<String>,
+    pub category: Option<String>,
+    pub query: Option<String>,
+    #[serde(default)]
+    pub offset: usize,
+    #[serde(default = "default_session_page_limit")]
+    pub limit: usize,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CreateAuthBackupInput {
+    pub name: String,
+    pub label: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ApplyAuthBackupInput {
+    pub backup_id: String,
+    pub target_profile_name: String,
+    #[serde(default)]
+    pub confirm_sensitive: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DeleteAuthBackupInput {
+    pub backup_id: String,
+}
+
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ProfileInfo {
@@ -124,6 +158,7 @@ pub struct ProfileInfo {
 pub struct CodexSessionSummary {
     pub id: String,
     pub title: String,
+    pub renamed_title: Option<String>,
     pub summary: Option<String>,
     pub updated_at: Option<String>,
     pub started_at: Option<String>,
@@ -210,6 +245,9 @@ pub struct ProfileReport {
 pub struct ProfileSessionReport {
     pub generated_at: String,
     pub session_count: usize,
+    pub offset: usize,
+    pub limit: usize,
+    pub has_more: bool,
     pub sessions: Vec<ProfileSessionSummary>,
 }
 
@@ -221,6 +259,47 @@ pub struct ProfileSessionSummary {
     pub profile_category: String,
     pub is_default: bool,
     pub session: CodexSessionSummary,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AuthProfileSlot {
+    pub profile_name: String,
+    pub profile_alias: Option<String>,
+    pub profile_category: String,
+    pub is_default: bool,
+    pub is_running: bool,
+    pub codex_home: String,
+    pub auth_path: String,
+    pub auth_exists: bool,
+    pub account: Option<CodexAccountInfo>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AuthBackupEntry {
+    pub id: String,
+    pub label: String,
+    pub created_at: String,
+    pub source_profile_name: Option<String>,
+    pub source_profile_label: Option<String>,
+    pub source_codex_home: Option<String>,
+    pub path: String,
+    pub exists: bool,
+    pub account: Option<CodexAccountInfo>,
+    pub has_refresh_token: bool,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AuthVaultReport {
+    pub generated_at: String,
+    pub vault_path: String,
+    pub index_path: String,
+    pub profile_count: usize,
+    pub backup_count: usize,
+    pub profiles: Vec<AuthProfileSlot>,
+    pub backups: Vec<AuthBackupEntry>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -294,6 +373,24 @@ struct ImportedAuthPayload {
     has_refresh_token: bool,
 }
 
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct AuthVaultStore {
+    backups: BTreeMap<String, AuthBackupRecord>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct AuthBackupRecord {
+    id: String,
+    label: String,
+    created_at: String,
+    source_profile_name: Option<String>,
+    source_profile_label: Option<String>,
+    source_codex_home: Option<String>,
+    path: String,
+}
+
 pub fn list_profiles(context: &ProfileContext) -> Result<ProfileReport, String> {
     let contents = read_zshrc(context)?;
     let managed_ranges = managed_ranges(&contents);
@@ -323,7 +420,8 @@ pub fn list_profiles(context: &ProfileContext) -> Result<ProfileReport, String> 
         let user_data_dir = expand_shell_path(&user_data_raw, &context.home_dir);
         let config_path = codex_home.join("config.toml");
         let config = read_codex_config(&config_path);
-        let recent_sessions = read_recent_session_summaries(&codex_home, RECENT_SESSION_LIMIT);
+        let recent_sessions =
+            read_recent_session_summaries(&codex_home, PROFILE_SESSION_PREVIEW_LIMIT);
         let latest_session = recent_sessions.first().cloned();
         let metadata = metadata_store
             .profiles
@@ -381,14 +479,48 @@ pub fn list_profiles(context: &ProfileContext) -> Result<ProfileReport, String> 
     })
 }
 
-pub fn list_profile_sessions(context: &ProfileContext) -> Result<ProfileSessionReport, String> {
+pub fn list_profile_sessions(
+    context: &ProfileContext,
+    input: ListProfileSessionsInput,
+) -> Result<ProfileSessionReport, String> {
     let report = list_profiles(context)?;
+    let offset = input.offset;
+    let limit = normalize_session_page_limit(input.limit);
+    let scan_limit = if input
+        .query
+        .as_deref()
+        .is_some_and(|value| !value.trim().is_empty())
+    {
+        (offset + limit + 1).max(80).min(400)
+    } else {
+        offset + limit + 1
+    };
+    let requested_profile = normalized_optional_filter(input.profile_name.as_deref());
+    let requested_category = normalized_optional_filter(input.category.as_deref());
+    let query = input
+        .query
+        .as_deref()
+        .map(normalize_search_query)
+        .filter(|value| !value.is_empty());
     let mut sessions = Vec::new();
 
     for profile in report.profiles {
+        if requested_profile
+            .as_ref()
+            .is_some_and(|value| profile.name != *value)
+        {
+            continue;
+        }
+        if requested_category
+            .as_ref()
+            .is_some_and(|value| profile.category != *value)
+        {
+            continue;
+        }
+
         let codex_home = PathBuf::from(&profile.codex_home);
         sessions.extend(
-            read_recent_session_summaries(&codex_home, usize::MAX)
+            read_recent_session_summaries(&codex_home, scan_limit)
                 .into_iter()
                 .map(|session| ProfileSessionSummary {
                     profile_name: profile.name.clone(),
@@ -400,18 +532,212 @@ pub fn list_profile_sessions(context: &ProfileContext) -> Result<ProfileSessionR
         );
     }
 
+    if let Some(query) = query.as_ref() {
+        sessions.retain(|item| profile_session_matches_query(item, query));
+    }
+
     sessions.sort_by(|left, right| {
         session_sort_value(&right.session)
             .cmp(session_sort_value(&left.session))
             .then_with(|| left.profile_name.cmp(&right.profile_name))
             .then_with(|| left.session.id.cmp(&right.session.id))
     });
+    let session_count = sessions.len();
+    let page_sessions = sessions
+        .into_iter()
+        .skip(offset)
+        .take(limit)
+        .collect::<Vec<_>>();
 
     Ok(ProfileSessionReport {
         generated_at: now_iso(),
-        session_count: sessions.len(),
-        sessions,
+        session_count,
+        offset,
+        limit,
+        has_more: offset + page_sessions.len() < session_count,
+        sessions: page_sessions,
     })
+}
+
+pub fn list_auth_vault(context: &ProfileContext) -> Result<AuthVaultReport, String> {
+    let report = list_profiles(context)?;
+    let profiles = report
+        .profiles
+        .iter()
+        .map(auth_profile_slot)
+        .collect::<Vec<_>>();
+    let store = read_auth_vault_store(context)?;
+    let mut backups = store
+        .backups
+        .into_values()
+        .map(auth_backup_entry)
+        .collect::<Vec<_>>();
+
+    backups.sort_by(|left, right| {
+        right
+            .created_at
+            .cmp(&left.created_at)
+            .then_with(|| left.label.cmp(&right.label))
+    });
+
+    Ok(AuthVaultReport {
+        generated_at: now_iso(),
+        vault_path: path_string(&auth_vault_dir(context)),
+        index_path: path_string(&auth_vault_index_path(context)),
+        profile_count: profiles.len(),
+        backup_count: backups.len(),
+        profiles,
+        backups,
+    })
+}
+
+pub fn create_auth_backup(
+    context: &ProfileContext,
+    input: CreateAuthBackupInput,
+) -> Result<AuthVaultReport, String> {
+    validate_profile_selector_name(&input.name)?;
+    let profile = find_profile(context, &input.name)?;
+    let auth_path = PathBuf::from(&profile.codex_home).join("auth.json");
+    let contents = fs::read_to_string(&auth_path).map_err(|error| {
+        format!(
+            "failed to read {} auth.json for backup: {error}",
+            profile.name
+        )
+    })?;
+    let auth_json: Value = serde_json::from_str(&contents)
+        .map_err(|error| format!("failed to parse source auth.json: {error}"))?;
+    if read_codex_auth_material_from_value(&auth_json).is_none() {
+        return Err(format!(
+            "{} auth.json does not contain readable Codex auth material",
+            profile.name
+        ));
+    }
+
+    let mut store = read_auth_vault_store(context)?;
+    let vault_dir = auth_vault_dir(context);
+    fs::create_dir_all(&vault_dir).map_err(|error| error.to_string())?;
+    let backup_id = unique_auth_backup_id(&store, &profile.name);
+    let backup_path = vault_dir.join(format!("{backup_id}.auth.json"));
+    write_json_atomic(&backup_path, &auth_json)?;
+
+    let label = input
+        .label
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(ToOwned::to_owned)
+        .unwrap_or_else(|| {
+            format!(
+                "{} 认证备份",
+                profile.alias.as_deref().unwrap_or(profile.name.as_str())
+            )
+        });
+
+    store.backups.insert(
+        backup_id.clone(),
+        AuthBackupRecord {
+            id: backup_id,
+            label,
+            created_at: now_iso(),
+            source_profile_name: Some(profile.name),
+            source_profile_label: profile.alias,
+            source_codex_home: Some(profile.codex_home),
+            path: path_string(&backup_path),
+        },
+    );
+    write_auth_vault_store(context, &store)?;
+
+    list_auth_vault(context)
+}
+
+pub fn apply_auth_backup(
+    context: &ProfileContext,
+    input: ApplyAuthBackupInput,
+) -> Result<ProfileActionReport, String> {
+    if !input.confirm_sensitive {
+        return Err("must confirm sensitive token restore before writing auth.json".to_string());
+    }
+
+    let backup_id = input.backup_id.trim();
+    if backup_id.is_empty() {
+        return Err("backup id is required".to_string());
+    }
+    validate_profile_selector_name(&input.target_profile_name)?;
+    let target = find_profile(context, &input.target_profile_name)?;
+    ensure_mutable_profile(&target, "apply auth backup to")?;
+    if target.is_running {
+        return Err(format!(
+            "{} is running; terminate the target profile before applying auth backup",
+            target.name
+        ));
+    }
+
+    let store = read_auth_vault_store(context)?;
+    let record = store
+        .backups
+        .get(backup_id)
+        .ok_or_else(|| format!("auth backup {backup_id} was not found"))?;
+    let backup_path = PathBuf::from(&record.path);
+    let contents = fs::read_to_string(&backup_path).map_err(|error| {
+        format!(
+            "failed to read auth backup {}: {error}",
+            path_string(&backup_path)
+        )
+    })?;
+    let imported = normalize_import_auth_json(&contents)?;
+    let target_auth_path = PathBuf::from(&target.codex_home).join("auth.json");
+
+    if let Some(parent) = target_auth_path.parent() {
+        fs::create_dir_all(parent).map_err(|error| error.to_string())?;
+    }
+
+    let mut backups = Vec::new();
+    if target_auth_path.exists() {
+        backups.push(backup_file_copy(&target_auth_path, "auth-vault-apply")?);
+    }
+    write_json_atomic(&target_auth_path, &imported.auth_json)?;
+
+    let refreshed = find_profile(context, &target.name)?;
+    let refresh_hint = if imported.has_refresh_token {
+        "refresh_token included"
+    } else {
+        "refresh_token missing; login may expire"
+    };
+
+    Ok(ProfileActionReport {
+        generated_at: now_iso(),
+        action: "applyAuthBackup".to_string(),
+        zshrc_path: path_string(&context.zshrc_path),
+        profile: Some(refreshed),
+        backups,
+        message: format!(
+            "applied auth backup {} to {} ({refresh_hint})",
+            record.label, target.name
+        ),
+    })
+}
+
+pub fn delete_auth_backup(
+    context: &ProfileContext,
+    input: DeleteAuthBackupInput,
+) -> Result<AuthVaultReport, String> {
+    let backup_id = input.backup_id.trim();
+    if backup_id.is_empty() {
+        return Err("backup id is required".to_string());
+    }
+    let mut store = read_auth_vault_store(context)?;
+    let record = store
+        .backups
+        .remove(backup_id)
+        .ok_or_else(|| format!("auth backup {backup_id} was not found"))?;
+    write_auth_vault_store(context, &store)?;
+
+    let backup_path = PathBuf::from(record.path);
+    if backup_path.exists() {
+        fs::remove_file(&backup_path).map_err(|error| error.to_string())?;
+    }
+
+    list_auth_vault(context)
 }
 
 pub fn create_profile(
@@ -877,7 +1203,7 @@ fn default_profile_info(
     let (codex_home, user_data_dir) = default_main_profile_paths(context);
     let config_path = codex_home.join("config.toml");
     let running_pids = matching_default_profile_pids(running_processes, &user_data_dir);
-    let recent_sessions = read_recent_session_summaries(&codex_home, RECENT_SESSION_LIMIT);
+    let recent_sessions = read_recent_session_summaries(&codex_home, PROFILE_SESSION_PREVIEW_LIMIT);
     let latest_session = recent_sessions.first().cloned();
     let should_show = codex_home.exists() || user_data_dir.exists();
     if !should_show {
@@ -1058,11 +1384,6 @@ fn read_recent_session_summaries(codex_home: &Path, limit: usize) -> Vec<CodexSe
 
     let index_entries = read_session_index_entries(codex_home);
     let sessions_dir = codex_home.join("sessions");
-    let mut files = Vec::new();
-    collect_session_files(&sessions_dir, &mut files);
-    files.sort_by_key(session_modified_at);
-    files.reverse();
-
     let mut summaries = Vec::new();
     let mut seen_ids = BTreeSet::new();
     let mut seen_paths = BTreeSet::new();
@@ -1071,7 +1392,8 @@ fn read_recent_session_summaries(codex_home: &Path, limit: usize) -> Vec<CodexSe
         if summaries.len() >= limit {
             break;
         }
-        let session_path = find_session_file_by_id_in_files(&files, &entry.id);
+        let session_path =
+            find_session_file_by_id(codex_home, &entry.id, entry.updated_at.as_deref());
         if let Some(summary) = session_summary_from_parts(Some(entry), session_path.as_deref()) {
             if remember_session_summary(&summary, &mut seen_ids, &mut seen_paths) {
                 summaries.push(summary);
@@ -1079,6 +1401,7 @@ fn read_recent_session_summaries(codex_home: &Path, limit: usize) -> Vec<CodexSe
         }
     }
 
+    let files = collect_recent_session_files_limited(&sessions_dir, limit);
     for path in files {
         if summaries.len() >= limit {
             break;
@@ -1111,18 +1434,24 @@ fn session_summary_from_parts(
                 .and_then(|path| path.file_stem())
                 .map(|value| value.to_string_lossy().to_string())
         })?;
-    let title = index_entry
+    let renamed_title = index_entry
         .as_ref()
-        .and_then(|entry| normalize_session_title(entry.thread_name.as_deref()))
+        .and_then(|entry| normalize_session_title(entry.thread_name.as_deref()));
+    let title = renamed_title
+        .clone()
         .or_else(|| details.summary.as_deref().and_then(summary_title_from_text))
         .unwrap_or_else(|| "未命名会话".to_string());
+    let updated_at = index_entry
+        .as_ref()
+        .and_then(|entry| entry.updated_at.clone());
     let path = session_path.map(path_string);
 
     Some(CodexSessionSummary {
         id,
         title,
+        renamed_title,
         summary: details.summary,
-        updated_at: index_entry.and_then(|entry| entry.updated_at),
+        updated_at,
         started_at: details.started_at,
         cwd: details.cwd,
         path,
@@ -1161,33 +1490,133 @@ fn read_session_index_entries(codex_home: &Path) -> Vec<SessionIndexEntry> {
     entries
 }
 
-fn find_session_file_by_id_in_files(files: &[PathBuf], id: &str) -> Option<PathBuf> {
+fn find_session_file_by_id(
+    codex_home: &Path,
+    id: &str,
+    updated_at: Option<&str>,
+) -> Option<PathBuf> {
     let id = id.trim();
     if id.is_empty() {
         return None;
     }
-    files
-        .iter()
-        .filter(|path| {
-            path.file_name()
-                .map(|name| name.to_string_lossy().contains(id))
-                .unwrap_or(false)
-        })
-        .max_by_key(|path| session_modified_at(path))
-        .cloned()
+    let sessions_dir = codex_home.join("sessions");
+    find_session_file_by_id_near_date(&sessions_dir, id, updated_at)
+        .or_else(|| find_session_file_by_id_recursive(&sessions_dir, id))
 }
 
-fn collect_session_files(dir: &Path, out: &mut Vec<PathBuf>) {
-    let Ok(entries) = fs::read_dir(dir) else {
-        return;
-    };
-    for entry in entries.flatten() {
-        let path = entry.path();
+fn find_session_file_by_id_near_date(
+    sessions_dir: &Path,
+    id: &str,
+    updated_at: Option<&str>,
+) -> Option<PathBuf> {
+    let parsed = updated_at.and_then(|value| DateTime::parse_from_rfc3339(value).ok())?;
+    let date = parsed.date_naive();
+
+    for offset in 0_i64..=7 {
+        let Some(day) = date.checked_sub_signed(ChronoDuration::days(offset)) else {
+            continue;
+        };
+        let dir = sessions_dir
+            .join(day.format("%Y").to_string())
+            .join(day.format("%m").to_string())
+            .join(day.format("%d").to_string());
+        if let Some(path) = find_session_file_by_id_in_dir(&dir, id) {
+            return Some(path);
+        }
+    }
+
+    None
+}
+
+fn find_session_file_by_id_recursive(dir: &Path, id: &str) -> Option<PathBuf> {
+    for path in sorted_dir_entries(dir) {
         if path.is_dir() {
-            collect_session_files(&path, out);
-        } else if path.extension().and_then(|value| value.to_str()) == Some("jsonl") {
+            if let Some(candidate) = find_session_file_by_id_recursive(&path, id) {
+                return Some(candidate);
+            }
+        } else if is_session_file_match(&path, id) {
+            return Some(path);
+        }
+    }
+    None
+}
+
+fn find_session_file_by_id_in_dir(dir: &Path, id: &str) -> Option<PathBuf> {
+    let mut best = None;
+    for path in sorted_dir_entries(dir) {
+        if is_session_file_match(&path, id) {
+            keep_latest_session_file(&mut best, path);
+        }
+    }
+    best
+}
+
+fn collect_recent_session_files_limited(dir: &Path, limit: usize) -> Vec<PathBuf> {
+    let mut files = Vec::new();
+    collect_session_files_limited(dir, &mut files, limit);
+    files.sort_by_key(session_modified_at);
+    files.reverse();
+    files.truncate(limit);
+    files
+}
+
+fn collect_session_files_limited(dir: &Path, out: &mut Vec<PathBuf>, limit: usize) {
+    if out.len() >= limit {
+        return;
+    }
+    for path in sorted_dir_entries(dir) {
+        if out.len() >= limit {
+            break;
+        }
+        if path.is_dir() {
+            collect_session_files_limited(&path, out, limit);
+        } else if is_session_jsonl(&path) {
             out.push(path);
         }
+    }
+}
+
+fn sorted_dir_entries(dir: &Path) -> Vec<PathBuf> {
+    let Ok(entries) = fs::read_dir(dir) else {
+        return Vec::new();
+    };
+    let mut paths = entries
+        .flatten()
+        .map(|entry| entry.path())
+        .collect::<Vec<_>>();
+    paths.sort_by(|left, right| {
+        path_file_name(right)
+            .cmp(&path_file_name(left))
+            .then_with(|| right.cmp(left))
+    });
+    paths
+}
+
+fn path_file_name(path: &Path) -> String {
+    path.file_name()
+        .map(|value| value.to_string_lossy().to_string())
+        .unwrap_or_default()
+}
+
+fn is_session_file_match(path: &Path, id: &str) -> bool {
+    is_session_jsonl(path)
+        && path
+            .file_name()
+            .map(|name| name.to_string_lossy().contains(id))
+            .unwrap_or(false)
+}
+
+fn is_session_jsonl(path: &Path) -> bool {
+    path.extension().and_then(|value| value.to_str()) == Some("jsonl")
+}
+
+fn keep_latest_session_file(best: &mut Option<PathBuf>, candidate: PathBuf) {
+    let should_replace = best
+        .as_ref()
+        .map(|current| session_modified_at(&candidate) > session_modified_at(current))
+        .unwrap_or(true);
+    if should_replace {
+        *best = Some(candidate);
     }
 }
 
@@ -1203,6 +1632,42 @@ fn session_sort_value(session: &CodexSessionSummary) -> &str {
         .as_deref()
         .or(session.started_at.as_deref())
         .unwrap_or_default()
+}
+
+fn normalize_session_page_limit(limit: usize) -> usize {
+    limit.clamp(1, 50)
+}
+
+fn normalized_optional_filter(value: Option<&str>) -> Option<String> {
+    value
+        .map(str::trim)
+        .filter(|value| !value.is_empty() && *value != "all")
+        .map(ToOwned::to_owned)
+}
+
+fn normalize_search_query(value: &str) -> String {
+    value
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ")
+        .to_lowercase()
+}
+
+fn profile_session_matches_query(item: &ProfileSessionSummary, query: &str) -> bool {
+    [
+        item.profile_name.as_str(),
+        item.profile_alias.as_deref().unwrap_or_default(),
+        item.profile_category.as_str(),
+        item.session.id.as_str(),
+        item.session.title.as_str(),
+        item.session.renamed_title.as_deref().unwrap_or_default(),
+        item.session.summary.as_deref().unwrap_or_default(),
+        item.session.cwd.as_deref().unwrap_or_default(),
+        item.session.path.as_deref().unwrap_or_default(),
+    ]
+    .join(" ")
+    .to_lowercase()
+    .contains(query)
 }
 
 fn remember_session_summary(
@@ -1923,10 +2388,126 @@ fn read_zshrc(context: &ProfileContext) -> Result<String, String> {
 }
 
 fn metadata_path(context: &ProfileContext) -> PathBuf {
-    context
-        .home_dir
-        .join(".rcodexmanager")
-        .join("profile-metadata.json")
+    app_data_dir(context).join("profile-metadata.json")
+}
+
+fn app_data_dir(context: &ProfileContext) -> PathBuf {
+    context.home_dir.join(".rcodexmanager")
+}
+
+fn auth_vault_dir(context: &ProfileContext) -> PathBuf {
+    app_data_dir(context).join("auth-vault")
+}
+
+fn auth_vault_index_path(context: &ProfileContext) -> PathBuf {
+    app_data_dir(context).join("auth-vault.json")
+}
+
+fn read_auth_vault_store(context: &ProfileContext) -> Result<AuthVaultStore, String> {
+    let path = auth_vault_index_path(context);
+    if !path.exists() {
+        return Ok(AuthVaultStore::default());
+    }
+
+    let contents = fs::read_to_string(&path).map_err(|error| error.to_string())?;
+    serde_json::from_str(&contents).map_err(|error| {
+        format!(
+            "failed to parse auth vault file {}: {error}",
+            path_string(&path)
+        )
+    })
+}
+
+fn write_auth_vault_store(context: &ProfileContext, store: &AuthVaultStore) -> Result<(), String> {
+    let path = auth_vault_index_path(context);
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent).map_err(|error| error.to_string())?;
+    }
+    let payload = serde_json::to_string_pretty(store).map_err(|error| error.to_string())?;
+    fs::write(path, format!("{payload}\n")).map_err(|error| error.to_string())
+}
+
+fn auth_profile_slot(profile: &ProfileInfo) -> AuthProfileSlot {
+    let auth_path = PathBuf::from(&profile.codex_home).join("auth.json");
+    AuthProfileSlot {
+        profile_name: profile.name.clone(),
+        profile_alias: profile.alias.clone(),
+        profile_category: profile.category.clone(),
+        is_default: profile.is_default,
+        is_running: profile.is_running,
+        codex_home: profile.codex_home.clone(),
+        auth_path: path_string(&auth_path),
+        auth_exists: auth_path.exists(),
+        account: profile.account.clone(),
+    }
+}
+
+fn auth_backup_entry(record: AuthBackupRecord) -> AuthBackupEntry {
+    let path = PathBuf::from(&record.path);
+    let auth_json = fs::read_to_string(&path)
+        .ok()
+        .and_then(|contents| serde_json::from_str::<Value>(&contents).ok());
+    let account = auth_json
+        .as_ref()
+        .and_then(read_codex_auth_material_from_value)
+        .and_then(|material| material.account);
+    let has_refresh_token = auth_json.as_ref().is_some_and(auth_json_has_refresh_token);
+
+    AuthBackupEntry {
+        id: record.id,
+        label: record.label,
+        created_at: record.created_at,
+        source_profile_name: record.source_profile_name,
+        source_profile_label: record.source_profile_label,
+        source_codex_home: record.source_codex_home,
+        path: record.path,
+        exists: path.exists(),
+        account,
+        has_refresh_token,
+    }
+}
+
+fn auth_json_has_refresh_token(value: &Value) -> bool {
+    string_at(
+        value.get("tokens").unwrap_or(&Value::Null),
+        &["refresh_token"],
+    )
+    .or_else(|| string_at(value, &["refresh_token"]))
+    .is_some()
+}
+
+fn unique_auth_backup_id(store: &AuthVaultStore, profile_name: &str) -> String {
+    let suffix = sanitize_id_component(profile_name);
+    let base = format!("{}-{suffix}", timestamp_compact());
+    if !store.backups.contains_key(&base) {
+        return base;
+    }
+    for index in 2..1000 {
+        let candidate = format!("{base}-{index}");
+        if !store.backups.contains_key(&candidate) {
+            return candidate;
+        }
+    }
+    format!("{base}-{}", Utc::now().timestamp_millis())
+}
+
+fn sanitize_id_component(value: &str) -> String {
+    let normalized = value
+        .chars()
+        .map(|char| {
+            if char.is_ascii_alphanumeric() || char == '-' || char == '_' {
+                char
+            } else {
+                '-'
+            }
+        })
+        .collect::<String>();
+    let trimmed = normalized.trim_matches('-');
+    if trimmed.is_empty() {
+        "auth".to_string()
+    } else {
+        trimmed.to_string()
+    }
 }
 
 fn read_metadata_store(context: &ProfileContext) -> Result<ProfileMetadataStore, String> {
@@ -2568,6 +3149,10 @@ fn with_trailing_newline(value: String) -> String {
 
 fn default_true() -> bool {
     true
+}
+
+fn default_session_page_limit() -> usize {
+    10
 }
 
 fn now_iso() -> String {
