@@ -4,13 +4,19 @@ import {
   createMockAuthVaultReport,
   createMockProfileReport,
   createMockProfileSessionReport,
+  createMockWechatBridgeReport,
 } from "./mock-data";
 import type {
   ApplyAuthBackupInput,
+  AuthBackupExportReport,
   AuthVaultReport,
+  CleanupAuthBackupsInput,
+  CopyProfileInput,
   CreateProfileInput,
   CreateAuthBackupInput,
   DeleteAuthBackupInput,
+  ExportAuthBackupInput,
+  ImportAuthBackupPackageInput,
   ImportAuthInput,
   ListProfileSessionsInput,
   CodexNetworkRepairReport,
@@ -19,7 +25,14 @@ import type {
   ProfileQuotaReport,
   ProfileReport,
   ProfileSessionReport,
+  ReadWechatBridgeLogInput,
   ResetProfileInput,
+  RollbackAuthApplicationInput,
+  StartWechatBridgeInput,
+  StopWechatBridgeInput,
+  UpdateAuthBackupInput,
+  WechatBridgeLogReport,
+  WechatBridgeReport,
 } from "./types";
 
 function isTauriRuntime(): boolean {
@@ -61,6 +74,13 @@ export async function applyAuthBackup(input: ApplyAuthBackupInput): Promise<Prof
   return invoke<ProfileActionReport>("apply_auth_backup_command", { input });
 }
 
+export async function rollbackAuthApplication(input: RollbackAuthApplicationInput): Promise<ProfileActionReport> {
+  if (!isTauriRuntime()) {
+    return createMockActionReport("rollbackAuthApplication", input.applicationId);
+  }
+  return invoke<ProfileActionReport>("rollback_auth_application_command", { input });
+}
+
 export async function deleteAuthBackup(input: DeleteAuthBackupInput): Promise<AuthVaultReport> {
   if (!isTauriRuntime()) {
     return createMockAuthVaultReport();
@@ -68,11 +88,115 @@ export async function deleteAuthBackup(input: DeleteAuthBackupInput): Promise<Au
   return invoke<AuthVaultReport>("delete_auth_backup_command", { input });
 }
 
+export async function updateAuthBackup(input: UpdateAuthBackupInput): Promise<AuthVaultReport> {
+  if (!isTauriRuntime()) {
+    return createMockAuthVaultReport();
+  }
+  return invoke<AuthVaultReport>("update_auth_backup_command", { input });
+}
+
+export async function exportAuthBackup(input: ExportAuthBackupInput): Promise<AuthBackupExportReport> {
+  if (!isTauriRuntime()) {
+    return {
+      generatedAt: new Date().toISOString(),
+      path: "/tmp/mock-auth-backup.rcodex-auth.json",
+      fileName: "mock-auth-backup.rcodex-auth.json",
+      backup: createMockAuthVaultReport().backups[0],
+      message: "exported mock auth backup",
+    };
+  }
+  return invoke<AuthBackupExportReport>("export_auth_backup_command", { input });
+}
+
+export async function importAuthBackupPackage(input: ImportAuthBackupPackageInput): Promise<AuthVaultReport> {
+  if (!isTauriRuntime()) {
+    return createMockAuthVaultReport();
+  }
+  return invoke<AuthVaultReport>("import_auth_backup_package_command", { input });
+}
+
+export async function cleanupAuthBackups(input: CleanupAuthBackupsInput): Promise<AuthVaultReport> {
+  if (!isTauriRuntime()) {
+    return createMockAuthVaultReport();
+  }
+  return invoke<AuthVaultReport>("cleanup_auth_backups_command", { input });
+}
+
+export async function listWechatBridges(): Promise<WechatBridgeReport> {
+  if (!isTauriRuntime()) {
+    return createMockWechatBridgeReport();
+  }
+  return invoke<WechatBridgeReport>("list_wechat_bridges_command");
+}
+
+export async function startWechatBridge(input: StartWechatBridgeInput): Promise<WechatBridgeReport> {
+  if (!isTauriRuntime()) {
+    const report = createMockWechatBridgeReport();
+    return {
+      ...report,
+      bridges: report.bridges.map((bridge) =>
+        bridge.profileName === input.profileName
+          ? {
+              ...bridge,
+              running: true,
+              runningPids: [8421],
+              lastStartedAt: new Date().toISOString(),
+              logTail: bridge.logTail.length > 0 ? bridge.logTail : ["[mock] waiting for QR scan"],
+            }
+          : bridge,
+      ),
+    };
+  }
+  return invoke<WechatBridgeReport>("start_wechat_bridge_command", { input });
+}
+
+export async function stopWechatBridge(input: StopWechatBridgeInput): Promise<WechatBridgeReport> {
+  if (!isTauriRuntime()) {
+    const report = createMockWechatBridgeReport();
+    return {
+      ...report,
+      bridges: report.bridges.map((bridge) =>
+        bridge.profileName === input.profileName
+          ? {
+              ...bridge,
+              running: false,
+              runningPids: [],
+              lastStoppedAt: new Date().toISOString(),
+            }
+          : bridge,
+      ),
+    };
+  }
+  return invoke<WechatBridgeReport>("stop_wechat_bridge_command", { input });
+}
+
+export async function readWechatBridgeLog(input: ReadWechatBridgeLogInput): Promise<WechatBridgeLogReport> {
+  if (!isTauriRuntime()) {
+    const bridge = createMockWechatBridgeReport().bridges.find((item) => item.profileName === input.profileName);
+    return {
+      generatedAt: new Date().toISOString(),
+      profileName: input.profileName,
+      instance: bridge?.instance ?? input.profileName,
+      appLogPath: bridge?.appLogPath ?? "",
+      defaultLogPath: bridge?.defaultLogPath ?? "",
+      logTail: bridge?.logTail ?? [],
+    };
+  }
+  return invoke<WechatBridgeLogReport>("read_wechat_bridge_log_command", { input });
+}
+
 export async function createProfile(input: CreateProfileInput): Promise<ProfileActionReport> {
   if (!isTauriRuntime()) {
     return createMockActionReport("create", input.name);
   }
   return invoke<ProfileActionReport>("create_profile_command", { input });
+}
+
+export async function copyProfile(input: CopyProfileInput): Promise<ProfileActionReport> {
+  if (!isTauriRuntime()) {
+    return createMockActionReport("copy", input.name);
+  }
+  return invoke<ProfileActionReport>("copy_profile_command", { input });
 }
 
 export async function deleteProfile(name: string, archiveData: boolean): Promise<ProfileActionReport> {

@@ -5,9 +5,12 @@ use serde_json::{Map, Value};
 use std::collections::BTreeMap;
 use std::collections::BTreeSet;
 use std::fs;
-use std::io::{BufRead, BufReader};
+use std::fs::OpenOptions;
+use std::io::{BufRead, BufReader, Read, Seek, SeekFrom};
+#[cfg(unix)]
+use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
-use std::process::Command;
+use std::process::{Command, Stdio};
 use std::time::{Duration, SystemTime};
 
 const MANAGED_BLOCK_START: &str = "# >>> rCodexManager profiles >>>";
@@ -18,7 +21,13 @@ const CHATGPT_BASE_URL: &str = "https://chatgpt.com";
 const CHATGPT_USAGE_ENDPOINT: &str = "https://chatgpt.com/backend-api/wham/usage";
 const QUOTA_HTTP_TIMEOUT_SECONDS: u64 = 25;
 const PROFILE_SESSION_PREVIEW_LIMIT: usize = 1;
+const SESSION_INDEX_READ_CHUNK_SIZE: u64 = 16 * 1024;
 const DEFAULT_NO_PROXY: &str = "localhost,127.0.0.1,::1,*.local";
+const AUTH_BACKUP_EXPORT_KIND: &str = "app.rseries.rcodexmanager.auth-backup";
+const AUTH_BACKUP_EXPORT_VERSION: u16 = 1;
+const WECHAT_ACP_PACKAGE: &str = "wechat-acp@0.2.3";
+const CODEX_ACP_PACKAGE: &str = "@zed-industries/codex-acp@0.15.0";
+const WECHAT_BRIDGE_LOG_TAIL_LINES: usize = 80;
 const CODEX_WEBSOCKET_FEATURE_FLAGS: &[&str] = &[
     "responses_websockets",
     "responses_websockets_v2",
@@ -71,6 +80,27 @@ pub struct CreateProfileInput {
     pub alias: Option<String>,
     pub category: Option<String>,
     pub note: Option<String>,
+    #[serde(default)]
+    pub launcher_kind: Option<ProfileLauncherKind>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CopyProfileInput {
+    pub source_name: String,
+    pub name: String,
+    pub codex_home: Option<String>,
+    pub user_data_dir: Option<String>,
+    pub model: Option<String>,
+    pub reasoning_effort: Option<String>,
+    pub alias: Option<String>,
+    pub category: Option<String>,
+    pub note: Option<String>,
+    pub auth_source_name: Option<String>,
+    #[serde(default)]
+    pub confirm_sensitive: bool,
+    #[serde(default)]
+    pub launcher_kind: Option<ProfileLauncherKind>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -122,8 +152,90 @@ pub struct ApplyAuthBackupInput {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
+pub struct RollbackAuthApplicationInput {
+    pub application_id: String,
+    #[serde(default)]
+    pub confirm_sensitive: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct DeleteAuthBackupInput {
     pub backup_id: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct UpdateAuthBackupInput {
+    pub backup_id: String,
+    pub label: Option<String>,
+    pub note: Option<String>,
+    #[serde(default)]
+    pub pinned: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ExportAuthBackupInput {
+    pub backup_id: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ImportAuthBackupPackageInput {
+    pub package_json: String,
+    pub label: Option<String>,
+    pub note: Option<String>,
+    #[serde(default)]
+    pub pinned: bool,
+    #[serde(default)]
+    pub confirm_sensitive: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CleanupAuthBackupsInput {
+    pub account_key: String,
+    #[serde(default)]
+    pub confirm_sensitive: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct StartWechatBridgeInput {
+    pub profile_name: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct StopWechatBridgeInput {
+    pub profile_name: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ReadWechatBridgeLogInput {
+    pub profile_name: String,
+    pub lines: Option<usize>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct InstallWechatBridgeServiceInput {
+    pub profile_name: String,
+    #[serde(default)]
+    pub install: bool,
+    #[serde(default)]
+    pub enable: bool,
+    #[serde(default)]
+    pub now: bool,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "kebab-case")]
+pub enum ProfileLauncherKind {
+    Desktop,
+    Server,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -144,6 +256,7 @@ pub struct ProfileInfo {
     pub websocket_features_enabled: bool,
     pub managed_by_app: bool,
     pub is_default: bool,
+    pub launcher_kind: ProfileLauncherKind,
     pub zshrc_line: usize,
     pub is_running: bool,
     pub running_pids: Vec<u32>,
@@ -166,7 +279,7 @@ pub struct CodexSessionSummary {
     pub path: Option<String>,
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct CodexAccountInfo {
     pub auth_mode: Option<String>,
@@ -280,14 +393,34 @@ pub struct AuthProfileSlot {
 pub struct AuthBackupEntry {
     pub id: String,
     pub label: String,
+    pub note: Option<String>,
     pub created_at: String,
+    pub updated_at: Option<String>,
     pub source_profile_name: Option<String>,
     pub source_profile_label: Option<String>,
     pub source_codex_home: Option<String>,
     pub path: String,
     pub exists: bool,
+    pub pinned: bool,
     pub account: Option<CodexAccountInfo>,
     pub has_refresh_token: bool,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AuthApplicationEntry {
+    pub id: String,
+    pub applied_at: String,
+    pub backup_id: String,
+    pub backup_label: String,
+    pub target_profile_name: String,
+    pub target_profile_label: Option<String>,
+    pub target_codex_home: String,
+    pub previous_auth_path: Option<String>,
+    pub previous_auth_exists: bool,
+    pub previous_account: Option<CodexAccountInfo>,
+    pub applied_account: Option<CodexAccountInfo>,
+    pub rolled_back_at: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -300,6 +433,80 @@ pub struct AuthVaultReport {
     pub backup_count: usize,
     pub profiles: Vec<AuthProfileSlot>,
     pub backups: Vec<AuthBackupEntry>,
+    pub recent_applications: Vec<AuthApplicationEntry>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct WechatBridgeReport {
+    pub generated_at: String,
+    pub store_path: String,
+    pub bridge_count: usize,
+    pub running_count: usize,
+    pub wechat_acp_package: String,
+    pub codex_acp_package: String,
+    pub bridges: Vec<WechatBridgeEntry>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct WechatBridgeEntry {
+    pub profile_name: String,
+    pub profile_label: String,
+    pub profile_category: String,
+    pub codex_home: String,
+    pub auth_exists: bool,
+    pub account: Option<CodexAccountInfo>,
+    pub instance: String,
+    pub storage_dir: String,
+    pub token_path: String,
+    pub inbox_dir: String,
+    pub wrapper_path: String,
+    pub app_log_path: String,
+    pub default_log_path: String,
+    pub token_exists: bool,
+    pub running: bool,
+    pub running_pids: Vec<u32>,
+    pub last_started_at: Option<String>,
+    pub last_stopped_at: Option<String>,
+    pub last_error: Option<String>,
+    pub log_tail: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct WechatBridgeLogReport {
+    pub generated_at: String,
+    pub profile_name: String,
+    pub instance: String,
+    pub app_log_path: String,
+    pub default_log_path: String,
+    pub log_tail: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct WechatBridgeServiceReport {
+    pub generated_at: String,
+    pub profile_name: String,
+    pub instance: String,
+    pub service_name: String,
+    pub unit_path: String,
+    pub unit_contents: String,
+    pub installed: bool,
+    pub enabled: bool,
+    pub started: bool,
+    pub message: String,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AuthBackupExportReport {
+    pub generated_at: String,
+    pub path: String,
+    pub file_name: String,
+    pub backup: AuthBackupEntry,
+    pub message: String,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -357,6 +564,7 @@ struct ProfileDraft {
     name: String,
     codex_home: PathBuf,
     user_data_dir: PathBuf,
+    launcher_kind: ProfileLauncherKind,
 }
 
 #[derive(Debug, Clone)]
@@ -376,7 +584,29 @@ struct ImportedAuthPayload {
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct AuthVaultStore {
+    #[serde(default)]
     backups: BTreeMap<String, AuthBackupRecord>,
+    #[serde(default)]
+    applications: BTreeMap<String, AuthApplicationRecord>,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct WechatBridgeStore {
+    #[serde(default)]
+    bindings: BTreeMap<String, WechatBridgeRecord>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct WechatBridgeRecord {
+    profile_name: String,
+    instance: String,
+    created_at: String,
+    updated_at: String,
+    last_started_at: Option<String>,
+    last_stopped_at: Option<String>,
+    last_error: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -384,11 +614,56 @@ struct AuthVaultStore {
 struct AuthBackupRecord {
     id: String,
     label: String,
+    note: Option<String>,
     created_at: String,
+    updated_at: Option<String>,
     source_profile_name: Option<String>,
     source_profile_label: Option<String>,
     source_codex_home: Option<String>,
     path: String,
+    #[serde(default)]
+    pinned: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct AuthApplicationRecord {
+    id: String,
+    applied_at: String,
+    backup_id: String,
+    backup_label: String,
+    target_profile_name: String,
+    target_profile_label: Option<String>,
+    target_codex_home: String,
+    previous_auth_path: Option<String>,
+    applied_account: Option<CodexAccountInfo>,
+    rolled_back_at: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct AuthBackupExportPackage {
+    kind: String,
+    version: u16,
+    exported_at: String,
+    backup: AuthBackupExportMetadata,
+    auth_json: Value,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct AuthBackupExportMetadata {
+    id: String,
+    label: String,
+    note: Option<String>,
+    created_at: String,
+    updated_at: Option<String>,
+    source_profile_name: Option<String>,
+    source_profile_label: Option<String>,
+    source_codex_home: Option<String>,
+    pinned: bool,
+    account: Option<CodexAccountInfo>,
+    has_refresh_token: bool,
 }
 
 pub fn list_profiles(context: &ProfileContext) -> Result<ProfileReport, String> {
@@ -412,12 +687,11 @@ pub fn list_profiles(context: &ProfileContext) -> Result<ProfileReport, String> 
         let Some(codex_home_raw) = extract_shell_value(&function.body, "CODEX_HOME=") else {
             continue;
         };
-        let Some(user_data_raw) = extract_shell_value(&function.body, "--user-data-dir=") else {
-            continue;
-        };
-
+        let launcher_kind = profile_launcher_kind_from_body(&function.body);
         let codex_home = expand_shell_path(&codex_home_raw, &context.home_dir);
-        let user_data_dir = expand_shell_path(&user_data_raw, &context.home_dir);
+        let user_data_dir = extract_shell_value(&function.body, "--user-data-dir=")
+            .map(|value| expand_shell_path(&value, &context.home_dir))
+            .unwrap_or_else(|| default_user_data_dir(context, &function.name, launcher_kind));
         let config_path = codex_home.join("config.toml");
         let config = read_codex_config(&config_path);
         let recent_sessions =
@@ -456,6 +730,7 @@ pub fn list_profiles(context: &ProfileContext) -> Result<ProfileReport, String> 
                 websocket_features_enabled: config.websocket_features_enabled,
                 managed_by_app,
                 is_default: false,
+                launcher_kind,
                 zshrc_line: function.start_line + 1,
                 is_running: !running_pids.is_empty(),
                 running_process_count: running_pids.len(),
@@ -572,12 +847,18 @@ pub fn list_auth_vault(context: &ProfileContext) -> Result<AuthVaultReport, Stri
         .into_values()
         .map(auth_backup_entry)
         .collect::<Vec<_>>();
+    let mut recent_applications = store
+        .applications
+        .into_values()
+        .map(auth_application_entry)
+        .collect::<Vec<_>>();
 
-    backups.sort_by(|left, right| {
+    backups.sort_by(auth_backup_sort_order);
+    recent_applications.sort_by(|left, right| {
         right
-            .created_at
-            .cmp(&left.created_at)
-            .then_with(|| left.label.cmp(&right.label))
+            .applied_at
+            .cmp(&left.applied_at)
+            .then_with(|| left.id.cmp(&right.id))
     });
 
     Ok(AuthVaultReport {
@@ -588,6 +869,235 @@ pub fn list_auth_vault(context: &ProfileContext) -> Result<AuthVaultReport, Stri
         backup_count: backups.len(),
         profiles,
         backups,
+        recent_applications,
+    })
+}
+
+pub fn list_wechat_bridges(context: &ProfileContext) -> Result<WechatBridgeReport, String> {
+    let report = list_profiles(context)?;
+    let store = read_wechat_bridge_store(context)?;
+    let processes = running_wechat_bridge_processes()?;
+    let bridges = report
+        .profiles
+        .iter()
+        .map(|profile| wechat_bridge_entry(context, profile, &store, &processes))
+        .collect::<Vec<_>>();
+    let running_count = bridges.iter().filter(|bridge| bridge.running).count();
+
+    Ok(WechatBridgeReport {
+        generated_at: now_iso(),
+        store_path: path_string(&wechat_bridge_store_path(context)),
+        bridge_count: bridges.len(),
+        running_count,
+        wechat_acp_package: WECHAT_ACP_PACKAGE.to_string(),
+        codex_acp_package: CODEX_ACP_PACKAGE.to_string(),
+        bridges,
+    })
+}
+
+pub fn start_wechat_bridge(
+    context: &ProfileContext,
+    input: StartWechatBridgeInput,
+) -> Result<WechatBridgeReport, String> {
+    validate_profile_selector_name(&input.profile_name)?;
+    let profile = find_profile(context, &input.profile_name)?;
+    let auth_path = PathBuf::from(&profile.codex_home).join("auth.json");
+    if !auth_path.exists() {
+        return Err(format!(
+            "{} has no auth.json; apply or import auth before binding WeChat",
+            profile.name
+        ));
+    }
+
+    let instance = wechat_bridge_instance_name(&profile.name);
+    let paths = wechat_bridge_paths(context, &instance);
+    fs::create_dir_all(&paths.runtime_dir).map_err(|error| error.to_string())?;
+    fs::create_dir_all(&paths.inbox_dir).map_err(|error| error.to_string())?;
+    write_wechat_bridge_wrapper(&paths.wrapper_path, &profile)?;
+
+    let running = running_wechat_bridge_processes()?;
+    let running_pids = matching_wechat_bridge_pids(&running, &instance);
+    if !running_pids.is_empty() {
+        upsert_wechat_bridge_record(context, &profile.name, &instance, |record| {
+            record.updated_at = now_iso();
+            record.last_error = None;
+        })?;
+        return list_wechat_bridges(context);
+    }
+
+    let log = OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(&paths.app_log_path)
+        .map_err(|error| {
+            format!(
+                "failed to open WeChat bridge log {}: {error}",
+                path_string(&paths.app_log_path)
+            )
+        })?;
+    let stderr = log.try_clone().map_err(|error| {
+        format!(
+            "failed to duplicate WeChat bridge log {}: {error}",
+            path_string(&paths.app_log_path)
+        )
+    })?;
+
+    let started_at = now_iso();
+    let mut command = Command::new("npx");
+    command
+        .args([
+            "-y",
+            "--package",
+            WECHAT_ACP_PACKAGE,
+            "wechat-acp",
+            "--instance",
+            &instance,
+            "--agent",
+            paths.wrapper_path.to_string_lossy().as_ref(),
+            "--cwd",
+            context.home_dir.to_string_lossy().as_ref(),
+            "--inbox-dir",
+            paths.inbox_dir.to_string_lossy().as_ref(),
+            "--hide-thoughts",
+        ])
+        .env("CODEX_HOME", &profile.codex_home)
+        .stdin(Stdio::null())
+        .stdout(Stdio::from(log))
+        .stderr(Stdio::from(stderr));
+    if let Ok(proxy) = detect_system_proxy_env() {
+        apply_child_proxy_env(&mut command, &proxy);
+    }
+    let spawn_result = command.spawn();
+
+    match spawn_result {
+        Ok(_) => {
+            upsert_wechat_bridge_record(context, &profile.name, &instance, |record| {
+                record.updated_at = started_at.clone();
+                record.last_started_at = Some(started_at.clone());
+                record.last_error = None;
+            })?;
+        }
+        Err(error) => {
+            let message = format!(
+                "failed to start WeChat bridge for {}: {error}",
+                profile.name
+            );
+            upsert_wechat_bridge_record(context, &profile.name, &instance, |record| {
+                record.updated_at = now_iso();
+                record.last_error = Some(message.clone());
+            })?;
+            return Err(message);
+        }
+    }
+
+    list_wechat_bridges(context)
+}
+
+pub fn stop_wechat_bridge(
+    context: &ProfileContext,
+    input: StopWechatBridgeInput,
+) -> Result<WechatBridgeReport, String> {
+    validate_profile_selector_name(&input.profile_name)?;
+    let profile = find_profile(context, &input.profile_name)?;
+    let instance = wechat_bridge_instance_name(&profile.name);
+    let processes = running_wechat_bridge_processes()?;
+    let running_pids = matching_wechat_bridge_pids(&processes, &instance);
+    terminate_wechat_bridge_pids(&running_pids)?;
+    let stopped_at = now_iso();
+    upsert_wechat_bridge_record(context, &profile.name, &instance, |record| {
+        record.updated_at = stopped_at.clone();
+        record.last_stopped_at = Some(stopped_at.clone());
+        record.last_error = None;
+    })?;
+
+    list_wechat_bridges(context)
+}
+
+pub fn read_wechat_bridge_log(
+    context: &ProfileContext,
+    input: ReadWechatBridgeLogInput,
+) -> Result<WechatBridgeLogReport, String> {
+    validate_profile_selector_name(&input.profile_name)?;
+    let profile = find_profile(context, &input.profile_name)?;
+    let instance = wechat_bridge_instance_name(&profile.name);
+    let paths = wechat_bridge_paths(context, &instance);
+    let lines = input
+        .lines
+        .unwrap_or(WECHAT_BRIDGE_LOG_TAIL_LINES)
+        .clamp(20, 240);
+
+    Ok(WechatBridgeLogReport {
+        generated_at: now_iso(),
+        profile_name: profile.name,
+        instance,
+        app_log_path: path_string(&paths.app_log_path),
+        default_log_path: path_string(&paths.default_log_path),
+        log_tail: read_wechat_bridge_log_tail(&paths, lines),
+    })
+}
+
+pub fn install_wechat_bridge_service(
+    context: &ProfileContext,
+    input: InstallWechatBridgeServiceInput,
+) -> Result<WechatBridgeServiceReport, String> {
+    validate_profile_selector_name(&input.profile_name)?;
+    let profile = find_profile(context, &input.profile_name)?;
+    let instance = wechat_bridge_instance_name(&profile.name);
+    let paths = wechat_bridge_paths(context, &instance);
+    fs::create_dir_all(&paths.runtime_dir).map_err(|error| error.to_string())?;
+    fs::create_dir_all(&paths.inbox_dir).map_err(|error| error.to_string())?;
+    write_wechat_bridge_wrapper(&paths.wrapper_path, &profile)?;
+    upsert_wechat_bridge_record(context, &profile.name, &instance, |record| {
+        record.updated_at = now_iso();
+        record.last_error = None;
+    })?;
+
+    let service_name = format!("rcodexmanager-wechat-{instance}.service");
+    let unit_path = context
+        .home_dir
+        .join(".config")
+        .join("systemd")
+        .join("user")
+        .join(&service_name);
+    let unit_contents = render_wechat_bridge_user_service(context, &profile, &paths, &instance);
+    let mut installed = false;
+    let mut enabled = false;
+    let mut started = false;
+
+    if input.install || input.enable || input.now {
+        if let Some(parent) = unit_path.parent() {
+            fs::create_dir_all(parent).map_err(|error| error.to_string())?;
+        }
+        fs::write(&unit_path, &unit_contents).map_err(|error| error.to_string())?;
+        installed = true;
+        run_systemctl_user(&["daemon-reload"])?;
+    }
+    if input.enable {
+        run_systemctl_user(&["enable", &service_name])?;
+        enabled = true;
+    }
+    if input.now {
+        run_systemctl_user(&["restart", &service_name])?;
+        started = true;
+    }
+
+    let message = if installed {
+        format!("installed user service {service_name}")
+    } else {
+        format!("rendered user service {service_name}")
+    };
+
+    Ok(WechatBridgeServiceReport {
+        generated_at: now_iso(),
+        profile_name: profile.name,
+        instance,
+        service_name,
+        unit_path: path_string(&unit_path),
+        unit_contents,
+        installed,
+        enabled,
+        started,
+        message,
     })
 }
 
@@ -638,11 +1148,14 @@ pub fn create_auth_backup(
         AuthBackupRecord {
             id: backup_id,
             label,
+            note: None,
             created_at: now_iso(),
+            updated_at: None,
             source_profile_name: Some(profile.name),
             source_profile_label: profile.alias,
             source_codex_home: Some(profile.codex_home),
             path: path_string(&backup_path),
+            pinned: false,
         },
     );
     write_auth_vault_store(context, &store)?;
@@ -672,10 +1185,11 @@ pub fn apply_auth_backup(
         ));
     }
 
-    let store = read_auth_vault_store(context)?;
+    let mut store = read_auth_vault_store(context)?;
     let record = store
         .backups
         .get(backup_id)
+        .cloned()
         .ok_or_else(|| format!("auth backup {backup_id} was not found"))?;
     let backup_path = PathBuf::from(&record.path);
     let contents = fs::read_to_string(&backup_path).map_err(|error| {
@@ -692,10 +1206,34 @@ pub fn apply_auth_backup(
     }
 
     let mut backups = Vec::new();
-    if target_auth_path.exists() {
-        backups.push(backup_file_copy(&target_auth_path, "auth-vault-apply")?);
-    }
+    let previous_auth_path = if target_auth_path.exists() {
+        let backup = backup_file_copy(&target_auth_path, "auth-vault-apply")?;
+        let previous_auth_path = backup.backup_path.clone();
+        backups.push(backup);
+        Some(previous_auth_path)
+    } else {
+        None
+    };
     write_json_atomic(&target_auth_path, &imported.auth_json)?;
+    let applied_account = read_codex_auth_material_from_value(&imported.auth_json)
+        .and_then(|material| material.account);
+    let application_id = unique_auth_application_id(&store, &target.name);
+    store.applications.insert(
+        application_id.clone(),
+        AuthApplicationRecord {
+            id: application_id,
+            applied_at: now_iso(),
+            backup_id: record.id.clone(),
+            backup_label: record.label.clone(),
+            target_profile_name: target.name.clone(),
+            target_profile_label: target.alias.clone(),
+            target_codex_home: target.codex_home.clone(),
+            previous_auth_path,
+            applied_account,
+            rolled_back_at: None,
+        },
+    );
+    write_auth_vault_store(context, &store)?;
 
     let refreshed = find_profile(context, &target.name)?;
     let refresh_hint = if imported.has_refresh_token {
@@ -713,6 +1251,87 @@ pub fn apply_auth_backup(
         message: format!(
             "applied auth backup {} to {} ({refresh_hint})",
             record.label, target.name
+        ),
+    })
+}
+
+pub fn rollback_auth_application(
+    context: &ProfileContext,
+    input: RollbackAuthApplicationInput,
+) -> Result<ProfileActionReport, String> {
+    if !input.confirm_sensitive {
+        return Err("must confirm sensitive auth rollback before writing auth.json".to_string());
+    }
+
+    let application_id = input.application_id.trim();
+    if application_id.is_empty() {
+        return Err("auth application id is required".to_string());
+    }
+
+    let mut store = read_auth_vault_store(context)?;
+    let record = store
+        .applications
+        .get(application_id)
+        .cloned()
+        .ok_or_else(|| format!("auth application {application_id} was not found"))?;
+    if record.rolled_back_at.is_some() {
+        return Err(format!(
+            "auth application {application_id} has already been rolled back"
+        ));
+    }
+    let previous_auth_path = record.previous_auth_path.as_deref().ok_or_else(|| {
+        "this auth application has no previous auth.json to roll back to".to_string()
+    })?;
+    let previous_path = PathBuf::from(previous_auth_path);
+    let contents = fs::read_to_string(&previous_path).map_err(|error| {
+        format!(
+            "failed to read previous auth backup {}: {error}",
+            path_string(&previous_path)
+        )
+    })?;
+    let imported = normalize_import_auth_json(&contents)?;
+
+    let target = find_profile(context, &record.target_profile_name)?;
+    ensure_mutable_profile(&target, "roll back auth for")?;
+    if target.is_running {
+        return Err(format!(
+            "{} is running; terminate the target profile before rolling back auth",
+            target.name
+        ));
+    }
+
+    let target_auth_path = PathBuf::from(&target.codex_home).join("auth.json");
+    if let Some(parent) = target_auth_path.parent() {
+        fs::create_dir_all(parent).map_err(|error| error.to_string())?;
+    }
+
+    let mut backups = Vec::new();
+    if target_auth_path.exists() {
+        backups.push(backup_file_copy(&target_auth_path, "auth-vault-rollback")?);
+    }
+    write_json_atomic(&target_auth_path, &imported.auth_json)?;
+
+    if let Some(stored) = store.applications.get_mut(application_id) {
+        stored.rolled_back_at = Some(now_iso());
+    }
+    write_auth_vault_store(context, &store)?;
+
+    let refreshed = find_profile(context, &target.name)?;
+    let refresh_hint = if imported.has_refresh_token {
+        "refresh_token included"
+    } else {
+        "refresh_token missing; login may expire"
+    };
+
+    Ok(ProfileActionReport {
+        generated_at: now_iso(),
+        action: "rollbackAuthApplication".to_string(),
+        zshrc_path: path_string(&context.zshrc_path),
+        profile: Some(refreshed),
+        backups,
+        message: format!(
+            "rolled back auth for {} to the state before {} ({refresh_hint})",
+            target.name, record.backup_label
         ),
     })
 }
@@ -735,6 +1354,230 @@ pub fn delete_auth_backup(
     let backup_path = PathBuf::from(record.path);
     if backup_path.exists() {
         fs::remove_file(&backup_path).map_err(|error| error.to_string())?;
+    }
+
+    list_auth_vault(context)
+}
+
+pub fn update_auth_backup(
+    context: &ProfileContext,
+    input: UpdateAuthBackupInput,
+) -> Result<AuthVaultReport, String> {
+    let backup_id = input.backup_id.trim();
+    if backup_id.is_empty() {
+        return Err("backup id is required".to_string());
+    }
+    let mut store = read_auth_vault_store(context)?;
+    let record = store
+        .backups
+        .get_mut(backup_id)
+        .ok_or_else(|| format!("auth backup {backup_id} was not found"))?;
+    let label = input
+        .label
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(ToOwned::to_owned)
+        .unwrap_or_else(|| record.label.clone());
+    let note = input
+        .note
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(ToOwned::to_owned);
+
+    record.label = label;
+    record.note = note;
+    record.pinned = input.pinned;
+    record.updated_at = Some(now_iso());
+    write_auth_vault_store(context, &store)?;
+
+    list_auth_vault(context)
+}
+
+pub fn export_auth_backup(
+    context: &ProfileContext,
+    input: ExportAuthBackupInput,
+) -> Result<AuthBackupExportReport, String> {
+    let backup_id = input.backup_id.trim();
+    if backup_id.is_empty() {
+        return Err("backup id is required".to_string());
+    }
+
+    let store = read_auth_vault_store(context)?;
+    let record = store
+        .backups
+        .get(backup_id)
+        .cloned()
+        .ok_or_else(|| format!("auth backup {backup_id} was not found"))?;
+    let backup = auth_backup_entry(record.clone());
+    if !backup.exists {
+        return Err(format!("auth backup file for {} is missing", backup.label));
+    }
+
+    let auth_json: Value =
+        serde_json::from_str(&fs::read_to_string(&record.path).map_err(|error| error.to_string())?)
+            .map_err(|error| format!("failed to parse auth backup json: {error}"))?;
+    if read_codex_auth_material_from_value(&auth_json).is_none() {
+        return Err("auth backup does not contain readable Codex auth material".to_string());
+    }
+
+    let package = AuthBackupExportPackage {
+        kind: AUTH_BACKUP_EXPORT_KIND.to_string(),
+        version: AUTH_BACKUP_EXPORT_VERSION,
+        exported_at: now_iso(),
+        backup: AuthBackupExportMetadata {
+            id: backup.id.clone(),
+            label: backup.label.clone(),
+            note: backup.note.clone(),
+            created_at: backup.created_at.clone(),
+            updated_at: backup.updated_at.clone(),
+            source_profile_name: backup.source_profile_name.clone(),
+            source_profile_label: backup.source_profile_label.clone(),
+            source_codex_home: backup.source_codex_home.clone(),
+            pinned: backup.pinned,
+            account: backup.account.clone(),
+            has_refresh_token: backup.has_refresh_token,
+        },
+        auth_json,
+    };
+
+    let export_dir = auth_vault_exports_dir(context);
+    fs::create_dir_all(&export_dir).map_err(|error| error.to_string())?;
+    let export_path = unique_auth_export_path(&export_dir, &backup.label);
+    let package_json = serde_json::to_value(&package).map_err(|error| error.to_string())?;
+    write_json_atomic(&export_path, &package_json)?;
+    let file_name = export_path
+        .file_name()
+        .map(|value| value.to_string_lossy().to_string())
+        .unwrap_or_else(|| "auth-backup.rcodex-auth.json".to_string());
+
+    Ok(AuthBackupExportReport {
+        generated_at: now_iso(),
+        path: path_string(&export_path),
+        file_name: file_name.clone(),
+        backup,
+        message: format!("exported auth backup to {file_name}"),
+    })
+}
+
+pub fn import_auth_backup_package(
+    context: &ProfileContext,
+    input: ImportAuthBackupPackageInput,
+) -> Result<AuthVaultReport, String> {
+    if !input.confirm_sensitive {
+        return Err("must confirm sensitive auth backup import before storing tokens".to_string());
+    }
+    if input.package_json.trim().is_empty() {
+        return Err("auth backup package json is required".to_string());
+    }
+
+    let package: AuthBackupExportPackage = serde_json::from_str(&input.package_json)
+        .map_err(|error| format!("failed to parse auth backup package: {error}"))?;
+    if package.kind != AUTH_BACKUP_EXPORT_KIND {
+        return Err(format!(
+            "unsupported auth backup package kind {}",
+            package.kind
+        ));
+    }
+    if package.version != AUTH_BACKUP_EXPORT_VERSION {
+        return Err(format!(
+            "unsupported auth backup package version {}",
+            package.version
+        ));
+    }
+    if read_codex_auth_material_from_value(&package.auth_json).is_none() {
+        return Err(
+            "auth backup package does not contain readable Codex auth material".to_string(),
+        );
+    }
+
+    let mut store = read_auth_vault_store(context)?;
+    let vault_dir = auth_vault_dir(context);
+    fs::create_dir_all(&vault_dir).map_err(|error| error.to_string())?;
+    let label = input
+        .label
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(ToOwned::to_owned)
+        .unwrap_or_else(|| package.backup.label.clone());
+    let note = input
+        .note
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(ToOwned::to_owned)
+        .or(package.backup.note.clone());
+    let backup_id = unique_auth_backup_id(&store, &label);
+    let backup_path = vault_dir.join(format!("{backup_id}.auth.json"));
+    write_json_atomic(&backup_path, &package.auth_json)?;
+
+    store.backups.insert(
+        backup_id.clone(),
+        AuthBackupRecord {
+            id: backup_id,
+            label,
+            note,
+            created_at: now_iso(),
+            updated_at: Some(now_iso()),
+            source_profile_name: package.backup.source_profile_name,
+            source_profile_label: package.backup.source_profile_label,
+            source_codex_home: package.backup.source_codex_home,
+            path: path_string(&backup_path),
+            pinned: input.pinned || package.backup.pinned,
+        },
+    );
+    write_auth_vault_store(context, &store)?;
+
+    list_auth_vault(context)
+}
+
+pub fn cleanup_auth_backups(
+    context: &ProfileContext,
+    input: CleanupAuthBackupsInput,
+) -> Result<AuthVaultReport, String> {
+    if !input.confirm_sensitive {
+        return Err("must confirm sensitive auth backup cleanup before deleting files".to_string());
+    }
+
+    let account_key = input.account_key.trim();
+    if account_key.is_empty() {
+        return Err("account key is required".to_string());
+    }
+
+    let mut store = read_auth_vault_store(context)?;
+    let mut matching_backups = store
+        .backups
+        .values()
+        .cloned()
+        .map(auth_backup_entry)
+        .filter(|entry| codex_account_key(entry.account.as_ref()) == account_key)
+        .collect::<Vec<_>>();
+
+    if matching_backups.len() <= 1 {
+        return list_auth_vault(context);
+    }
+
+    matching_backups.sort_by(auth_backup_sort_order);
+    let remove_ids = matching_backups
+        .iter()
+        .skip(1)
+        .map(|entry| entry.id.clone())
+        .collect::<BTreeSet<_>>();
+    let mut remove_paths = Vec::new();
+    for backup_id in remove_ids {
+        if let Some(record) = store.backups.remove(&backup_id) {
+            remove_paths.push(record.path);
+        }
+    }
+
+    write_auth_vault_store(context, &store)?;
+    for path in remove_paths {
+        let backup_path = PathBuf::from(path);
+        if backup_path.exists() {
+            fs::remove_file(&backup_path).map_err(|error| error.to_string())?;
+        }
     }
 
     list_auth_vault(context)
@@ -787,6 +1630,112 @@ pub fn create_profile(
         profile: Some(profile),
         backups: Vec::new(),
         message: format!("created {} and added its zsh launcher", draft.name),
+    })
+}
+
+pub fn copy_profile(
+    context: &ProfileContext,
+    input: CopyProfileInput,
+) -> Result<ProfileActionReport, String> {
+    validate_profile_selector_name(&input.source_name)?;
+    let source = find_profile(context, &input.source_name)?;
+    let draft = profile_draft(
+        context,
+        &CreateProfileInput {
+            name: input.name.clone(),
+            codex_home: input.codex_home.clone(),
+            user_data_dir: input.user_data_dir.clone(),
+            model: None,
+            reasoning_effort: None,
+            alias: None,
+            category: None,
+            note: None,
+            launcher_kind: input.launcher_kind.or(Some(source.launcher_kind)),
+        },
+    )?;
+    validate_profile_name(&draft.name)?;
+    ensure_copy_target_paths_are_new(&source, &draft)?;
+
+    let auth_source_name = input
+        .auth_source_name
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty() && *value != "none")
+        .map(ToOwned::to_owned);
+    let imported_auth = match auth_source_name.as_deref() {
+        Some(name) => {
+            if !input.confirm_sensitive {
+                return Err(
+                    "must confirm sensitive token copy before writing auth.json".to_string()
+                );
+            }
+            Some(read_profile_auth_payload(context, name)?)
+        }
+        None => None,
+    };
+
+    let contents = read_zshrc(context)?;
+    if find_shell_function(&contents, &draft.name).is_some() {
+        return Err(format!(
+            "profile {} already exists in {}",
+            draft.name,
+            path_string(&context.zshrc_path)
+        ));
+    }
+
+    let model = normalized_input(input.model.as_deref())
+        .or(source.model.as_deref())
+        .unwrap_or(DEFAULT_MODEL)
+        .to_string();
+    let reasoning_effort = normalized_input(input.reasoning_effort.as_deref())
+        .or(source.reasoning_effort.as_deref())
+        .unwrap_or(DEFAULT_REASONING_EFFORT)
+        .to_string();
+
+    fs::create_dir_all(&draft.codex_home).map_err(|error| error.to_string())?;
+    fs::create_dir_all(&draft.user_data_dir).map_err(|error| error.to_string())?;
+    write_copied_profile_config(
+        &PathBuf::from(&source.config_path),
+        &draft.codex_home.join("config.toml"),
+        &model,
+        &reasoning_effort,
+    )?;
+
+    let next_contents = upsert_function(&contents, context, &draft, false)?;
+    write_zshrc(context, &contents, &next_contents)?;
+    upsert_metadata(
+        context,
+        ProfileMetadataInput {
+            name: draft.name.clone(),
+            alias: input.alias.or(source.alias.clone()),
+            category: input.category.or(Some(source.category.clone())),
+            note: input.note.or(source.note.clone()),
+        },
+    )?;
+
+    let mut backups = Vec::new();
+    let mut copied_auth = false;
+    if let Some(imported) = imported_auth {
+        let target_auth_path = draft.codex_home.join("auth.json");
+        if let Some(parent) = target_auth_path.parent() {
+            fs::create_dir_all(parent).map_err(|error| error.to_string())?;
+        }
+        if target_auth_path.exists() {
+            backups.push(backup_file_copy(&target_auth_path, "copy-profile")?);
+        }
+        write_json_atomic(&target_auth_path, &imported.auth_json)?;
+        copied_auth = true;
+    }
+
+    let profile = find_profile(context, &draft.name)?;
+    let auth_hint = if copied_auth { ", copied auth" } else { "" };
+    Ok(ProfileActionReport {
+        generated_at: now_iso(),
+        action: "copy".to_string(),
+        zshrc_path: path_string(&context.zshrc_path),
+        profile: Some(profile),
+        backups,
+        message: format!("copied {} to {}{auth_hint}", source.name, draft.name),
     })
 }
 
@@ -909,6 +1858,25 @@ pub fn launch_profile(context: &ProfileContext, name: &str) -> Result<ProfileAct
 
     fs::create_dir_all(&profile.codex_home).map_err(|error| error.to_string())?;
     fs::create_dir_all(&profile.user_data_dir).map_err(|error| error.to_string())?;
+
+    if profile.launcher_kind == ProfileLauncherKind::Server {
+        let mut command = Command::new("codex");
+        command.env("CODEX_HOME", &profile.codex_home);
+        if let Ok(proxy) = detect_system_proxy_env() {
+            apply_child_proxy_env(&mut command, &proxy);
+        }
+        command
+            .spawn()
+            .map_err(|error| format!("failed to launch codex for {name}: {error}"))?;
+        return Ok(ProfileActionReport {
+            generated_at: now_iso(),
+            action: "launch".to_string(),
+            zshrc_path: path_string(&context.zshrc_path),
+            profile: Some(find_profile(context, name)?),
+            backups: Vec::new(),
+            message: format!("launched {name} with server CODEX_HOME"),
+        });
+    }
 
     let mut command = Command::new("open");
     command
@@ -1087,6 +2055,22 @@ pub fn import_profile_auth(
     })
 }
 
+fn read_profile_auth_payload(
+    context: &ProfileContext,
+    source_profile_name: &str,
+) -> Result<ImportedAuthPayload, String> {
+    validate_profile_selector_name(source_profile_name)?;
+    let profile = find_profile(context, source_profile_name)?;
+    let auth_path = PathBuf::from(&profile.codex_home).join("auth.json");
+    let contents = fs::read_to_string(&auth_path).map_err(|error| {
+        format!(
+            "failed to read source auth.json from {}: {error}",
+            profile.name
+        )
+    })?;
+    normalize_import_auth_json(&contents)
+}
+
 pub fn repair_profile_network(
     context: &ProfileContext,
     name: &str,
@@ -1174,25 +2158,62 @@ pub fn default_profile_paths(
     context: &ProfileContext,
     name: &str,
 ) -> Result<(PathBuf, PathBuf), String> {
+    default_profile_paths_for_launcher(context, name, default_profile_launcher_kind())
+}
+
+pub fn default_profile_paths_for_launcher(
+    context: &ProfileContext,
+    name: &str,
+    launcher_kind: ProfileLauncherKind,
+) -> Result<(PathBuf, PathBuf), String> {
     validate_profile_name(name)?;
     let suffix = name.strip_prefix("codex-").unwrap_or(name);
     let codex_home = context.home_dir.join(format!(".codex-{suffix}"));
-    let user_data_dir = context
-        .home_dir
-        .join("Library")
-        .join("Application Support")
-        .join(format!("Codex-{}", title_suffix(suffix)));
+    let user_data_dir = default_user_data_dir(context, name, launcher_kind);
     Ok((codex_home, user_data_dir))
 }
 
 fn default_main_profile_paths(context: &ProfileContext) -> (PathBuf, PathBuf) {
     let codex_home = context.home_dir.join(".codex");
-    let user_data_dir = context
-        .home_dir
-        .join("Library")
-        .join("Application Support")
-        .join("Codex");
+    let user_data_dir = default_user_data_dir(context, "codex", default_profile_launcher_kind());
     (codex_home, user_data_dir)
+}
+
+fn default_user_data_dir(
+    context: &ProfileContext,
+    name: &str,
+    launcher_kind: ProfileLauncherKind,
+) -> PathBuf {
+    match launcher_kind {
+        ProfileLauncherKind::Desktop => {
+            let suffix = name.strip_prefix("codex-").unwrap_or(name);
+            let app_name = if name == "codex" {
+                "Codex".to_string()
+            } else {
+                format!("Codex-{}", title_suffix(suffix))
+            };
+            context
+                .home_dir
+                .join("Library")
+                .join("Application Support")
+                .join(app_name)
+        }
+        ProfileLauncherKind::Server => context
+            .home_dir
+            .join(".local")
+            .join("share")
+            .join("rcodexmanager")
+            .join("profiles")
+            .join(name),
+    }
+}
+
+fn default_profile_launcher_kind() -> ProfileLauncherKind {
+    if cfg!(target_os = "macos") {
+        ProfileLauncherKind::Desktop
+    } else {
+        ProfileLauncherKind::Server
+    }
 }
 
 fn default_profile_info(
@@ -1238,6 +2259,7 @@ fn default_profile_info(
         websocket_features_enabled: config.websocket_features_enabled,
         managed_by_app: false,
         is_default: true,
+        launcher_kind: default_profile_launcher_kind(),
         zshrc_line: 0,
         is_running: !running_pids.is_empty(),
         running_process_count: running_pids.len(),
@@ -1254,7 +2276,11 @@ fn profile_draft(
 ) -> Result<ProfileDraft, String> {
     let name = input.name.trim().to_string();
     validate_profile_name(&name)?;
-    let (default_home, default_user_data) = default_profile_paths(context, &name)?;
+    let launcher_kind = input
+        .launcher_kind
+        .unwrap_or_else(default_profile_launcher_kind);
+    let (default_home, default_user_data) =
+        default_profile_paths_for_launcher(context, &name, launcher_kind)?;
     let codex_home = input
         .codex_home
         .as_deref()
@@ -1272,7 +2298,33 @@ fn profile_draft(
         name,
         codex_home,
         user_data_dir,
+        launcher_kind,
     })
+}
+
+fn normalized_input(value: Option<&str>) -> Option<&str> {
+    value.map(str::trim).filter(|value| !value.is_empty())
+}
+
+fn ensure_copy_target_paths_are_new(
+    source: &ProfileInfo,
+    draft: &ProfileDraft,
+) -> Result<(), String> {
+    let source_home = PathBuf::from(&source.codex_home);
+    if paths_refer_to_same_location(&source_home, &draft.codex_home) {
+        return Err("copy target CODEX_HOME must be different from source profile".to_string());
+    }
+    let source_user_data = PathBuf::from(&source.user_data_dir);
+    if paths_refer_to_same_location(&source_user_data, &draft.user_data_dir) {
+        return Err("copy target user-data-dir must be different from source profile".to_string());
+    }
+    Ok(())
+}
+
+fn paths_refer_to_same_location(left: &Path, right: &Path) -> bool {
+    let normalized_left = fs::canonicalize(left).unwrap_or_else(|_| left.to_path_buf());
+    let normalized_right = fs::canonicalize(right).unwrap_or_else(|_| right.to_path_buf());
+    normalized_left == normalized_right
 }
 
 fn find_profile(context: &ProfileContext, name: &str) -> Result<ProfileInfo, String> {
@@ -1355,6 +2407,96 @@ fn command_has_user_data_dir(command: &str, user_data_dir: &Path) -> bool {
     })
 }
 
+#[derive(Debug, Clone)]
+struct RunningWechatBridgeProcess {
+    pid: u32,
+    instance: String,
+}
+
+fn running_wechat_bridge_processes() -> Result<Vec<RunningWechatBridgeProcess>, String> {
+    let output = Command::new("ps")
+        .args(["axww", "-o", "pid=,command="])
+        .output()
+        .map_err(|error| format!("failed to inspect running WeChat bridges: {error}"))?;
+    if !output.status.success() {
+        return Err(format!(
+            "failed to inspect running WeChat bridges; ps exited with {}",
+            output.status
+        ));
+    }
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    Ok(stdout
+        .lines()
+        .filter_map(parse_running_wechat_bridge_process)
+        .collect())
+}
+
+fn parse_running_wechat_bridge_process(line: &str) -> Option<RunningWechatBridgeProcess> {
+    let trimmed = line.trim_start();
+    let (pid_raw, command_raw) = trimmed.split_once(char::is_whitespace)?;
+    let pid = pid_raw.parse().ok()?;
+    let command = command_raw.trim();
+    if !command.contains("wechat-acp") {
+        return None;
+    }
+    let instance = command_flag_value(command, "--instance")?;
+    Some(RunningWechatBridgeProcess { pid, instance })
+}
+
+fn command_flag_value(command: &str, flag: &str) -> Option<String> {
+    let equals_prefix = format!("{flag}=");
+    let mut saw_flag = false;
+    for part in command.split_whitespace() {
+        if let Some(value) = part.strip_prefix(&equals_prefix) {
+            return Some(trim_shell_token(value).to_string());
+        }
+        if saw_flag {
+            return Some(trim_shell_token(part).to_string());
+        }
+        saw_flag = part == flag;
+    }
+    None
+}
+
+fn trim_shell_token(value: &str) -> &str {
+    value.trim_matches(|char| char == '"' || char == '\'')
+}
+
+fn matching_wechat_bridge_pids(
+    processes: &[RunningWechatBridgeProcess],
+    instance: &str,
+) -> Vec<u32> {
+    processes
+        .iter()
+        .filter(|process| process.instance == instance)
+        .map(|process| process.pid)
+        .collect()
+}
+
+fn terminate_wechat_bridge_pids(pids: &[u32]) -> Result<(), String> {
+    let mut failures = Vec::new();
+    for pid in pids {
+        match Command::new("kill")
+            .arg("-TERM")
+            .arg(pid.to_string())
+            .status()
+        {
+            Ok(status) if status.success() => {}
+            Ok(status) => failures.push(format!("{pid} ({status})")),
+            Err(error) => failures.push(format!("{pid} ({error})")),
+        }
+    }
+    if failures.is_empty() {
+        Ok(())
+    } else {
+        Err(format!(
+            "failed to stop WeChat bridge process(es): {}",
+            failures.join(", ")
+        ))
+    }
+}
+
 fn format_pids(pids: &[u32]) -> String {
     pids.iter()
         .map(u32::to_string)
@@ -1382,7 +2524,8 @@ fn read_recent_session_summaries(codex_home: &Path, limit: usize) -> Vec<CodexSe
         return Vec::new();
     }
 
-    let index_entries = read_session_index_entries(codex_home);
+    let index_scan_limit = limit.saturating_mul(2).max(limit + 16);
+    let index_entries = read_recent_session_index_entries(codex_home, index_scan_limit);
     let sessions_dir = codex_home.join("sessions");
     let mut summaries = Vec::new();
     let mut seen_ids = BTreeSet::new();
@@ -1458,27 +2601,48 @@ fn session_summary_from_parts(
     })
 }
 
-fn read_session_index_entries(codex_home: &Path) -> Vec<SessionIndexEntry> {
-    let Ok(file) = fs::File::open(codex_home.join("session_index.jsonl")) else {
+fn read_recent_session_index_entries(codex_home: &Path, limit: usize) -> Vec<SessionIndexEntry> {
+    if limit == 0 {
+        return Vec::new();
+    }
+
+    let Ok(mut file) = fs::File::open(codex_home.join("session_index.jsonl")) else {
         return Vec::new();
     };
-    let reader = BufReader::new(file);
-    let mut entries = reader
-        .lines()
-        .map_while(Result::ok)
-        .filter_map(|line| {
-            let trimmed = line.trim();
-            if trimmed.is_empty() {
-                return None;
+
+    let Ok(metadata) = file.metadata() else {
+        return Vec::new();
+    };
+    let mut position = metadata.len();
+    let mut carry = Vec::new();
+    let mut entries = Vec::new();
+
+    while position > 0 && entries.len() < limit {
+        let read_len = position.min(SESSION_INDEX_READ_CHUNK_SIZE) as usize;
+        position -= read_len as u64;
+        let mut chunk = vec![0; read_len];
+        if file.seek(SeekFrom::Start(position)).is_err() || file.read_exact(&mut chunk).is_err() {
+            return Vec::new();
+        }
+        chunk.extend_from_slice(&carry);
+
+        let mut lines = chunk.split(|byte| *byte == b'\n').collect::<Vec<_>>();
+        carry = if position > 0 && !lines.is_empty() {
+            lines.remove(0).to_vec()
+        } else {
+            Vec::new()
+        };
+
+        for line in lines.into_iter().rev() {
+            if let Some(entry) = parse_session_index_line(line) {
+                entries.push(entry);
+                if entries.len() >= limit {
+                    break;
+                }
             }
-            let entry = serde_json::from_str::<SessionIndexEntry>(trimmed).ok()?;
-            if entry.id.trim().is_empty() {
-                None
-            } else {
-                Some(entry)
-            }
-        })
-        .collect::<Vec<_>>();
+        }
+    }
+
     entries.sort_by(|left, right| {
         right
             .updated_at
@@ -1487,7 +2651,32 @@ fn read_session_index_entries(codex_home: &Path) -> Vec<SessionIndexEntry> {
             .cmp(left.updated_at.as_deref().unwrap_or_default())
             .then_with(|| left.id.cmp(&right.id))
     });
+    entries.truncate(limit);
     entries
+}
+
+fn parse_session_index_line(line: &[u8]) -> Option<SessionIndexEntry> {
+    let trimmed = trim_ascii_bytes(line);
+    if trimmed.is_empty() {
+        return None;
+    }
+    let text = std::str::from_utf8(trimmed).ok()?;
+    let entry = serde_json::from_str::<SessionIndexEntry>(text).ok()?;
+    if entry.id.trim().is_empty() {
+        None
+    } else {
+        Some(entry)
+    }
+}
+
+fn trim_ascii_bytes(mut bytes: &[u8]) -> &[u8] {
+    while bytes.first().is_some_and(|byte| byte.is_ascii_whitespace()) {
+        bytes = &bytes[1..];
+    }
+    while bytes.last().is_some_and(|byte| byte.is_ascii_whitespace()) {
+        bytes = &bytes[..bytes.len() - 1];
+    }
+    bytes
 }
 
 fn find_session_file_by_id(
@@ -2399,8 +3588,49 @@ fn auth_vault_dir(context: &ProfileContext) -> PathBuf {
     app_data_dir(context).join("auth-vault")
 }
 
+fn auth_vault_exports_dir(context: &ProfileContext) -> PathBuf {
+    auth_vault_dir(context).join("exports")
+}
+
 fn auth_vault_index_path(context: &ProfileContext) -> PathBuf {
     app_data_dir(context).join("auth-vault.json")
+}
+
+fn wechat_bridge_store_path(context: &ProfileContext) -> PathBuf {
+    app_data_dir(context).join("wechat-bridges.json")
+}
+
+fn wechat_bridge_root_dir(context: &ProfileContext) -> PathBuf {
+    app_data_dir(context).join("wechat-bridges")
+}
+
+#[derive(Debug, Clone)]
+struct WechatBridgePaths {
+    runtime_dir: PathBuf,
+    storage_dir: PathBuf,
+    token_path: PathBuf,
+    inbox_dir: PathBuf,
+    wrapper_path: PathBuf,
+    app_log_path: PathBuf,
+    default_log_path: PathBuf,
+}
+
+fn wechat_bridge_paths(context: &ProfileContext, instance: &str) -> WechatBridgePaths {
+    let runtime_dir = wechat_bridge_root_dir(context).join(instance);
+    let storage_dir = context
+        .home_dir
+        .join(".wechat-acp")
+        .join("instances")
+        .join(instance);
+    WechatBridgePaths {
+        token_path: storage_dir.join("token.json"),
+        default_log_path: storage_dir.join("wechat-acp.log"),
+        inbox_dir: runtime_dir.join("inbox"),
+        wrapper_path: runtime_dir.join("codex-acp-server"),
+        app_log_path: runtime_dir.join("wechat-acp.log"),
+        runtime_dir,
+        storage_dir,
+    }
 }
 
 fn read_auth_vault_store(context: &ProfileContext) -> Result<AuthVaultStore, String> {
@@ -2427,6 +3657,63 @@ fn write_auth_vault_store(context: &ProfileContext, store: &AuthVaultStore) -> R
     fs::write(path, format!("{payload}\n")).map_err(|error| error.to_string())
 }
 
+fn read_wechat_bridge_store(context: &ProfileContext) -> Result<WechatBridgeStore, String> {
+    let path = wechat_bridge_store_path(context);
+    if !path.exists() {
+        return Ok(WechatBridgeStore::default());
+    }
+
+    let contents = fs::read_to_string(&path).map_err(|error| error.to_string())?;
+    serde_json::from_str(&contents).map_err(|error| {
+        format!(
+            "failed to parse WeChat bridge file {}: {error}",
+            path_string(&path)
+        )
+    })
+}
+
+fn write_wechat_bridge_store(
+    context: &ProfileContext,
+    store: &WechatBridgeStore,
+) -> Result<(), String> {
+    let path = wechat_bridge_store_path(context);
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent).map_err(|error| error.to_string())?;
+    }
+    let payload = serde_json::to_string_pretty(store).map_err(|error| error.to_string())?;
+    fs::write(path, format!("{payload}\n")).map_err(|error| error.to_string())
+}
+
+fn upsert_wechat_bridge_record<F>(
+    context: &ProfileContext,
+    profile_name: &str,
+    instance: &str,
+    update: F,
+) -> Result<(), String>
+where
+    F: FnOnce(&mut WechatBridgeRecord),
+{
+    let mut store = read_wechat_bridge_store(context)?;
+    let created_at = now_iso();
+    let mut record = store
+        .bindings
+        .remove(profile_name)
+        .unwrap_or_else(|| WechatBridgeRecord {
+            profile_name: profile_name.to_string(),
+            instance: instance.to_string(),
+            created_at: created_at.clone(),
+            updated_at: created_at,
+            last_started_at: None,
+            last_stopped_at: None,
+            last_error: None,
+        });
+    record.profile_name = profile_name.to_string();
+    record.instance = instance.to_string();
+    update(&mut record);
+    store.bindings.insert(profile_name.to_string(), record);
+    write_wechat_bridge_store(context, &store)
+}
+
 fn auth_profile_slot(profile: &ProfileInfo) -> AuthProfileSlot {
     let auth_path = PathBuf::from(&profile.codex_home).join("auth.json");
     AuthProfileSlot {
@@ -2439,6 +3726,49 @@ fn auth_profile_slot(profile: &ProfileInfo) -> AuthProfileSlot {
         auth_path: path_string(&auth_path),
         auth_exists: auth_path.exists(),
         account: profile.account.clone(),
+    }
+}
+
+fn wechat_bridge_entry(
+    context: &ProfileContext,
+    profile: &ProfileInfo,
+    store: &WechatBridgeStore,
+    processes: &[RunningWechatBridgeProcess],
+) -> WechatBridgeEntry {
+    let instance = store
+        .bindings
+        .get(&profile.name)
+        .map(|record| record.instance.clone())
+        .unwrap_or_else(|| wechat_bridge_instance_name(&profile.name));
+    let paths = wechat_bridge_paths(context, &instance);
+    let record = store.bindings.get(&profile.name);
+    let running_pids = matching_wechat_bridge_pids(processes, &instance);
+    let auth_path = PathBuf::from(&profile.codex_home).join("auth.json");
+
+    WechatBridgeEntry {
+        profile_name: profile.name.clone(),
+        profile_label: profile
+            .alias
+            .clone()
+            .unwrap_or_else(|| profile.name.clone()),
+        profile_category: profile.category.clone(),
+        codex_home: profile.codex_home.clone(),
+        auth_exists: auth_path.exists(),
+        account: profile.account.clone(),
+        instance,
+        storage_dir: path_string(&paths.storage_dir),
+        token_path: path_string(&paths.token_path),
+        inbox_dir: path_string(&paths.inbox_dir),
+        wrapper_path: path_string(&paths.wrapper_path),
+        app_log_path: path_string(&paths.app_log_path),
+        default_log_path: path_string(&paths.default_log_path),
+        token_exists: paths.token_path.exists(),
+        running: !running_pids.is_empty(),
+        running_pids,
+        last_started_at: record.and_then(|record| record.last_started_at.clone()),
+        last_stopped_at: record.and_then(|record| record.last_stopped_at.clone()),
+        last_error: record.and_then(|record| record.last_error.clone()),
+        log_tail: read_wechat_bridge_log_tail(&paths, WECHAT_BRIDGE_LOG_TAIL_LINES),
     }
 }
 
@@ -2456,15 +3786,85 @@ fn auth_backup_entry(record: AuthBackupRecord) -> AuthBackupEntry {
     AuthBackupEntry {
         id: record.id,
         label: record.label,
+        note: record.note,
         created_at: record.created_at,
+        updated_at: record.updated_at,
         source_profile_name: record.source_profile_name,
         source_profile_label: record.source_profile_label,
         source_codex_home: record.source_codex_home,
         path: record.path,
         exists: path.exists(),
+        pinned: record.pinned,
         account,
         has_refresh_token,
     }
+}
+
+fn auth_backup_sort_order(left: &AuthBackupEntry, right: &AuthBackupEntry) -> std::cmp::Ordering {
+    right
+        .pinned
+        .cmp(&left.pinned)
+        .then_with(|| {
+            right
+                .updated_at
+                .as_deref()
+                .unwrap_or(&right.created_at)
+                .cmp(left.updated_at.as_deref().unwrap_or(&left.created_at))
+        })
+        .then_with(|| right.created_at.cmp(&left.created_at))
+        .then_with(|| left.label.cmp(&right.label))
+}
+
+fn codex_account_key(account: Option<&CodexAccountInfo>) -> String {
+    account
+        .and_then(|account| {
+            [
+                account.account_id.as_deref(),
+                account.user_id.as_deref(),
+                account.email.as_deref(),
+                account.name.as_deref(),
+            ]
+            .into_iter()
+            .flatten()
+            .map(str::trim)
+            .find(|value| !value.is_empty())
+            .map(ToOwned::to_owned)
+        })
+        .unwrap_or_default()
+}
+
+fn auth_application_entry(record: AuthApplicationRecord) -> AuthApplicationEntry {
+    let previous_auth_exists = record
+        .previous_auth_path
+        .as_ref()
+        .is_some_and(|path| PathBuf::from(path).exists());
+    let previous_account = record
+        .previous_auth_path
+        .as_ref()
+        .and_then(|path| read_auth_account_from_path(Path::new(path)));
+
+    AuthApplicationEntry {
+        id: record.id,
+        applied_at: record.applied_at,
+        backup_id: record.backup_id,
+        backup_label: record.backup_label,
+        target_profile_name: record.target_profile_name,
+        target_profile_label: record.target_profile_label,
+        target_codex_home: record.target_codex_home,
+        previous_auth_path: record.previous_auth_path,
+        previous_auth_exists,
+        previous_account,
+        applied_account: record.applied_account,
+        rolled_back_at: record.rolled_back_at,
+    }
+}
+
+fn read_auth_account_from_path(path: &Path) -> Option<CodexAccountInfo> {
+    fs::read_to_string(path)
+        .ok()
+        .and_then(|contents| serde_json::from_str::<Value>(&contents).ok())
+        .and_then(|value| read_codex_auth_material_from_value(&value))
+        .and_then(|material| material.account)
 }
 
 fn auth_json_has_refresh_token(value: &Value) -> bool {
@@ -2491,6 +3891,41 @@ fn unique_auth_backup_id(store: &AuthVaultStore, profile_name: &str) -> String {
     format!("{base}-{}", Utc::now().timestamp_millis())
 }
 
+fn unique_auth_application_id(store: &AuthVaultStore, profile_name: &str) -> String {
+    let suffix = sanitize_id_component(profile_name);
+    let base = format!("{}-apply-{suffix}", timestamp_compact());
+    if !store.applications.contains_key(&base) {
+        return base;
+    }
+    for index in 2..1000 {
+        let candidate = format!("{base}-{index}");
+        if !store.applications.contains_key(&candidate) {
+            return candidate;
+        }
+    }
+    format!("{base}-{}", Utc::now().timestamp_millis())
+}
+
+fn unique_auth_export_path(dir: &Path, label: &str) -> PathBuf {
+    let suffix = sanitize_id_component(label);
+    let base = format!("{}-{suffix}", timestamp_compact());
+    for index in 1..1000 {
+        let file_name = if index == 1 {
+            format!("{base}.rcodex-auth.json")
+        } else {
+            format!("{base}-{index}.rcodex-auth.json")
+        };
+        let candidate = dir.join(file_name);
+        if !candidate.exists() {
+            return candidate;
+        }
+    }
+    dir.join(format!(
+        "{base}-{}.rcodex-auth.json",
+        Utc::now().timestamp_millis()
+    ))
+}
+
 fn sanitize_id_component(value: &str) -> String {
     let normalized = value
         .chars()
@@ -2507,6 +3942,146 @@ fn sanitize_id_component(value: &str) -> String {
         "auth".to_string()
     } else {
         trimmed.to_string()
+    }
+}
+
+fn wechat_bridge_instance_name(profile_name: &str) -> String {
+    sanitize_id_component(profile_name)
+}
+
+fn write_wechat_bridge_wrapper(path: &Path, profile: &ProfileInfo) -> Result<(), String> {
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent).map_err(|error| error.to_string())?;
+    }
+    let script = format!(
+        "#!/usr/bin/env bash\nset -euo pipefail\nexport CODEX_HOME={}\nexec npx -y --package {} codex-acp -c 'shell_environment_policy.inherit=\"all\"' \"$@\"\n",
+        shell_quote(&profile.codex_home),
+        CODEX_ACP_PACKAGE,
+    );
+    fs::write(path, script).map_err(|error| {
+        format!(
+            "failed to write WeChat Codex ACP wrapper {}: {error}",
+            path_string(path)
+        )
+    })?;
+    #[cfg(unix)]
+    {
+        let mut permissions = fs::metadata(path)
+            .map_err(|error| error.to_string())?
+            .permissions();
+        permissions.set_mode(0o755);
+        fs::set_permissions(path, permissions).map_err(|error| error.to_string())?;
+    }
+    Ok(())
+}
+
+fn render_wechat_bridge_user_service(
+    context: &ProfileContext,
+    profile: &ProfileInfo,
+    paths: &WechatBridgePaths,
+    instance: &str,
+) -> String {
+    let exec = format!(
+        "exec npx -y --package {} wechat-acp --instance {} --agent {} --cwd {} --inbox-dir {} --hide-thoughts",
+        shell_quote(WECHAT_ACP_PACKAGE),
+        shell_quote(instance),
+        shell_quote(&path_string(&paths.wrapper_path)),
+        shell_quote(&path_string(&context.home_dir)),
+        shell_quote(&path_string(&paths.inbox_dir)),
+    );
+    format!(
+        "[Unit]\nDescription=rCodexManager WeChat bridge for {profile_name}\nAfter=network-online.target\nWants=network-online.target\n\n[Service]\nType=simple\nWorkingDirectory={workdir}\nEnvironment=CODEX_HOME={codex_home}\nExecStart=/bin/sh -lc {exec}\nRestart=always\nRestartSec=5\n\n[Install]\nWantedBy=default.target\n",
+        profile_name = profile.name,
+        workdir = path_string(&context.home_dir),
+        codex_home = profile.codex_home,
+        exec = shell_quote(&exec),
+    )
+}
+
+fn run_systemctl_user(args: &[&str]) -> Result<(), String> {
+    let status = Command::new("systemctl")
+        .arg("--user")
+        .args(args)
+        .status()
+        .map_err(|error| format!("failed to run systemctl --user {}: {error}", args.join(" ")))?;
+    if status.success() {
+        Ok(())
+    } else {
+        Err(format!(
+            "systemctl --user {} exited with {status}",
+            args.join(" ")
+        ))
+    }
+}
+
+fn shell_quote(value: &str) -> String {
+    format!("'{}'", value.replace('\'', "'\\''"))
+}
+
+fn read_wechat_bridge_log_tail(paths: &WechatBridgePaths, lines: usize) -> Vec<String> {
+    let app_tail = tail_text_file_lines(&paths.app_log_path, lines);
+    if !app_tail.is_empty() {
+        return app_tail;
+    }
+    tail_text_file_lines(&paths.default_log_path, lines)
+}
+
+fn tail_text_file_lines(path: &Path, lines: usize) -> Vec<String> {
+    if lines == 0 {
+        return Vec::new();
+    }
+    let mut file = match fs::File::open(path) {
+        Ok(file) => file,
+        Err(_) => return Vec::new(),
+    };
+    let length = match file.metadata() {
+        Ok(metadata) => metadata.len(),
+        Err(_) => return Vec::new(),
+    };
+    let read_size = (128 * 1024).min(length);
+    if file
+        .seek(SeekFrom::Start(length.saturating_sub(read_size)))
+        .is_err()
+    {
+        return Vec::new();
+    }
+    let mut buffer = String::new();
+    if file.read_to_string(&mut buffer).is_err() {
+        return Vec::new();
+    }
+    if read_size < length {
+        if let Some((_, tail)) = buffer.split_once('\n') {
+            buffer = tail.to_string();
+        }
+    }
+
+    let mut result = buffer
+        .lines()
+        .rev()
+        .take(lines)
+        .map(sanitize_wechat_log_line)
+        .collect::<Vec<_>>();
+    result.reverse();
+    result
+}
+
+fn sanitize_wechat_log_line(line: &str) -> String {
+    let lower = line.to_ascii_lowercase();
+    let sensitive = [
+        "access_token",
+        "refresh_token",
+        "authorization",
+        "bearer ",
+        "set-cookie",
+        "cookie:",
+        "http_proxy=",
+        "https_proxy=",
+        "all_proxy=",
+    ];
+    if sensitive.iter().any(|marker| lower.contains(marker)) {
+        "[sensitive log line hidden]".to_string()
+    } else {
+        line.to_string()
     }
 }
 
@@ -2677,6 +4252,17 @@ fn extract_shell_value(body: &str, token: &str) -> Option<String> {
     Some(rest[..end].to_string())
 }
 
+fn profile_launcher_kind_from_body(body: &str) -> ProfileLauncherKind {
+    if body.contains("open -n -a \"Codex\"")
+        || body.contains("open -n -a Codex")
+        || body.contains("--user-data-dir=")
+    {
+        ProfileLauncherKind::Desktop
+    } else {
+        ProfileLauncherKind::Server
+    }
+}
+
 fn expand_shell_path(value: &str, home_dir: &Path) -> PathBuf {
     if value == "$HOME" || value == "~" {
         return home_dir.to_path_buf();
@@ -2759,10 +4345,16 @@ fn render_profile_function(context: &ProfileContext, draft: &ProfileDraft) -> St
     let user_data_dir =
         escape_double_quotes(&shorten_home_path(&draft.user_data_dir, &context.home_dir));
 
-    format!(
-        "{name}() {{\n  mkdir -p \"{codex_home}\" \"{user_data_dir}\"\n  open -n -a \"Codex\" \\\n    --env CODEX_HOME=\"{codex_home}\" \\\n    --args --user-data-dir=\"{user_data_dir}\"\n}}\n\n",
-        name = draft.name,
-    )
+    match draft.launcher_kind {
+        ProfileLauncherKind::Desktop => format!(
+            "{name}() {{\n  mkdir -p \"{codex_home}\" \"{user_data_dir}\"\n  open -n -a \"Codex\" \\\n    --env CODEX_HOME=\"{codex_home}\" \\\n    --args --user-data-dir=\"{user_data_dir}\"\n}}\n\n",
+            name = draft.name,
+        ),
+        ProfileLauncherKind::Server => format!(
+            "{name}() {{\n  mkdir -p \"{codex_home}\"\n  CODEX_HOME=\"{codex_home}\" codex \"$@\"\n}}\n\n",
+            name = draft.name,
+        ),
+    }
 }
 
 fn write_profile_config(
@@ -2779,6 +4371,43 @@ fn write_profile_config(
         escape_toml_string(reasoning_effort),
     );
     fs::write(config_path, config).map_err(|error| error.to_string())
+}
+
+fn write_copied_profile_config(
+    source_config_path: &Path,
+    target_config_path: &Path,
+    model: &str,
+    reasoning_effort: &str,
+) -> Result<(), String> {
+    if let Some(parent) = target_config_path.parent() {
+        fs::create_dir_all(parent).map_err(|error| error.to_string())?;
+    }
+
+    let source_contents = fs::read_to_string(source_config_path).ok();
+    let Some(contents) = source_contents else {
+        return write_profile_config(target_config_path, model, reasoning_effort);
+    };
+
+    let contents = upsert_toml_top_level_strings(
+        &contents,
+        [
+            ("model", model),
+            ("model_reasoning_effort", reasoning_effort),
+        ],
+    );
+    let contents = upsert_toml_bool_section(
+        &contents,
+        "features",
+        CODEX_WEBSOCKET_FEATURE_FLAGS
+            .iter()
+            .map(|flag| (*flag, true)),
+    );
+    fs::write(target_config_path, contents).map_err(|error| {
+        format!(
+            "failed to write copied config {}: {error}",
+            path_string(target_config_path)
+        )
+    })
 }
 
 #[derive(Debug, Default)]
@@ -2875,6 +4504,40 @@ fn ensure_codex_websocket_features(
         )
     })?;
     Ok(true)
+}
+
+fn upsert_toml_top_level_strings<'a>(
+    contents: &str,
+    pairs: impl IntoIterator<Item = (&'a str, &'a str)>,
+) -> String {
+    let mut lines: Vec<String> = contents.lines().map(ToString::to_string).collect();
+    let had_trailing_newline = contents.ends_with('\n');
+    let pairs = pairs.into_iter().collect::<Vec<_>>();
+    let first_section = lines
+        .iter()
+        .position(|line| line.trim_start().starts_with('['))
+        .unwrap_or(lines.len());
+    let mut insert_at = first_section;
+
+    for (key, value) in pairs {
+        let prefix = format!("{key} =");
+        let replacement = format!("{key} = \"{}\"", escape_toml_string(value));
+        if let Some(index) =
+            (0..first_section).find(|index| lines[*index].trim_start().starts_with(&prefix))
+        {
+            lines[index] = replacement;
+        } else {
+            lines.insert(insert_at, replacement);
+            insert_at += 1;
+        }
+    }
+
+    let joined = lines.join("\n");
+    if had_trailing_newline {
+        with_trailing_newline(joined)
+    } else {
+        joined
+    }
 }
 
 fn upsert_toml_bool_section<'a>(
@@ -3003,6 +4666,12 @@ fn proxy_url(values: &BTreeMap<String, String>, prefix: &str, scheme: &str) -> O
 fn append_open_proxy_env(command: &mut Command, proxy: &ProxyEnvSettings) {
     for (key, value) in proxy_env_pairs(proxy) {
         command.arg("--env").arg(format!("{key}={value}"));
+    }
+}
+
+fn apply_child_proxy_env(command: &mut Command, proxy: &ProxyEnvSettings) {
+    for (key, value) in proxy_env_pairs(proxy) {
+        command.env(key, &value);
     }
 }
 

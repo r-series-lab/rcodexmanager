@@ -1,8 +1,13 @@
 use crate::core::{
-    app_identifier, app_name, binary_name, create_profile, delete_profile, import_profile_auth,
-    launch_profile, list_profiles, read_profile_quota, repair_profile_network, reset_profile,
-    terminate_profile, update_profile_metadata, CreateProfileInput, ImportAuthInput,
-    ProfileContext, ProfileMetadataInput, ResetProfileInput,
+    app_identifier, app_name, apply_auth_backup, binary_name, copy_profile, create_auth_backup,
+    create_profile, delete_profile, import_profile_auth, install_wechat_bridge_service,
+    launch_profile, list_auth_vault, list_profiles, list_wechat_bridges, read_profile_quota,
+    read_wechat_bridge_log, repair_profile_network, reset_profile, rollback_auth_application,
+    start_wechat_bridge, stop_wechat_bridge, terminate_profile, update_profile_metadata,
+    ApplyAuthBackupInput, CopyProfileInput, CreateAuthBackupInput, CreateProfileInput,
+    ImportAuthInput, InstallWechatBridgeServiceInput, ProfileContext, ProfileLauncherKind,
+    ProfileMetadataInput, ReadWechatBridgeLogInput, ResetProfileInput,
+    RollbackAuthApplicationInput, StartWechatBridgeInput, StopWechatBridgeInput,
 };
 use clap::error::ErrorKind;
 use clap::{Parser, Subcommand};
@@ -48,6 +53,34 @@ pub enum Commands {
         category: Option<String>,
         #[arg(long)]
         note: Option<String>,
+        #[arg(long)]
+        server: bool,
+    },
+    Copy {
+        #[arg(long)]
+        source: String,
+        #[arg(long)]
+        name: String,
+        #[arg(long)]
+        codex_home: Option<String>,
+        #[arg(long)]
+        user_data_dir: Option<String>,
+        #[arg(long)]
+        model: Option<String>,
+        #[arg(long)]
+        reasoning_effort: Option<String>,
+        #[arg(long)]
+        alias: Option<String>,
+        #[arg(long)]
+        category: Option<String>,
+        #[arg(long)]
+        note: Option<String>,
+        #[arg(long)]
+        auth_source: Option<String>,
+        #[arg(long)]
+        confirm_sensitive: bool,
+        #[arg(long)]
+        server: bool,
     },
     Update {
         #[arg(long)]
@@ -103,6 +136,77 @@ pub enum Commands {
         name: String,
         #[arg(long)]
         skip_launchctl: bool,
+    },
+    Auth {
+        #[command(subcommand)]
+        command: AuthCommands,
+    },
+    Wechat {
+        #[command(subcommand)]
+        command: WechatCommands,
+    },
+}
+
+#[derive(Debug, Subcommand)]
+pub enum AuthCommands {
+    List,
+    Backup {
+        #[arg(long)]
+        name: String,
+        #[arg(long)]
+        label: Option<String>,
+    },
+    Apply {
+        #[arg(long)]
+        backup_id: String,
+        #[arg(long)]
+        target: String,
+        #[arg(long)]
+        confirm_sensitive: bool,
+    },
+    Rollback {
+        #[arg(long)]
+        application_id: String,
+        #[arg(long)]
+        confirm_sensitive: bool,
+    },
+}
+
+#[derive(Debug, Subcommand)]
+pub enum WechatCommands {
+    Status {
+        #[arg(long)]
+        name: Option<String>,
+    },
+    Start {
+        #[arg(long)]
+        name: String,
+    },
+    Stop {
+        #[arg(long)]
+        name: String,
+    },
+    Log {
+        #[arg(long)]
+        name: String,
+        #[arg(long)]
+        lines: Option<usize>,
+    },
+    Switch {
+        #[arg(long)]
+        from: Option<String>,
+        #[arg(long)]
+        to: String,
+    },
+    Service {
+        #[arg(long)]
+        name: String,
+        #[arg(long)]
+        install: bool,
+        #[arg(long)]
+        enable: bool,
+        #[arg(long)]
+        now: bool,
     },
 }
 
@@ -218,6 +322,18 @@ fn capability_manifest() -> CapabilityManifest {
                 writes_files: true,
                 examples: vec![
                     "rcodexmanager create --name codex-f --model gpt-5.5 --reasoning-effort xhigh --alias Draft --category 深度 --json",
+                    "rcodexmanager create --name codex-o --server --json",
+                ],
+            },
+            CapabilityInfo {
+                command: "copy",
+                description: "Copy one profile into a new launcher command, preserving config and metadata, with optional trusted auth.json copy.",
+                json_supported: true,
+                reads_files: true,
+                writes_files: true,
+                examples: vec![
+                    "rcodexmanager copy --source codex-b --name codex-f --auth-source codex-b --confirm-sensitive --json",
+                    "rcodexmanager copy --source codex --name codex-o --server --auth-source codex --confirm-sensitive --json",
                 ],
             },
             CapabilityInfo {
@@ -291,6 +407,30 @@ fn capability_manifest() -> CapabilityManifest {
                 examples: vec![
                     "rcodexmanager repair-network --name codex-f --json",
                     "rcodexmanager repair-network --name codex-f --skip-launchctl --json",
+                ],
+            },
+            CapabilityInfo {
+                command: "auth",
+                description: "Manage the auth vault from CLI: list backups, create a backup, apply a backup to a stopped profile, or roll back an application.",
+                json_supported: true,
+                reads_files: true,
+                writes_files: true,
+                examples: vec![
+                    "rcodexmanager auth list --json",
+                    "rcodexmanager auth backup --name codex-o --label Server --json",
+                    "rcodexmanager auth apply --backup-id <id> --target codex-o --confirm-sensitive --json",
+                ],
+            },
+            CapabilityInfo {
+                command: "wechat",
+                description: "Manage server-friendly WeChat bridges: status, start, stop, log, switch profile, and render or install a systemd user service.",
+                json_supported: true,
+                reads_files: true,
+                writes_files: true,
+                examples: vec![
+                    "rcodexmanager wechat status --json",
+                    "rcodexmanager wechat start --name codex-o --json",
+                    "rcodexmanager wechat service --name codex-o --install --enable --now --json",
                 ],
             },
         ],
@@ -388,6 +528,7 @@ pub fn run_from_env() -> CliOutcome {
             alias,
             category,
             note,
+            server,
         }) => match create_profile(
             &context,
             CreateProfileInput {
@@ -399,10 +540,50 @@ pub fn run_from_env() -> CliOutcome {
                 alias,
                 category,
                 note,
+                launcher_kind: server.then_some(ProfileLauncherKind::Server),
             },
         ) {
             Ok(report) => {
                 emit_success(cli.json, "create", &report);
+                if !cli.json {
+                    println!("{}", report.message);
+                }
+                CliOutcome::Exit(0)
+            }
+            Err(message) => emit_action_error(cli.json, &message),
+        },
+        Some(Commands::Copy {
+            source,
+            name,
+            codex_home,
+            user_data_dir,
+            model,
+            reasoning_effort,
+            alias,
+            category,
+            note,
+            auth_source,
+            confirm_sensitive,
+            server,
+        }) => match copy_profile(
+            &context,
+            CopyProfileInput {
+                source_name: source,
+                name,
+                codex_home,
+                user_data_dir,
+                model,
+                reasoning_effort,
+                alias,
+                category,
+                note,
+                auth_source_name: auth_source,
+                confirm_sensitive,
+                launcher_kind: server.then_some(ProfileLauncherKind::Server),
+            },
+        ) {
+            Ok(report) => {
+                emit_success(cli.json, "copy", &report);
                 if !cli.json {
                     println!("{}", report.message);
                 }
@@ -535,6 +716,194 @@ pub fn run_from_env() -> CliOutcome {
                 CliOutcome::Exit(0)
             }
             Err(message) => emit_action_error(cli.json, &message),
+        },
+        Some(Commands::Auth { command }) => match command {
+            AuthCommands::List => match list_auth_vault(&context) {
+                Ok(report) => {
+                    emit_success(cli.json, "auth-list", &report);
+                    if !cli.json {
+                        println!(
+                            "auth vault: {} backup(s), {} profile(s)",
+                            report.backup_count, report.profile_count
+                        );
+                    }
+                    CliOutcome::Exit(0)
+                }
+                Err(message) => emit_action_error(cli.json, &message),
+            },
+            AuthCommands::Backup { name, label } => {
+                match create_auth_backup(&context, CreateAuthBackupInput { name, label }) {
+                    Ok(report) => {
+                        emit_success(cli.json, "auth-backup", &report);
+                        if !cli.json {
+                            println!("auth vault: {} backup(s)", report.backup_count);
+                        }
+                        CliOutcome::Exit(0)
+                    }
+                    Err(message) => emit_action_error(cli.json, &message),
+                }
+            }
+            AuthCommands::Apply {
+                backup_id,
+                target,
+                confirm_sensitive,
+            } => match apply_auth_backup(
+                &context,
+                ApplyAuthBackupInput {
+                    backup_id,
+                    target_profile_name: target,
+                    confirm_sensitive,
+                },
+            ) {
+                Ok(report) => {
+                    emit_success(cli.json, "auth-apply", &report);
+                    if !cli.json {
+                        println!("{}", report.message);
+                    }
+                    CliOutcome::Exit(0)
+                }
+                Err(message) => emit_action_error(cli.json, &message),
+            },
+            AuthCommands::Rollback {
+                application_id,
+                confirm_sensitive,
+            } => match rollback_auth_application(
+                &context,
+                RollbackAuthApplicationInput {
+                    application_id,
+                    confirm_sensitive,
+                },
+            ) {
+                Ok(report) => {
+                    emit_success(cli.json, "auth-rollback", &report);
+                    if !cli.json {
+                        println!("{}", report.message);
+                    }
+                    CliOutcome::Exit(0)
+                }
+                Err(message) => emit_action_error(cli.json, &message),
+            },
+        },
+        Some(Commands::Wechat { command }) => match command {
+            WechatCommands::Status { name } => match list_wechat_bridges(&context) {
+                Ok(mut report) => {
+                    if let Some(name) = name {
+                        report.bridges.retain(|bridge| bridge.profile_name == name);
+                        report.bridge_count = report.bridges.len();
+                        report.running_count = report
+                            .bridges
+                            .iter()
+                            .filter(|bridge| bridge.running)
+                            .count();
+                    }
+                    emit_success(cli.json, "wechat-status", &report);
+                    if !cli.json {
+                        for bridge in report.bridges {
+                            let status = if bridge.running {
+                                "running"
+                            } else if bridge.token_exists {
+                                "bound"
+                            } else {
+                                "idle"
+                            };
+                            println!(
+                                "{} [{}] instance {}",
+                                bridge.profile_name, status, bridge.instance
+                            );
+                        }
+                    }
+                    CliOutcome::Exit(0)
+                }
+                Err(message) => emit_action_error(cli.json, &message),
+            },
+            WechatCommands::Start { name } => {
+                match start_wechat_bridge(&context, StartWechatBridgeInput { profile_name: name }) {
+                    Ok(report) => {
+                        emit_success(cli.json, "wechat-start", &report);
+                        if !cli.json {
+                            println!("wechat bridge running: {}", report.running_count);
+                        }
+                        CliOutcome::Exit(0)
+                    }
+                    Err(message) => emit_action_error(cli.json, &message),
+                }
+            }
+            WechatCommands::Stop { name } => {
+                match stop_wechat_bridge(&context, StopWechatBridgeInput { profile_name: name }) {
+                    Ok(report) => {
+                        emit_success(cli.json, "wechat-stop", &report);
+                        if !cli.json {
+                            println!("wechat bridge running: {}", report.running_count);
+                        }
+                        CliOutcome::Exit(0)
+                    }
+                    Err(message) => emit_action_error(cli.json, &message),
+                }
+            }
+            WechatCommands::Log { name, lines } => match read_wechat_bridge_log(
+                &context,
+                ReadWechatBridgeLogInput {
+                    profile_name: name,
+                    lines,
+                },
+            ) {
+                Ok(report) => {
+                    emit_success(cli.json, "wechat-log", &report);
+                    if !cli.json {
+                        for line in report.log_tail {
+                            println!("{line}");
+                        }
+                    }
+                    CliOutcome::Exit(0)
+                }
+                Err(message) => emit_action_error(cli.json, &message),
+            },
+            WechatCommands::Switch { from, to } => {
+                if let Some(from) = from {
+                    if let Err(message) =
+                        stop_wechat_bridge(&context, StopWechatBridgeInput { profile_name: from })
+                    {
+                        return emit_action_error(cli.json, &message);
+                    }
+                }
+                match start_wechat_bridge(&context, StartWechatBridgeInput { profile_name: to }) {
+                    Ok(report) => {
+                        emit_success(cli.json, "wechat-switch", &report);
+                        if !cli.json {
+                            println!("wechat bridge running: {}", report.running_count);
+                        }
+                        CliOutcome::Exit(0)
+                    }
+                    Err(message) => emit_action_error(cli.json, &message),
+                }
+            }
+            WechatCommands::Service {
+                name,
+                install,
+                enable,
+                now,
+            } => match install_wechat_bridge_service(
+                &context,
+                InstallWechatBridgeServiceInput {
+                    profile_name: name,
+                    install,
+                    enable,
+                    now,
+                },
+            ) {
+                Ok(report) => {
+                    emit_success(cli.json, "wechat-service", &report);
+                    if !cli.json {
+                        if install || enable || now {
+                            println!("{}", report.message);
+                        } else {
+                            print!("{}", report.unit_contents);
+                        }
+                    }
+                    CliOutcome::Exit(0)
+                }
+                Err(message) => emit_action_error(cli.json, &message),
+            },
         },
     }
 }

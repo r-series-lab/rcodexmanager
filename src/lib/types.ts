@@ -14,6 +14,7 @@ export interface ProfileInfo {
   websocketFeaturesEnabled: boolean;
   managedByApp: boolean;
   isDefault: boolean;
+  launcherKind: "desktop" | "server" | string;
   zshrcLine: number;
   isRunning: boolean;
   runningPids: number[];
@@ -136,14 +137,32 @@ export interface AuthProfileSlot {
 export interface AuthBackupEntry {
   id: string;
   label: string;
+  note: string | null;
   createdAt: string;
+  updatedAt: string | null;
   sourceProfileName: string | null;
   sourceProfileLabel: string | null;
   sourceCodexHome: string | null;
   path: string;
   exists: boolean;
+  pinned: boolean;
   account: CodexAccountInfo | null;
   hasRefreshToken: boolean;
+}
+
+export interface AuthApplicationEntry {
+  id: string;
+  appliedAt: string;
+  backupId: string;
+  backupLabel: string;
+  targetProfileName: string;
+  targetProfileLabel: string | null;
+  targetCodexHome: string;
+  previousAuthPath: string | null;
+  previousAuthExists: boolean;
+  previousAccount: CodexAccountInfo | null;
+  appliedAccount: CodexAccountInfo | null;
+  rolledBackAt: string | null;
 }
 
 export interface AuthVaultReport {
@@ -154,6 +173,7 @@ export interface AuthVaultReport {
   backupCount: number;
   profiles: AuthProfileSlot[];
   backups: AuthBackupEntry[];
+  recentApplications: AuthApplicationEntry[];
 }
 
 export interface BackupInfo {
@@ -182,6 +202,20 @@ export interface CreateProfileInput {
   note: string | null;
 }
 
+export interface CopyProfileInput {
+  sourceName: string;
+  name: string;
+  codexHome: string | null;
+  userDataDir: string | null;
+  model: string | null;
+  reasoningEffort: string | null;
+  alias: string | null;
+  category: string | null;
+  note: string | null;
+  authSourceName: string | null;
+  confirmSensitive: boolean;
+}
+
 export interface ResetProfileInput {
   name: string;
   model: string | null;
@@ -206,8 +240,100 @@ export interface ApplyAuthBackupInput {
   confirmSensitive: boolean;
 }
 
+export interface RollbackAuthApplicationInput {
+  applicationId: string;
+  confirmSensitive: boolean;
+}
+
 export interface DeleteAuthBackupInput {
   backupId: string;
+}
+
+export interface UpdateAuthBackupInput {
+  backupId: string;
+  label: string | null;
+  note: string | null;
+  pinned: boolean;
+}
+
+export interface ExportAuthBackupInput {
+  backupId: string;
+}
+
+export interface ImportAuthBackupPackageInput {
+  packageJson: string;
+  label: string | null;
+  note: string | null;
+  pinned: boolean;
+  confirmSensitive: boolean;
+}
+
+export interface AuthBackupExportReport {
+  generatedAt: string;
+  path: string;
+  fileName: string;
+  backup: AuthBackupEntry;
+  message: string;
+}
+
+export interface CleanupAuthBackupsInput {
+  accountKey: string;
+  confirmSensitive: boolean;
+}
+
+export interface StartWechatBridgeInput {
+  profileName: string;
+}
+
+export interface StopWechatBridgeInput {
+  profileName: string;
+}
+
+export interface ReadWechatBridgeLogInput {
+  profileName: string;
+  lines: number | null;
+}
+
+export interface WechatBridgeEntry {
+  profileName: string;
+  profileLabel: string;
+  profileCategory: string;
+  codexHome: string;
+  authExists: boolean;
+  account: CodexAccountInfo | null;
+  instance: string;
+  storageDir: string;
+  tokenPath: string;
+  inboxDir: string;
+  wrapperPath: string;
+  appLogPath: string;
+  defaultLogPath: string;
+  tokenExists: boolean;
+  running: boolean;
+  runningPids: number[];
+  lastStartedAt: string | null;
+  lastStoppedAt: string | null;
+  lastError: string | null;
+  logTail: string[];
+}
+
+export interface WechatBridgeReport {
+  generatedAt: string;
+  storePath: string;
+  bridgeCount: number;
+  runningCount: number;
+  wechatAcpPackage: string;
+  codexAcpPackage: string;
+  bridges: WechatBridgeEntry[];
+}
+
+export interface WechatBridgeLogReport {
+  generatedAt: string;
+  profileName: string;
+  instance: string;
+  appLogPath: string;
+  defaultLogPath: string;
+  logTail: string[];
 }
 
 export interface ProfileMetadataInput {

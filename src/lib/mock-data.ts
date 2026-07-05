@@ -5,6 +5,7 @@ import type {
   ProfileInfo,
   ProfileReport,
   ProfileSessionReport,
+  WechatBridgeReport,
 } from "./types";
 
 const mockProfiles: ProfileInfo[] = [
@@ -24,6 +25,7 @@ const mockProfiles: ProfileInfo[] = [
     websocketFeaturesEnabled: true,
     managedByApp: false,
     isDefault: true,
+    launcherKind: "desktop",
     zshrcLine: 0,
     isRunning: false,
     runningPids: [],
@@ -78,6 +80,7 @@ const mockProfiles: ProfileInfo[] = [
     websocketFeaturesEnabled: false,
     managedByApp: false,
     isDefault: false,
+    launcherKind: "desktop",
     zshrcLine: 23,
     isRunning: true,
     runningPids: [3831],
@@ -141,6 +144,7 @@ const mockProfiles: ProfileInfo[] = [
     websocketFeaturesEnabled: true,
     managedByApp: true,
     isDefault: false,
+    launcherKind: "desktop",
     zshrcLine: 44,
     isRunning: false,
     runningPids: [],
@@ -242,16 +246,83 @@ export function createMockAuthVaultReport(): AuthVaultReport {
       {
         id: "20260618103000-codex-b",
         label: "Balance 认证备份",
+        note: "主力 Plus 账号，适合深度任务。",
         createdAt: new Date(Date.now() - 3600_000).toISOString(),
+        updatedAt: null,
         sourceProfileName: "codex-b",
         sourceProfileLabel: "Balance",
         sourceCodexHome: "/Users/ikiru/.codex-isolated-test",
         path: "/Users/ikiru/.rcodexmanager/auth-vault/20260618103000-codex-b.auth.json",
         exists: true,
+        pinned: true,
         account: mockProfiles[1].account,
         hasRefreshToken: true,
       },
     ],
+    recentApplications: [
+      {
+        id: "20260626084200-apply-codex-e",
+        appliedAt: new Date(Date.now() - 1800_000).toISOString(),
+        backupId: "20260618103000-codex-b",
+        backupLabel: "Balance 认证备份",
+        targetProfileName: "codex-e",
+        targetProfileLabel: "Deep Draft",
+        targetCodexHome: "/Users/ikiru/.codex-e",
+        previousAuthPath: "/Users/ikiru/.codex-e/auth.json.rcodexmanager-auth-vault-apply-20260626084200.bak",
+        previousAuthExists: true,
+        previousAccount: null,
+        appliedAccount: mockProfiles[1].account,
+        rolledBackAt: null,
+      },
+    ],
+  };
+}
+
+export function createMockWechatBridgeReport(): WechatBridgeReport {
+  const bridges = mockProfiles.map((profile, index) => {
+    const instance = profile.name;
+    const runtimeRoot = `/Users/ikiru/.rcodexmanager/wechat-bridges/${instance}`;
+    const storageRoot = `/Users/ikiru/.wechat-acp/instances/${instance}`;
+    return {
+      profileName: profile.name,
+      profileLabel: profile.alias || profile.name,
+      profileCategory: profile.category,
+      codexHome: profile.codexHome,
+      authExists: Boolean(profile.account) || profile.isDefault,
+      account: profile.account,
+      instance,
+      storageDir: storageRoot,
+      tokenPath: `${storageRoot}/token.json`,
+      inboxDir: `${runtimeRoot}/inbox`,
+      wrapperPath: `${runtimeRoot}/codex-acp-server`,
+      appLogPath: `${runtimeRoot}/wechat-acp.log`,
+      defaultLogPath: `${storageRoot}/wechat-acp.log`,
+      tokenExists: index === 1,
+      running: index === 1,
+      runningPids: index === 1 ? [8421] : [],
+      lastStartedAt: index === 1 ? new Date(Date.now() - 900_000).toISOString() : null,
+      lastStoppedAt: null,
+      lastError: null,
+      logTail:
+        index === 1
+          ? [
+              "[wechat-acp] instance codex-b ready",
+              "[wechat-acp] scan QR code with WeChat to bind this instance",
+              "████ ▄▄▄▄▄ █▀█ ███ ▄▄▄▄▄ ████",
+              "████ █   █ █▄█ ▀▄█ █   █ ████",
+            ]
+          : [],
+    };
+  });
+
+  return {
+    generatedAt: new Date().toISOString(),
+    storePath: "/Users/ikiru/.rcodexmanager/wechat-bridges.json",
+    bridgeCount: bridges.length,
+    runningCount: bridges.filter((bridge) => bridge.running).length,
+    wechatAcpPackage: "wechat-acp@0.2.3",
+    codexAcpPackage: "@zed-industries/codex-acp@0.15.0",
+    bridges,
   };
 }
 

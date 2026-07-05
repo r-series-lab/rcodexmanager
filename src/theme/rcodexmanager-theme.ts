@@ -119,9 +119,21 @@ export function createRcodexManagerTheme(styleMode: CodexManagerStyleMode) {
             transition:
               "background-color 140ms ease, border-color 140ms ease, color 140ms ease, box-shadow 140ms ease",
             "&.MuiButton-containedPrimary": {
+              backgroundColor: tokens.accent,
               boxShadow: dark
                 ? "0 10px 22px rgba(0,0,0,0.22), inset 0 1px 0 rgba(255,255,255,0.14)"
                 : "0 10px 22px rgba(49,95,187,0.14)",
+              "&:hover": {
+                backgroundColor: tokens.accentHover,
+              },
+            },
+            "&.MuiButton-outlined": {
+              borderColor: tokens.line,
+              backgroundColor: dark ? "rgba(255,255,255,0.03)" : "rgba(255,255,255,0.58)",
+              "&:hover": {
+                borderColor: tokens.accent,
+                backgroundColor: dark ? "rgba(143,184,234,0.1)" : "rgba(92,112,133,0.08)",
+              },
             },
             "&.Mui-focusVisible": {
               outline: `2px solid ${dark ? "rgba(128,166,232,0.72)" : "rgba(49,95,187,0.62)"}`,

@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { type ChangeEvent, useEffect, useMemo, useRef, useState } from "react";
 import AccountCircleRoundedIcon from "@mui/icons-material/AccountCircleRounded";
 import AddRoundedIcon from "@mui/icons-material/AddRounded";
 import ContentCopyRoundedIcon from "@mui/icons-material/ContentCopyRounded";
@@ -13,7 +13,10 @@ import KeyboardArrowRightRoundedIcon from "@mui/icons-material/KeyboardArrowRigh
 import KeyboardDoubleArrowLeftRoundedIcon from "@mui/icons-material/KeyboardDoubleArrowLeftRounded";
 import KeyboardDoubleArrowRightRoundedIcon from "@mui/icons-material/KeyboardDoubleArrowRightRounded";
 import LightModeRoundedIcon from "@mui/icons-material/LightModeRounded";
+import LinkRoundedIcon from "@mui/icons-material/LinkRounded";
 import PlayArrowRoundedIcon from "@mui/icons-material/PlayArrowRounded";
+import PowerSettingsNewRoundedIcon from "@mui/icons-material/PowerSettingsNewRounded";
+import QrCodeScannerRoundedIcon from "@mui/icons-material/QrCodeScannerRounded";
 import RefreshRoundedIcon from "@mui/icons-material/RefreshRounded";
 import RestartAltRoundedIcon from "@mui/icons-material/RestartAltRounded";
 import SaveRoundedIcon from "@mui/icons-material/SaveRounded";
@@ -23,6 +26,7 @@ import ShortcutRoundedIcon from "@mui/icons-material/ShortcutRounded";
 import SettingsEthernetRoundedIcon from "@mui/icons-material/SettingsEthernetRounded";
 import StopCircleRoundedIcon from "@mui/icons-material/StopCircleRounded";
 import TerminalRoundedIcon from "@mui/icons-material/TerminalRounded";
+import PushPinRoundedIcon from "@mui/icons-material/PushPinRounded";
 import VpnKeyRoundedIcon from "@mui/icons-material/VpnKeyRounded";
 import {
   Alert,
@@ -50,31 +54,45 @@ import {
 import "./App.css";
 import {
   applyAuthBackup,
+  cleanupAuthBackups,
+  copyProfile,
   createAuthBackup,
   createProfile,
   deleteProfile,
   deleteAuthBackup,
+  exportAuthBackup,
+  importAuthBackupPackage,
   importProfileAuth,
   listAuthVault,
+  listWechatBridges,
   launchProfile,
   listProfileSessions,
   listProfiles,
   readProfileQuota,
+  readWechatBridgeLog,
   repairProfileNetwork,
   resetProfile,
   revealPath,
+  rollbackAuthApplication,
+  startWechatBridge,
+  stopWechatBridge,
   terminateProfile,
   updateProfileMetadata,
+  updateAuthBackup,
 } from "./lib/api";
 import type {
+  AuthApplicationEntry,
   AuthBackupEntry,
   AuthProfileSlot,
   AuthVaultReport,
   CodexSessionSummary,
+  CopyProfileInput,
   CreateProfileInput,
   ProfileInfo,
   ProfileReport,
   ProfileSessionReport,
+  WechatBridgeEntry,
+  WechatBridgeReport,
 } from "./lib/types";
 import type { ProfileQuotaReport, QuotaWindowInfo } from "./lib/types";
 import {
@@ -85,6 +103,13 @@ import {
 type FeedbackState = {
   severity: "success" | "info" | "warning" | "error";
   text: string;
+};
+
+type AuthBackupGroup = {
+  key: string;
+  accountKey: string;
+  label: string;
+  backups: AuthBackupEntry[];
 };
 
 type MetadataDraft = {
@@ -106,6 +131,7 @@ type SessionCenterItem = {
 };
 
 const SESSION_PAGE_SIZE = 10;
+const NO_AUTH_SOURCE = "__none__";
 
 const DEFAULT_FORM: CreateProfileInput = {
   name: "codex-f",
@@ -153,6 +179,41 @@ function profileLabel(profile: Pick<ProfileInfo, "name" | "alias">): string {
   return profile.alias || profile.name;
 }
 
+function isValidProfileName(name: string): boolean {
+  return /^codex-[a-z0-9-]+$/.test(name.trim());
+}
+
+function nextCopyProfileName(sourceName: string, profiles: ProfileInfo[]): string {
+  const existingNames = new Set(profiles.map((profile) => profile.name));
+  const base = sourceName === "codex" ? "codex-copy" : `${sourceName}-copy`;
+  if (!existingNames.has(base)) {
+    return base;
+  }
+  for (let index = 2; index < 1000; index += 1) {
+    const candidate = `${base}-${index}`;
+    if (!existingNames.has(candidate)) {
+      return candidate;
+    }
+  }
+  return `${base}-${Date.now()}`;
+}
+
+function createCopyDraft(source: ProfileInfo, profiles: ProfileInfo[]): CopyProfileInput {
+  return {
+    sourceName: source.name,
+    name: nextCopyProfileName(source.name, profiles),
+    codexHome: "",
+    userDataDir: "",
+    model: source.model ?? "gpt-5.5",
+    reasoningEffort: source.reasoningEffort ?? "xhigh",
+    alias: source.alias ? `${source.alias} 副本` : "",
+    category: source.category,
+    note: source.note,
+    authSourceName: NO_AUTH_SOURCE,
+    confirmSensitive: false,
+  };
+}
+
 function App() {
   const [styleMode, setStyleMode] = useState<CodexManagerStyleMode>(initialStyleMode);
   const theme = useMemo(() => createRcodexManagerTheme(styleMode), [styleMode]);
@@ -161,6 +222,8 @@ function App() {
   const [query, setQuery] = useState("");
   const [createDialogOpen, setCreateDialogOpen] = useState(false);
   const [createDraft, setCreateDraft] = useState<CreateProfileInput>(DEFAULT_FORM);
+  const [copyDialogOpen, setCopyDialogOpen] = useState(false);
+  const [copyDraft, setCopyDraft] = useState<CopyProfileInput | null>(null);
   const [metadataDraft, setMetadataDraft] = useState<MetadataDraft>({
     alias: "",
     category: "",
@@ -196,6 +259,10 @@ function App() {
   const [selectedAuthBackupId, setSelectedAuthBackupId] = useState("");
   const [selectedAuthProfileNames, setSelectedAuthProfileNames] = useState<string[]>([]);
   const [confirmAuthApply, setConfirmAuthApply] = useState(false);
+  const [wechatDialogOpen, setWechatDialogOpen] = useState(false);
+  const [wechatReport, setWechatReport] = useState<WechatBridgeReport | null>(null);
+  const [wechatLoading, setWechatLoading] = useState(false);
+  const [wechatProfileName, setWechatProfileName] = useState("");
   const sessionRequestIdRef = useRef(0);
 
   const profiles = report?.profiles ?? [];
@@ -254,8 +321,33 @@ function App() {
     () => profiles.filter((profile) => Boolean(profile.account)).length,
     [profiles],
   );
+  const wechatBoundCount = useMemo(
+    () => wechatReport?.bridges.filter((bridge) => bridge.tokenExists).length ?? 0,
+    [wechatReport],
+  );
+  const sessionCountLabel = sessionReport
+    ? `${sessionReport.sessionCount}${sessionReport.hasMore ? "+" : ""}`
+    : "按页";
+  const authCountLabel = authReport ? `${authReport.backupCount}` : `${signedInCount}`;
+  const wechatCountLabel = wechatReport
+    ? `${wechatReport.runningCount}/${wechatBoundCount}`
+    : `${wechatBoundCount}`;
   const createNameExists = existingNames.has(createDraft.name.trim());
   const canCreate = createDraft.name.trim().startsWith("codex-") && !createNameExists;
+  const copyNameExists = copyDraft ? existingNames.has(copyDraft.name.trim()) : false;
+  const copySourceProfile = copyDraft
+    ? profiles.find((profile) => profile.name === copyDraft.sourceName) ?? null
+    : null;
+  const copyAuthSelected = Boolean(
+    copyDraft?.authSourceName && copyDraft.authSourceName !== NO_AUTH_SOURCE,
+  );
+  const canCopyProfile = Boolean(
+    copyDraft &&
+      copySourceProfile &&
+      isValidProfileName(copyDraft.name) &&
+      !copyNameExists &&
+      (!copyAuthSelected || copyDraft.confirmSensitive),
+  );
   const metadataChanged =
     Boolean(activeProfile) &&
     ((activeProfile?.alias ?? "") !== metadataDraft.alias.trim() ||
@@ -374,6 +466,34 @@ function App() {
     }
   }
 
+  async function refreshWechatBridges(options?: { silent?: boolean }) {
+    try {
+      if (!options?.silent) {
+        setWechatLoading(true);
+      }
+      const nextReport = await listWechatBridges();
+      setWechatReport(nextReport);
+      setWechatProfileName((current) => {
+        if (current && nextReport.bridges.some((bridge) => bridge.profileName === current)) {
+          return current;
+        }
+        if (activeProfile && nextReport.bridges.some((bridge) => bridge.profileName === activeProfile.name)) {
+          return activeProfile.name;
+        }
+        return nextReport.bridges[0]?.profileName ?? "";
+      });
+    } catch (error) {
+      setFeedback({
+        severity: "error",
+        text: errorMessage(error, "读取微信桥接失败"),
+      });
+    } finally {
+      if (!options?.silent) {
+        setWechatLoading(false);
+      }
+    }
+  }
+
   function handleOpenSessionCenter() {
     setSessionDialogOpen(true);
   }
@@ -385,6 +505,30 @@ function App() {
     if (!authReport && !authLoading) {
       void refreshAuthVault();
     }
+  }
+
+  function handleOpenWechatBridge() {
+    setWechatDialogOpen(true);
+    setWechatProfileName(activeProfile?.name ?? wechatProfileName);
+    if (!wechatReport && !wechatLoading) {
+      void refreshWechatBridges();
+    }
+  }
+
+  function handleOpenCopyDialog(profile: ProfileInfo) {
+    setCopyDraft(createCopyDraft(profile, profiles));
+    setCopyDialogOpen(true);
+    if (!authReport && !authLoading) {
+      void refreshAuthVault();
+    }
+  }
+
+  function handleCopySourceChange(sourceName: string) {
+    const source = profiles.find((profile) => profile.name === sourceName);
+    if (!source) {
+      return;
+    }
+    setCopyDraft(createCopyDraft(source, profiles));
   }
 
   useEffect(() => {
@@ -411,6 +555,25 @@ function App() {
       void refreshAuthVault();
     }
   }, [authDialogOpen, authReport, authLoading]);
+
+  useEffect(() => {
+    if (wechatDialogOpen && !wechatReport && !wechatLoading) {
+      void refreshWechatBridges();
+    }
+  }, [wechatDialogOpen, wechatReport, wechatLoading]);
+
+  useEffect(() => {
+    if (
+      !wechatDialogOpen ||
+      !wechatReport?.bridges.some((bridge) => bridge.running && !bridge.tokenExists)
+    ) {
+      return;
+    }
+    const interval = window.setInterval(() => {
+      void refreshWechatBridges({ silent: true });
+    }, 3500);
+    return () => window.clearInterval(interval);
+  }, [wechatDialogOpen, wechatReport]);
 
   useEffect(() => {
     if (!feedback || feedback.severity === "error" || feedback.severity === "warning") {
@@ -467,6 +630,57 @@ function App() {
       setFeedback({
         severity: "error",
         text: errorMessage(error, "创建 profile 失败"),
+      });
+    } finally {
+      setBusyLabel("");
+    }
+  }
+
+  async function handleCopyProfile() {
+    if (!copyDraft || !copySourceProfile) {
+      return;
+    }
+    if (!canCopyProfile) {
+      setFeedback({
+        severity: "warning",
+        text: copyNameExists ? "这个启动命令已经存在。" : "检查新命令名或认证确认。",
+      });
+      return;
+    }
+
+    const authSourceName =
+      copyDraft.authSourceName && copyDraft.authSourceName !== NO_AUTH_SOURCE
+        ? copyDraft.authSourceName
+        : null;
+    const targetName = copyDraft.name.trim();
+
+    try {
+      setBusyLabel("复制中");
+      const result = await copyProfile({
+        ...copyDraft,
+        sourceName: copySourceProfile.name,
+        name: targetName,
+        codexHome: (copyDraft.codexHome ?? "").trim() || null,
+        userDataDir: (copyDraft.userDataDir ?? "").trim() || null,
+        model: (copyDraft.model ?? "").trim() || null,
+        reasoningEffort: (copyDraft.reasoningEffort ?? "").trim() || null,
+        alias: (copyDraft.alias ?? "").trim() || null,
+        category: (copyDraft.category ?? "").trim() || null,
+        note: copyDraft.note?.trim() || null,
+        authSourceName,
+        confirmSensitive: Boolean(authSourceName && copyDraft.confirmSensitive),
+      });
+      setCopyDialogOpen(false);
+      setCopyDraft(null);
+      await refreshProfiles({ severity: "success", text: result.message });
+      if (authSourceName) {
+        await refreshAuthVault();
+      }
+      setActiveName(result.profile?.name ?? targetName);
+    } catch (error) {
+      setFeedback({
+        severity: "error",
+        text: errorMessage(error, "复制 profile 失败"),
       });
     } finally {
       setBusyLabel("");
@@ -700,6 +914,37 @@ function App() {
     }
   }
 
+  async function handleImportAuthBackupPackage(file: File) {
+    if (!file) {
+      return;
+    }
+    if (!window.confirm(`导入认证备份包「${file.name}」到认证库？这不会覆盖任何 profile。`)) {
+      return;
+    }
+
+    try {
+      setBusyLabel("导入备份包");
+      const packageJson = await file.text();
+      const nextReport = await importAuthBackupPackage({
+        packageJson,
+        label: null,
+        note: null,
+        pinned: false,
+        confirmSensitive: true,
+      });
+      setAuthReport(nextReport);
+      setSelectedAuthBackupId(nextReport.backups[0]?.id ?? "");
+      setFeedback({ severity: "success", text: "已导入认证备份包" });
+    } catch (error) {
+      setFeedback({
+        severity: "error",
+        text: errorMessage(error, "导入认证备份包失败"),
+      });
+    } finally {
+      setBusyLabel("");
+    }
+  }
+
   async function handleApplyAuthBackup(backupId: string, targetProfileName: string) {
     if (!backupId || !targetProfileName) {
       setFeedback({ severity: "warning", text: "请选择备份和目标 profile。" });
@@ -731,6 +976,132 @@ function App() {
     }
   }
 
+  async function handleExportAuthBackup(backupId: string) {
+    if (!backupId) {
+      return;
+    }
+
+    try {
+      setBusyLabel("导出备份");
+      const result = await exportAuthBackup({ backupId });
+      setFeedback({ severity: "success", text: `已导出认证备份：${result.fileName}` });
+      void revealPath(result.path);
+    } catch (error) {
+      setFeedback({
+        severity: "error",
+        text: errorMessage(error, "导出认证备份失败"),
+      });
+    } finally {
+      setBusyLabel("");
+    }
+  }
+
+  async function handleRollbackAuthApplication(applicationId: string) {
+    if (!applicationId) {
+      return;
+    }
+    const application = authReport?.recentApplications.find((item) => item.id === applicationId);
+    const targetLabel =
+      application?.targetProfileLabel || application?.targetProfileName || "目标 profile";
+    if (!window.confirm(`回滚 ${targetLabel} 到应用「${application?.backupLabel ?? applicationId}」之前的登录状态？`)) {
+      return;
+    }
+
+    try {
+      setBusyLabel("回滚认证");
+      const result = await rollbackAuthApplication({
+        applicationId,
+        confirmSensitive: true,
+      });
+      if (application?.targetProfileName) {
+        setQuotaByProfile((current) => {
+          const next = { ...current };
+          delete next[application.targetProfileName];
+          return next;
+        });
+      }
+      await refreshProfiles({ severity: "success", text: result.message });
+      await refreshAuthVault();
+    } catch (error) {
+      setFeedback({
+        severity: "error",
+        text: errorMessage(error, "回滚认证失败"),
+      });
+    } finally {
+      setBusyLabel("");
+    }
+  }
+
+  async function handleUpdateAuthBackup(
+    backupId: string,
+    label: string,
+    note: string,
+    pinned: boolean,
+  ) {
+    if (!backupId) {
+      return;
+    }
+
+    try {
+      setBusyLabel("保存备份");
+      const nextReport = await updateAuthBackup({
+        backupId,
+        label: label.trim() || null,
+        note: note.trim() || null,
+        pinned,
+      });
+      setAuthReport(nextReport);
+      setSelectedAuthBackupId((current) =>
+        nextReport.backups.some((backup) => backup.id === current)
+          ? current
+          : nextReport.backups[0]?.id ?? "",
+      );
+      setFeedback({ severity: "success", text: "已更新认证备份" });
+    } catch (error) {
+      setFeedback({
+        severity: "error",
+        text: errorMessage(error, "更新认证备份失败"),
+      });
+    } finally {
+      setBusyLabel("");
+    }
+  }
+
+  async function handleCleanupAuthBackups(accountKey: string, accountLabel: string, count: number) {
+    if (!accountKey || count <= 1) {
+      return;
+    }
+    if (
+      !window.confirm(
+        `清理「${accountLabel}」的重复认证备份？会优先保留置顶备份，否则保留最新备份，并删除其余 ${count - 1} 份。`,
+      )
+    ) {
+      return;
+    }
+
+    try {
+      setBusyLabel("清理备份");
+      const nextReport = await cleanupAuthBackups({
+        accountKey,
+        confirmSensitive: true,
+      });
+      setAuthReport(nextReport);
+      setSelectedAuthBackupId((current) =>
+        nextReport.backups.some((backup) => backup.id === current)
+          ? current
+          : nextReport.backups[0]?.id ?? "",
+      );
+      setFeedback({ severity: "success", text: "已清理重复认证备份" });
+    } catch (error) {
+      setFeedback({
+        severity: "error",
+        text: errorMessage(error, "清理认证备份失败"),
+      });
+    } finally {
+      setBusyLabel("");
+    }
+  }
+
   async function handleDeleteAuthBackup(backupId: string) {
     if (!backupId) {
       return;
@@ -756,6 +1127,85 @@ function App() {
       });
     } finally {
       setBusyLabel("");
+    }
+  }
+
+  async function handleStartWechatBridge(profileName: string) {
+    if (!profileName) {
+      setFeedback({ severity: "warning", text: "请选择要绑定微信的 profile。" });
+      return;
+    }
+
+    try {
+      setBusyLabel("启动微信桥接");
+      const nextReport = await startWechatBridge({ profileName });
+      setWechatReport(nextReport);
+      setWechatProfileName(profileName);
+      setFeedback({ severity: "success", text: "已启动微信桥接，等待扫码绑定。" });
+      [1200, 3200, 8000, 15000, 30000, 60000].forEach((delay) => {
+        window.setTimeout(() => void refreshWechatBridges({ silent: true }), delay);
+      });
+    } catch (error) {
+      setFeedback({
+        severity: "error",
+        text: errorMessage(error, "启动微信桥接失败"),
+      });
+    } finally {
+      setBusyLabel("");
+    }
+  }
+
+  async function handleStopWechatBridge(profileName: string) {
+    if (!profileName) {
+      return;
+    }
+
+    try {
+      setBusyLabel("停止微信桥接");
+      const nextReport = await stopWechatBridge({ profileName });
+      setWechatReport(nextReport);
+      setWechatProfileName(profileName);
+      setFeedback({ severity: "success", text: "已停止微信桥接。" });
+    } catch (error) {
+      setFeedback({
+        severity: "error",
+        text: errorMessage(error, "停止微信桥接失败"),
+      });
+    } finally {
+      setBusyLabel("");
+    }
+  }
+
+  async function handleRefreshWechatLog(profileName: string) {
+    if (!profileName) {
+      return;
+    }
+
+    try {
+      const logReport = await readWechatBridgeLog({ profileName, lines: 120 });
+      setWechatReport((current) => {
+        if (!current) {
+          return current;
+        }
+        return {
+          ...current,
+          bridges: current.bridges.map((bridge) =>
+            bridge.profileName === profileName
+              ? {
+                  ...bridge,
+                  logTail: logReport.logTail,
+                  appLogPath: logReport.appLogPath,
+                  defaultLogPath: logReport.defaultLogPath,
+                }
+              : bridge,
+          ),
+        };
+      });
+    } catch (error) {
+      setFeedback({
+        severity: "error",
+        text: errorMessage(error, "刷新微信日志失败"),
+      });
     }
   }
 
@@ -810,6 +1260,10 @@ function App() {
     setCreateDraft((current) => ({ ...current, [key]: value }));
   }
 
+  function updateCopyDraft<K extends keyof CopyProfileInput>(key: K, value: CopyProfileInput[K]) {
+    setCopyDraft((current) => (current ? { ...current, [key]: value } : current));
+  }
+
   return (
     <ThemeProvider theme={theme}>
       <CssBaseline />
@@ -857,61 +1311,70 @@ function App() {
                     Codex profile 工作区
                   </Typography>
                 </Box>
+                <Stack className="profile-icon-actions browser-header-actions" direction="row" spacing={0.4}>
+                  <Tooltip title="新增 profile">
+                    <IconButton aria-label="新增 profile" onClick={() => setCreateDialogOpen(true)}>
+                      <AddRoundedIcon />
+                    </IconButton>
+                  </Tooltip>
+                  <Tooltip title="刷新 profile">
+                    <span>
+                      <IconButton
+                        aria-label="刷新 profile 列表"
+                        onClick={() => void refreshProfiles()}
+                        disabled={Boolean(busyLabel)}
+                      >
+                        <RefreshRoundedIcon />
+                      </IconButton>
+                    </span>
+                  </Tooltip>
+                </Stack>
               </Box>
 
               <Box className="browser-action-row">
-                <Stack className="browser-actions" direction="row" spacing={0.7}>
-                  <Button
-                    className="session-launch-button"
-                    size="small"
-                    variant="outlined"
-                    startIcon={<TerminalRoundedIcon />}
+                <Box className="browser-command-grid" aria-label="核心功能">
+                  <button
+                    type="button"
+                    className="command-card"
                     onClick={handleOpenSessionCenter}
                   >
-                    会话中心
-                    {sessionReport ? (
-                      <span className="session-launch-count">
-                        {sessionReport.sessionCount}
-                        {sessionReport.hasMore ? "+" : ""}
-                      </span>
-                    ) : null}
-                  </Button>
-                  <Button
-                    className="auth-vault-button"
-                    size="small"
-                    variant="outlined"
-                    startIcon={<VpnKeyRoundedIcon />}
+                    <span className="command-icon"><TerminalRoundedIcon fontSize="small" /></span>
+                    <span className="command-copy">
+                      <span className="command-title">会话中心</span>
+                      <span className="command-subtitle">分页查看摘要</span>
+                    </span>
+                    <span className="command-count">{sessionCountLabel}</span>
+                  </button>
+                  <button
+                    type="button"
+                    className="command-card"
                     onClick={handleOpenAuthVault}
                   >
-                    认证库
-                    {authReport ? (
-                      <span className="session-launch-count">{authReport.backupCount}</span>
-                    ) : null}
-                  </Button>
-                  <Stack className="browser-metrics" direction="row" spacing={0.6}>
-                    <Chip size="small" label={`${visibleProfiles.length}/${profiles.length}`} />
-                    <Chip size="small" label={`运行 ${runningCount}`} />
-                    <Chip size="small" label={`账号 ${signedInCount}`} />
-                  </Stack>
-                  <Stack className="profile-icon-actions" direction="row" spacing={0.4}>
-                    <Tooltip title="新增 profile">
-                      <IconButton aria-label="新增 profile" onClick={() => setCreateDialogOpen(true)}>
-                        <AddRoundedIcon />
-                      </IconButton>
-                    </Tooltip>
-                    <Tooltip title="刷新 profile">
-                      <span>
-                        <IconButton
-                          aria-label="刷新 profile 列表"
-                          onClick={() => void refreshProfiles()}
-                          disabled={Boolean(busyLabel)}
-                        >
-                          <RefreshRoundedIcon />
-                        </IconButton>
-                      </span>
-                    </Tooltip>
-                  </Stack>
-                </Stack>
+                    <span className="command-icon"><VpnKeyRoundedIcon fontSize="small" /></span>
+                    <span className="command-copy">
+                      <span className="command-title">认证库</span>
+                      <span className="command-subtitle">{authReport ? "备份可应用" : "账号备份管理"}</span>
+                    </span>
+                    <span className="command-count">{authCountLabel}</span>
+                  </button>
+                  <button
+                    type="button"
+                    className="command-card"
+                    onClick={handleOpenWechatBridge}
+                  >
+                    <span className="command-icon"><QrCodeScannerRoundedIcon fontSize="small" /></span>
+                    <span className="command-copy">
+                      <span className="command-title">微信桥接</span>
+                      <span className="command-subtitle">扫码绑定 profile</span>
+                    </span>
+                    <span className="command-count">{wechatCountLabel}</span>
+                  </button>
+                </Box>
+                <Box className="browser-status-strip" aria-label="profile 状态">
+                  <span><strong>{visibleProfiles.length}/{profiles.length}</strong> profiles</span>
+                  <span><strong>{runningCount}</strong> 运行</span>
+                  <span><strong>{signedInCount}</strong> 账号</span>
+                </Box>
               </Box>
 
               <Box className="browser-tools">
@@ -978,119 +1441,135 @@ function App() {
           <aside className="inspector-rail" aria-label="profile 详情" hidden={inspectorCollapsed}>
             <Paper className="inspector-panel" elevation={0}>
               {activeProfile ? (
-                <Stack className="inspector-content">
-                  <Box className="inspector-title">
-                    <Box sx={{ minWidth: 0 }}>
-                      <Typography variant="caption" color="text.secondary">
-                        当前 profile
-                      </Typography>
-                      <Typography variant="h5" component="h2" translate="no">
-                        {activeProfile.alias || activeProfile.name}
-                      </Typography>
-                      <Typography variant="body2" color="text.secondary" translate="no">
-                        {activeProfile.name}
-                      </Typography>
+                <Box className="inspector-content">
+                  <Box className="inspector-hero">
+                    <Box className="inspector-title">
+                      <Box className="inspector-title-main">
+                        <Typography variant="caption" color="text.secondary">
+                          当前 profile
+                        </Typography>
+                        <Typography variant="h5" component="h2" translate="no">
+                          {activeProfile.alias || activeProfile.name}
+                        </Typography>
+                        <Typography variant="body2" color="text.secondary" translate="no">
+                          {activeProfile.name}
+                        </Typography>
+                      </Box>
+                      <Stack className="inspector-title-badges" direction="row" spacing={0.5}>
+                        <Chip size="small" label={profileSourceLabel(activeProfile)} />
+                      </Stack>
                     </Box>
-                    <Chip size="small" label={profileSourceLabel(activeProfile)} />
+
+                    <Box className="detail-tags">
+                      <Chip size="small" variant="outlined" label={activeProfile.category} />
+                      <Chip size="small" label={activeProfile.model ?? "unknown"} />
+                      <Chip size="small" label={activeProfile.reasoningEffort ?? "unknown"} />
+                    </Box>
                   </Box>
 
-                  <Box className="detail-tags">
-                    <Chip size="small" variant="outlined" label={activeProfile.category} />
-                    <Chip size="small" label={activeProfile.model ?? "unknown"} />
-                    <Chip size="small" label={activeProfile.reasoningEffort ?? "unknown"} />
-                  </Box>
+                  <Box className="inspector-body">
+                    <Box className="path-list">
+                      <PathBlock title="CODEX_HOME" path={activeProfile.codexHome} exists={activeProfile.homeExists} />
+                      <PathBlock
+                        title="User Data"
+                        path={activeProfile.userDataDir}
+                        exists={activeProfile.userDataExists}
+                      />
+                    </Box>
 
-                  <Box className="path-list">
-                    <PathBlock title="CODEX_HOME" path={activeProfile.codexHome} exists={activeProfile.homeExists} />
-                    <PathBlock
-                      title="User Data"
-                      path={activeProfile.userDataDir}
-                      exists={activeProfile.userDataExists}
+                    <AccountBlock profile={activeProfile} />
+
+                    <SessionBlock session={activeProfile.latestSession} />
+
+                    <QuotaBlock
+                      profile={activeProfile}
+                      state={quotaByProfile[activeProfile.name]}
+                      onRefresh={() => void handleReadQuota(activeProfile)}
                     />
                   </Box>
 
-                  <AccountBlock profile={activeProfile} />
-
-                  <SessionBlock session={activeProfile.latestSession} />
-
-                  <QuotaBlock
-                    profile={activeProfile}
-                    state={quotaByProfile[activeProfile.name]}
-                    onRefresh={() => void handleReadQuota(activeProfile)}
-                  />
-
-                  <Box className="action-panel">
-                    <Box className="action-strip runtime-actions">
-                      <Button
-                        className={`launch-action ${activeProfile.isRunning ? "running" : ""}`}
-                        variant={activeProfile.isRunning ? "outlined" : "contained"}
-                        startIcon={<PlayArrowRoundedIcon />}
-                        onClick={() => void handleLaunchProfile(activeProfile)}
-                        disabled={Boolean(busyLabel) || activeProfile.isRunning}
-                      >
-                        {activeProfile.isRunning ? "运行中" : "启动"}
-                      </Button>
-                      <Button
-                        color="warning"
-                        variant="outlined"
-                        startIcon={<StopCircleRoundedIcon />}
-                        onClick={() => void handleTerminateProfile(activeProfile)}
-                        disabled={Boolean(busyLabel) || !activeProfile.isRunning || activeProfile.isDefault}
-                      >
-                        终止
-                      </Button>
-                    </Box>
-                    <Box className="action-strip tool-actions">
-                      <Button
-                        className={`network-action ${
-                          activeProfile.websocketFeaturesEnabled ? "enabled" : ""
-                        }`}
-                        variant="outlined"
-                        startIcon={<SettingsEthernetRoundedIcon />}
-                        onClick={() => void handleRepairNetwork(activeProfile)}
-                        disabled={Boolean(busyLabel)}
-                      >
-                        {activeProfile.websocketFeaturesEnabled ? "WS 已启用" : "修复 WS"}
-                      </Button>
-                      <Button
-                        variant="outlined"
-                        startIcon={<EditRoundedIcon />}
-                        onClick={() => setEditDialogOpen(true)}
-                        disabled={Boolean(busyLabel)}
-                      >
-                        编辑
-                      </Button>
-                    </Box>
-                    <Box className="action-strip management-actions">
-                      <Button
-                        variant="outlined"
-                        startIcon={<FileUploadRoundedIcon />}
-                        onClick={() => setImportDialogOpen(true)}
-                        disabled={Boolean(busyLabel) || activeProfile.isDefault}
-                      >
-                        导入
-                      </Button>
-                      <Button
-                        variant="outlined"
-                        startIcon={<RestartAltRoundedIcon />}
-                        onClick={() => setResetDialogOpen(true)}
-                        disabled={Boolean(busyLabel) || activeProfile.isDefault}
-                      >
-                        重置
-                      </Button>
-                      <Button
-                        color="error"
-                        variant="outlined"
-                        startIcon={<DeleteOutlineRoundedIcon />}
-                        onClick={() => setDeleteDialogOpen(true)}
-                        disabled={Boolean(busyLabel) || activeProfile.isDefault}
-                      >
-                        删除
-                      </Button>
+                  <Box className="inspector-action-dock">
+                    <Box className="action-panel">
+                      <Box className="action-strip runtime-actions">
+                        <Button
+                          className={`launch-action ${activeProfile.isRunning ? "running" : ""}`}
+                          variant={activeProfile.isRunning ? "outlined" : "contained"}
+                          startIcon={<PlayArrowRoundedIcon />}
+                          onClick={() => void handleLaunchProfile(activeProfile)}
+                          disabled={Boolean(busyLabel) || activeProfile.isRunning}
+                        >
+                          {activeProfile.isRunning ? "运行中" : "启动"}
+                        </Button>
+                        <Button
+                          color="warning"
+                          variant="outlined"
+                          startIcon={<StopCircleRoundedIcon />}
+                          onClick={() => void handleTerminateProfile(activeProfile)}
+                          disabled={Boolean(busyLabel) || !activeProfile.isRunning || activeProfile.isDefault}
+                        >
+                          终止
+                        </Button>
+                      </Box>
+                      <Box className="action-strip tool-actions">
+                        <Button
+                          className={`network-action ${
+                            activeProfile.websocketFeaturesEnabled ? "enabled" : ""
+                          }`}
+                          variant="outlined"
+                          startIcon={<SettingsEthernetRoundedIcon />}
+                          onClick={() => void handleRepairNetwork(activeProfile)}
+                          disabled={Boolean(busyLabel)}
+                        >
+                          {activeProfile.websocketFeaturesEnabled ? "WS 已启用" : "修复 WS"}
+                        </Button>
+                        <Button
+                          variant="outlined"
+                          startIcon={<ContentCopyRoundedIcon />}
+                          onClick={() => handleOpenCopyDialog(activeProfile)}
+                          disabled={Boolean(busyLabel)}
+                        >
+                          复制
+                        </Button>
+                        <Button
+                          variant="outlined"
+                          startIcon={<EditRoundedIcon />}
+                          onClick={() => setEditDialogOpen(true)}
+                          disabled={Boolean(busyLabel)}
+                        >
+                          编辑
+                        </Button>
+                      </Box>
+                      <Box className="action-strip management-actions">
+                        <Button
+                          variant="outlined"
+                          startIcon={<FileUploadRoundedIcon />}
+                          onClick={() => setImportDialogOpen(true)}
+                          disabled={Boolean(busyLabel) || activeProfile.isDefault}
+                        >
+                          导入
+                        </Button>
+                        <Button
+                          variant="outlined"
+                          startIcon={<RestartAltRoundedIcon />}
+                          onClick={() => setResetDialogOpen(true)}
+                          disabled={Boolean(busyLabel) || activeProfile.isDefault}
+                        >
+                          重置
+                        </Button>
+                        <Button
+                          color="error"
+                          variant="outlined"
+                          startIcon={<DeleteOutlineRoundedIcon />}
+                          onClick={() => setDeleteDialogOpen(true)}
+                          disabled={Boolean(busyLabel) || activeProfile.isDefault}
+                        >
+                          删除
+                        </Button>
+                      </Box>
                     </Box>
                   </Box>
 
-                </Stack>
+                </Box>
               ) : (
                 <Box className="empty-state tall">
                   <TerminalRoundedIcon />
@@ -1155,9 +1634,52 @@ function App() {
           onBackupLabelChange={setAuthBackupLabel}
           onConfirmApplyChange={setConfirmAuthApply}
           onCreateBackups={(profileNames) => void handleCreateAuthBackups(profileNames)}
+          onImportPackage={(file) => void handleImportAuthBackupPackage(file)}
           onApplyBackup={(backupId, targetProfileName) => void handleApplyAuthBackup(backupId, targetProfileName)}
+          onRollbackApplication={(applicationId) => void handleRollbackAuthApplication(applicationId)}
+          onUpdateBackup={(backupId, label, note, pinned) =>
+            void handleUpdateAuthBackup(backupId, label, note, pinned)
+          }
+          onExportBackup={(backupId) => void handleExportAuthBackup(backupId)}
+          onCleanupBackups={(accountKey, accountLabel, count) =>
+            void handleCleanupAuthBackups(accountKey, accountLabel, count)
+          }
           onDeleteBackup={(backupId) => void handleDeleteAuthBackup(backupId)}
           onReveal={(path) => void revealPath(path)}
+        />
+
+        <WechatBridgeDialog
+          open={wechatDialogOpen}
+          report={wechatReport}
+          loading={wechatLoading}
+          busy={Boolean(busyLabel)}
+          activeProfileName={activeProfile?.name ?? ""}
+          selectedProfileName={wechatProfileName}
+          onClose={() => setWechatDialogOpen(false)}
+          onRefresh={() => void refreshWechatBridges()}
+          onProfileChange={setWechatProfileName}
+          onStart={(profileName) => void handleStartWechatBridge(profileName)}
+          onStop={(profileName) => void handleStopWechatBridge(profileName)}
+          onRefreshLog={(profileName) => void handleRefreshWechatLog(profileName)}
+          onReveal={(path) => void revealPath(path)}
+        />
+
+        <CopyProfileDialog
+          open={copyDialogOpen}
+          draft={copyDraft}
+          profiles={profiles}
+          authProfiles={authReport?.profiles ?? []}
+          authLoading={authLoading}
+          busy={Boolean(busyLabel)}
+          nameExists={copyNameExists}
+          canSubmit={canCopyProfile}
+          onClose={() => {
+            setCopyDialogOpen(false);
+            setCopyDraft(null);
+          }}
+          onSourceChange={handleCopySourceChange}
+          onDraftChange={updateCopyDraft}
+          onSubmit={() => void handleCopyProfile()}
         />
 
         <Dialog open={createDialogOpen} onClose={() => setCreateDialogOpen(false)} fullWidth maxWidth="md">
@@ -1420,6 +1942,163 @@ function sessionCenterKey(item: SessionCenterItem): string {
   return `${item.profile.name}:${item.session.id}:${item.session.path ?? ""}`;
 }
 
+function CopyProfileDialog({
+  open,
+  draft,
+  profiles,
+  authProfiles,
+  authLoading,
+  busy,
+  nameExists,
+  canSubmit,
+  onClose,
+  onSourceChange,
+  onDraftChange,
+  onSubmit,
+}: {
+  open: boolean;
+  draft: CopyProfileInput | null;
+  profiles: ProfileInfo[];
+  authProfiles: AuthProfileSlot[];
+  authLoading: boolean;
+  busy: boolean;
+  nameExists: boolean;
+  canSubmit: boolean;
+  onClose: () => void;
+  onSourceChange: (value: string) => void;
+  onDraftChange: <K extends keyof CopyProfileInput>(key: K, value: CopyProfileInput[K]) => void;
+  onSubmit: () => void;
+}) {
+  const sourceProfile = draft
+    ? profiles.find((profile) => profile.name === draft.sourceName) ?? null
+    : null;
+  const authOptions = authProfiles.filter((profile) => profile.authExists);
+  const selectedAuthSource = draft?.authSourceName ?? NO_AUTH_SOURCE;
+  const authSelected = selectedAuthSource !== NO_AUTH_SOURCE;
+
+  return (
+    <Dialog open={open} onClose={onClose} fullWidth maxWidth="md">
+      <DialogTitle>复制 profile</DialogTitle>
+      <DialogContent>
+        {draft ? (
+          <Stack spacing={1.2} sx={{ pt: 0.5 }}>
+            <Box className="copy-dialog-summary">
+              <Typography variant="subtitle2" translate="no">
+                {sourceProfile ? profileLabel(sourceProfile) : draft.sourceName}
+              </Typography>
+              <Stack direction="row" spacing={0.6} sx={{ flexWrap: "wrap", rowGap: 0.6 }}>
+                <Chip size="small" label={sourceProfile?.category ?? "未知"} />
+                <Chip size="small" label={sourceProfile?.model ?? draft.model ?? "unknown"} />
+                <Chip size="small" label={sourceProfile?.reasoningEffort ?? draft.reasoningEffort ?? "unknown"} />
+              </Stack>
+            </Box>
+            <Box className="copy-dialog-grid">
+              <TextField
+                select
+                label="来源 profile"
+                value={draft.sourceName}
+                onChange={(event) => onSourceChange(event.target.value)}
+                slotProps={textFieldSlotProps("copy-source-profile")}
+              >
+                {profiles.map((profile) => (
+                  <MenuItem key={profile.name} value={profile.name}>
+                    {profileLabel(profile)}
+                  </MenuItem>
+                ))}
+              </TextField>
+              <TextField
+                label="新命令"
+                value={draft.name}
+                onChange={(event) => onDraftChange("name", event.target.value)}
+                error={nameExists || (draft.name.trim() !== "" && !isValidProfileName(draft.name))}
+                helperText={nameExists ? "已存在" : "codex-*"}
+                slotProps={textFieldSlotProps("copy-profile-name")}
+              />
+              <TextField
+                label="别名"
+                value={draft.alias ?? ""}
+                onChange={(event) => onDraftChange("alias", event.target.value)}
+                slotProps={textFieldSlotProps("copy-profile-alias")}
+              />
+              <TextField
+                label="分类"
+                value={draft.category ?? ""}
+                onChange={(event) => onDraftChange("category", event.target.value)}
+                slotProps={textFieldSlotProps("copy-profile-category")}
+              />
+              <TextField
+                label="模型"
+                value={draft.model ?? ""}
+                onChange={(event) => onDraftChange("model", event.target.value)}
+                slotProps={textFieldSlotProps("copy-profile-model")}
+              />
+              <TextField
+                label="努力等级"
+                value={draft.reasoningEffort ?? ""}
+                onChange={(event) => onDraftChange("reasoningEffort", event.target.value)}
+                slotProps={textFieldSlotProps("copy-profile-reasoning-effort")}
+              />
+              <TextField
+                label="CODEX_HOME"
+                value={draft.codexHome ?? ""}
+                onChange={(event) => onDraftChange("codexHome", event.target.value)}
+                placeholder="留空自动生成…"
+                slotProps={textFieldSlotProps("copy-profile-codex-home")}
+              />
+              <TextField
+                label="user-data-dir"
+                value={draft.userDataDir ?? ""}
+                onChange={(event) => onDraftChange("userDataDir", event.target.value)}
+                placeholder="留空自动生成…"
+                slotProps={textFieldSlotProps("copy-profile-user-data-dir")}
+              />
+              <TextField
+                className="copy-dialog-wide"
+                select
+                label="认证来源"
+                value={selectedAuthSource}
+                onChange={(event) => {
+                  const value = event.target.value;
+                  onDraftChange("authSourceName", value);
+                  onDraftChange("confirmSensitive", false);
+                }}
+                slotProps={textFieldSlotProps("copy-auth-source")}
+              >
+                <MenuItem value={NO_AUTH_SOURCE}>不复制 auth</MenuItem>
+                {authLoading ? <MenuItem disabled>正在读取认证信息…</MenuItem> : null}
+                {authOptions.map((profile) => (
+                  <MenuItem key={profile.profileName} value={profile.profileName}>
+                    {authSlotLabel(profile)}
+                  </MenuItem>
+                ))}
+              </TextField>
+            </Box>
+            {authSelected ? (
+              <Alert className="copy-auth-alert" severity="warning">
+                <FormControlLabel
+                  control={
+                    <Checkbox
+                      checked={draft.confirmSensitive}
+                      onChange={(event) => onDraftChange("confirmSensitive", event.target.checked)}
+                    />
+                  }
+                  label="我确认要把所选认证写入新 profile"
+                />
+              </Alert>
+            ) : null}
+          </Stack>
+        ) : null}
+      </DialogContent>
+      <DialogActions>
+        <Button onClick={onClose}>取消</Button>
+        <Button variant="contained" onClick={onSubmit} disabled={!canSubmit || busy}>
+          复制
+        </Button>
+      </DialogActions>
+    </Dialog>
+  );
+}
+
 function SessionCenterDialog({
   open,
   items,
@@ -1486,6 +2165,10 @@ function SessionCenterDialog({
   const pageItems = items;
   const selectedItem =
     pageItems.find((item) => sessionCenterKey(item) === selectedKey) ?? pageItems[0] ?? null;
+  const currentProfileOption =
+    profileOptions.find((profile) => profile.name === activeProfileName) ?? null;
+  const currentProfileFilterActive = Boolean(activeProfileName && profileName === activeProfileName);
+  const filtersActive = Boolean(query.trim() || profileName !== "all" || category !== "all");
 
   useEffect(() => {
     if (page !== currentPage) {
@@ -1591,19 +2274,31 @@ function SessionCenterDialog({
               </MenuItem>
             ))}
           </TextField>
-          <Button
-            className="session-dialog-clear"
-            size="small"
-            variant="text"
-            onClick={() => {
-              onQueryChange("");
-              onProfileChange("all");
-              onCategoryChange("all");
-            }}
-            disabled={!query.trim() && profileName === "all" && category === "all"}
-          >
-            清空
-          </Button>
+          <Box className="session-dialog-tool-actions">
+            <Button
+              className={`session-current-filter ${currentProfileFilterActive ? "active" : ""}`}
+              size="small"
+              variant={currentProfileFilterActive ? "contained" : "outlined"}
+              onClick={() => onProfileChange(currentProfileFilterActive ? "all" : activeProfileName)}
+              disabled={!activeProfileName}
+              title={currentProfileOption ? `筛选 ${profileLabel(currentProfileOption)}` : undefined}
+            >
+              当前
+            </Button>
+            <Button
+              className="session-dialog-clear"
+              size="small"
+              variant="text"
+              onClick={() => {
+                onQueryChange("");
+                onProfileChange("all");
+                onCategoryChange("all");
+              }}
+              disabled={!filtersActive}
+            >
+              清空
+            </Button>
+          </Box>
         </Box>
 
         <Box className="session-dialog-layout">
@@ -1783,6 +2478,318 @@ function SessionCenterDialog({
   );
 }
 
+function WechatBridgeDialog({
+  open,
+  report,
+  loading,
+  busy,
+  activeProfileName,
+  selectedProfileName,
+  onClose,
+  onRefresh,
+  onProfileChange,
+  onStart,
+  onStop,
+  onRefreshLog,
+  onReveal,
+}: {
+  open: boolean;
+  report: WechatBridgeReport | null;
+  loading: boolean;
+  busy: boolean;
+  activeProfileName: string;
+  selectedProfileName: string;
+  onClose: () => void;
+  onRefresh: () => void;
+  onProfileChange: (value: string) => void;
+  onStart: (profileName: string) => void;
+  onStop: (profileName: string) => void;
+  onRefreshLog: (profileName: string) => void;
+  onReveal: (path: string) => void;
+}) {
+  const [query, setQuery] = useState("");
+  const bridges = report?.bridges ?? [];
+  const normalizedQuery = query.trim().toLowerCase();
+  const filteredBridges = useMemo(() => {
+    if (!normalizedQuery) {
+      return bridges;
+    }
+    return bridges.filter((bridge) =>
+      [
+        bridge.profileName,
+        bridge.profileLabel,
+        bridge.profileCategory,
+        bridge.codexHome,
+        bridge.instance,
+        bridge.storageDir,
+        accountInfoLabel(bridge.account),
+      ]
+        .join(" ")
+        .toLowerCase()
+        .includes(normalizedQuery),
+    );
+  }, [bridges, normalizedQuery]);
+  const selectedBridge =
+    bridges.find((bridge) => bridge.profileName === selectedProfileName) ?? bridges[0] ?? null;
+  const boundCount = bridges.filter((bridge) => bridge.tokenExists).length;
+  const selectedLogPath = selectedBridge?.appLogPath || selectedBridge?.defaultLogPath || "";
+  const canStart = Boolean(selectedBridge?.authExists && !selectedBridge.running && !busy && !loading);
+  const canStop = Boolean(selectedBridge?.running && !busy && !loading);
+
+  useEffect(() => {
+    if (!open) {
+      setQuery("");
+    }
+  }, [open]);
+
+  return (
+    <Dialog open={open} onClose={onClose} fullWidth maxWidth="lg" className="wechat-bridge-dialog">
+      <DialogTitle className="wechat-dialog-title">
+        <Stack direction="row" spacing={1} sx={{ alignItems: "center", minWidth: 0 }}>
+          <QrCodeScannerRoundedIcon fontSize="small" />
+          <Box sx={{ minWidth: 0 }}>
+            <Typography variant="h6" component="span">
+              微信桥接
+            </Typography>
+            <Typography variant="caption">
+              {loading
+                ? "正在读取…"
+                : `${bridges.length} 个 profile · ${boundCount} 个已绑定 · ${report?.runningCount ?? 0} 个运行中`}
+            </Typography>
+          </Box>
+        </Stack>
+        <Stack direction="row" spacing={0.7} sx={{ alignItems: "center" }}>
+          {report ? (
+            <Button size="small" variant="text" onClick={() => onReveal(report.storePath)}>
+              打开目录
+            </Button>
+          ) : null}
+          <Tooltip title="刷新">
+            <span>
+              <IconButton size="small" aria-label="刷新微信桥接" onClick={onRefresh} disabled={loading}>
+                <RefreshRoundedIcon />
+              </IconButton>
+            </span>
+          </Tooltip>
+          <Button size="small" variant="text" onClick={onClose}>
+            关闭
+          </Button>
+        </Stack>
+      </DialogTitle>
+
+      {loading ? <LinearProgress className="wechat-dialog-progress" /> : null}
+
+      <DialogContent className="wechat-dialog-content">
+        <Box className="wechat-dialog-tools">
+          <TextField
+            size="small"
+            value={query}
+            onChange={(event) => setQuery(event.target.value)}
+            placeholder="搜索 profile、实例、路径或账号…"
+            slotProps={{
+              htmlInput: {
+                "aria-label": "搜索微信桥接 profile",
+                name: "wechat-bridge-search",
+                autoComplete: "off",
+                spellCheck: false,
+              },
+              input: {
+                startAdornment: (
+                  <InputAdornment position="start">
+                    <SearchRoundedIcon fontSize="small" />
+                  </InputAdornment>
+                ),
+              },
+            }}
+          />
+          <TextField
+            select
+            size="small"
+            value={selectedBridge?.profileName ?? ""}
+            onChange={(event) => onProfileChange(event.target.value)}
+            slotProps={textFieldSlotProps("wechat-bridge-profile")}
+          >
+            {bridges.map((bridge) => (
+              <MenuItem key={bridge.profileName} value={bridge.profileName}>
+                {wechatBridgeLabel(bridge)}
+              </MenuItem>
+            ))}
+          </TextField>
+          <Stack className="wechat-dialog-actions" direction="row" spacing={0.6}>
+            <Button
+              size="small"
+              variant="contained"
+              startIcon={<QrCodeScannerRoundedIcon />}
+              onClick={() => selectedBridge && onStart(selectedBridge.profileName)}
+              disabled={!canStart}
+            >
+              启动扫码
+            </Button>
+            <Button
+              size="small"
+              variant="outlined"
+              color="warning"
+              startIcon={<PowerSettingsNewRoundedIcon />}
+              onClick={() => selectedBridge && onStop(selectedBridge.profileName)}
+              disabled={!canStop}
+            >
+              停止
+            </Button>
+            <Button
+              size="small"
+              variant="outlined"
+              startIcon={<RefreshRoundedIcon />}
+              onClick={() => selectedBridge && onRefreshLog(selectedBridge.profileName)}
+              disabled={!selectedBridge}
+            >
+              日志
+            </Button>
+          </Stack>
+        </Box>
+
+        <Box className="wechat-dialog-layout">
+          <Box className="wechat-list-pane">
+            {filteredBridges.length > 0 ? (
+              filteredBridges.map((bridge) => (
+                <button
+                  key={bridge.profileName}
+                  type="button"
+                  className={`wechat-bridge-row ${
+                    bridge.profileName === selectedBridge?.profileName ? "selected" : ""
+                  } ${bridge.profileName === activeProfileName ? "current" : ""}`}
+                  onClick={() => onProfileChange(bridge.profileName)}
+                >
+                  <Box className="wechat-row-main">
+                    <Typography variant="subtitle2" translate="no" title={bridge.profileLabel}>
+                      {bridge.profileLabel}
+                    </Typography>
+                    <Typography variant="caption" translate="no">
+                      {bridge.profileName} · {bridge.instance}
+                    </Typography>
+                    <Typography variant="caption">{accountInfoLabel(bridge.account)}</Typography>
+                  </Box>
+                  <Box className="wechat-row-tags">
+                    <Chip size="small" variant="outlined" label={bridge.profileCategory} />
+                    <Chip
+                      size="small"
+                      color={bridge.running ? "success" : bridge.tokenExists ? "primary" : "default"}
+                      label={wechatBridgeStatusLabel(bridge)}
+                    />
+                  </Box>
+                </button>
+              ))
+            ) : (
+              <Box className="wechat-empty">
+                <QrCodeScannerRoundedIcon />
+                <Typography variant="body2">
+                  {bridges.length > 0 ? "没有匹配的微信桥接。" : "暂无可绑定 profile。"}
+                </Typography>
+              </Box>
+            )}
+          </Box>
+
+          <Box className="wechat-detail-pane">
+            {selectedBridge ? (
+              <>
+                <Stack className="wechat-detail-head" direction="row" spacing={1} sx={{ alignItems: "flex-start" }}>
+                  <LinkRoundedIcon fontSize="small" />
+                  <Box sx={{ minWidth: 0, flex: 1 }}>
+                    <Typography variant="h6" translate="no" title={selectedBridge.profileLabel}>
+                      {selectedBridge.profileLabel}
+                    </Typography>
+                    <Typography variant="caption" translate="no">
+                      instance: {selectedBridge.instance}
+                    </Typography>
+                  </Box>
+                  <Chip
+                    size="small"
+                    color={selectedBridge.running ? "success" : selectedBridge.tokenExists ? "primary" : "default"}
+                    label={wechatBridgeStatusLabel(selectedBridge)}
+                  />
+                </Stack>
+
+                <Box className="wechat-detail-grid">
+                  <Box className="wechat-info-card">
+                    <Typography variant="caption">Codex profile</Typography>
+                    <Typography variant="subtitle2" translate="no" title={selectedBridge.codexHome}>
+                      {compactPath(selectedBridge.codexHome)}
+                    </Typography>
+                    <Typography variant="caption">{accountInfoLabel(selectedBridge.account)}</Typography>
+                  </Box>
+                  <Box className="wechat-info-card">
+                    <Typography variant="caption">微信绑定</Typography>
+                    <Typography variant="subtitle2">
+                      {selectedBridge.tokenExists ? "已扫码绑定" : "未扫码绑定"}
+                    </Typography>
+                    <Typography variant="caption" translate="no" title={selectedBridge.storageDir}>
+                      {compactPath(selectedBridge.storageDir)}
+                    </Typography>
+                  </Box>
+                  <Box className="wechat-info-card">
+                    <Typography variant="caption">运行状态</Typography>
+                    <Typography variant="subtitle2">
+                      {selectedBridge.running ? `运行中 ${selectedBridge.runningPids.join(", ")}` : "未运行"}
+                    </Typography>
+                    <Typography variant="caption">
+                      {selectedBridge.lastStartedAt
+                        ? `启动 ${formatSessionTime(selectedBridge.lastStartedAt)}`
+                        : "还未由 app 启动"}
+                    </Typography>
+                  </Box>
+                </Box>
+
+                {!selectedBridge.authExists ? (
+                  <Alert className="wechat-detail-alert" severity="warning">
+                    这个 profile 还没有 auth.json，先在认证库应用或导入账号后再启动扫码。
+                  </Alert>
+                ) : selectedBridge.lastError ? (
+                  <Alert className="wechat-detail-alert" severity="error">
+                    {selectedBridge.lastError}
+                  </Alert>
+                ) : (
+                  <Alert className="wechat-detail-alert" severity="info">
+                    启动后用微信扫码，扫码成功后该微信会固定连接到这个 profile 的 CODEX_HOME。
+                  </Alert>
+                )}
+
+                <Box className="wechat-log-panel">
+                  <Stack direction="row" spacing={1} sx={{ alignItems: "center", justifyContent: "space-between" }}>
+                    <Stack direction="row" spacing={0.8} sx={{ alignItems: "center", minWidth: 0 }}>
+                      <TerminalRoundedIcon fontSize="small" />
+                      <Typography variant="subtitle2">扫码日志</Typography>
+                    </Stack>
+                    <Stack direction="row" spacing={0.5}>
+                      <Button size="small" variant="text" onClick={() => onReveal(selectedLogPath)} disabled={!selectedLogPath}>
+                        定位
+                      </Button>
+                      <Button size="small" variant="text" onClick={() => onReveal(selectedBridge.storageDir)}>
+                        实例
+                      </Button>
+                    </Stack>
+                  </Stack>
+                  {selectedBridge.logTail.length > 0 ? (
+                    <pre>{selectedBridge.logTail.join("\n")}</pre>
+                  ) : (
+                    <Box className="wechat-log-empty">
+                      <TerminalRoundedIcon />
+                      <Typography variant="body2">还没有日志。点击“启动扫码”后在这里查看二维码输出。</Typography>
+                    </Box>
+                  )}
+                </Box>
+              </>
+            ) : (
+              <Box className="wechat-empty tall">
+                <QrCodeScannerRoundedIcon />
+                <Typography variant="body2">选择一个 profile 绑定微信。</Typography>
+              </Box>
+            )}
+          </Box>
+        </Box>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
 function AuthVaultDialog({
   open,
   report,
@@ -1802,7 +2809,12 @@ function AuthVaultDialog({
   onBackupLabelChange,
   onConfirmApplyChange,
   onCreateBackups,
+  onImportPackage,
   onApplyBackup,
+  onRollbackApplication,
+  onUpdateBackup,
+  onExportBackup,
+  onCleanupBackups,
   onDeleteBackup,
   onReveal,
 }: {
@@ -1824,15 +2836,101 @@ function AuthVaultDialog({
   onBackupLabelChange: (value: string) => void;
   onConfirmApplyChange: (value: boolean) => void;
   onCreateBackups: (profileNames: string[]) => void;
+  onImportPackage: (file: File) => void;
   onApplyBackup: (backupId: string, targetProfileName: string) => void;
+  onRollbackApplication: (applicationId: string) => void;
+  onUpdateBackup: (backupId: string, label: string, note: string, pinned: boolean) => void;
+  onExportBackup: (backupId: string) => void;
+  onCleanupBackups: (accountKey: string, accountLabel: string, count: number) => void;
   onDeleteBackup: (backupId: string) => void;
   onReveal: (path: string) => void;
 }) {
+  const [profileQuery, setProfileQuery] = useState("");
+  const [backupQuery, setBackupQuery] = useState("");
+  const importPackageInputRef = useRef<HTMLInputElement | null>(null);
+  const [backupEdit, setBackupEdit] = useState({
+    label: "",
+    note: "",
+    pinned: false,
+  });
   const profiles = report?.profiles ?? [];
   const backups = report?.backups ?? [];
+  const applications = report?.recentApplications ?? [];
+  const backupAccountCounts = useMemo(() => {
+    const counts = new Map<string, number>();
+    for (const backup of backups) {
+      const key = codexAccountKey(backup.account);
+      if (key) {
+        counts.set(key, (counts.get(key) ?? 0) + 1);
+      }
+    }
+    return counts;
+  }, [backups]);
+  const filteredProfiles = useMemo(() => {
+    const normalizedQuery = profileQuery.trim().toLowerCase();
+    if (!normalizedQuery) {
+      return profiles;
+    }
+    return profiles.filter((profile) =>
+      [
+        profile.profileName,
+        profile.profileAlias ?? "",
+        profile.profileCategory,
+        profile.codexHome,
+        profile.authPath,
+        accountInfoLabel(profile.account),
+      ]
+        .join(" ")
+        .toLowerCase()
+        .includes(normalizedQuery),
+    );
+  }, [profileQuery, profiles]);
+  const filteredBackups = useMemo(() => {
+    const normalizedQuery = backupQuery.trim().toLowerCase();
+    if (!normalizedQuery) {
+      return backups;
+    }
+    return backups.filter((backup) =>
+      [
+        backup.label,
+        backup.note ?? "",
+        backup.id,
+        backup.sourceProfileName ?? "",
+        backup.sourceProfileLabel ?? "",
+        backup.sourceCodexHome ?? "",
+        backup.path,
+        accountInfoLabel(backup.account),
+      ]
+        .join(" ")
+        .toLowerCase()
+        .includes(normalizedQuery),
+    );
+  }, [backupQuery, backups]);
+  const filteredBackupGroups = useMemo(() => {
+    const groups = new Map<string, AuthBackupGroup>();
+    for (const backup of filteredBackups) {
+      const accountKey = codexAccountKey(backup.account);
+      const groupKey = accountKey ? `account:${accountKey}` : `backup:${backup.id}`;
+      const existing = groups.get(groupKey);
+      if (existing) {
+        existing.backups.push(backup);
+        continue;
+      }
+      groups.set(groupKey, {
+        key: groupKey,
+        accountKey,
+        label: accountKey ? accountInfoLabel(backup.account) : "无法识别账号",
+        backups: [backup],
+      });
+    }
+    return Array.from(groups.values());
+  }, [filteredBackups]);
   const selectedProfile =
     profiles.find((profile) => profile.profileName === selectedProfileName) ?? profiles[0] ?? null;
   const selectedBackup = backups.find((backup) => backup.id === selectedBackupId) ?? backups[0] ?? null;
+  const targetApplications = applications
+    .filter((application) => application.targetProfileName === selectedProfile?.profileName)
+    .slice(0, 3);
   const backupableProfiles = profiles.filter((profile) => profile.authExists);
   const selectedBackupableNames = selectedProfileNames.filter((name) =>
     backupableProfiles.some((profile) => profile.profileName === name),
@@ -1843,6 +2941,16 @@ function AuthVaultDialog({
   const targetLocked = Boolean(selectedProfile?.isDefault || selectedProfile?.isRunning);
   const canCreateBackup = selectedBackupableNames.length > 0 && !busy && !loading;
   const canApplyBackup = Boolean(selectedProfile && selectedBackup?.exists && confirmApply && !targetLocked) && !busy;
+  const backupEditDirty = Boolean(
+    selectedBackup &&
+      (backupEdit.label.trim() !== selectedBackup.label ||
+        backupEdit.note.trim() !== (selectedBackup.note ?? "") ||
+        backupEdit.pinned !== selectedBackup.pinned),
+  );
+  const selectedDuplicateCount = selectedBackup
+    ? backupAccountCounts.get(codexAccountKey(selectedBackup.account)) ?? 0
+    : 0;
+  const sameAccount = sameCodexAccount(selectedBackup?.account ?? null, selectedProfile?.account ?? null);
   const targetHint = selectedProfile?.isDefault
     ? "默认 codex 受保护，不能覆盖。"
     : selectedProfile?.isRunning
@@ -1850,6 +2958,21 @@ function AuthVaultDialog({
       : selectedBackup?.exists
         ? "应用前会自动备份目标现有 auth.json。"
         : "选择一个可用备份。";
+
+  useEffect(() => {
+    if (!open) {
+      setProfileQuery("");
+      setBackupQuery("");
+    }
+  }, [open]);
+
+  useEffect(() => {
+    setBackupEdit({
+      label: selectedBackup?.label ?? "",
+      note: selectedBackup?.note ?? "",
+      pinned: Boolean(selectedBackup?.pinned),
+    });
+  }, [selectedBackup?.id, selectedBackup?.label, selectedBackup?.note, selectedBackup?.pinned]);
 
   function toggleBackupProfile(profileName: string, checked: boolean) {
     const next = new Set(selectedBackupableNames);
@@ -1859,6 +2982,14 @@ function AuthVaultDialog({
       next.delete(profileName);
     }
     onSelectedProfileNamesChange(Array.from(next));
+  }
+
+  function handleImportPackageChange(event: ChangeEvent<HTMLInputElement>) {
+    const file = event.currentTarget.files?.[0];
+    event.currentTarget.value = "";
+    if (file) {
+      onImportPackage(file);
+    }
   }
 
   return (
@@ -1920,6 +3051,23 @@ function AuthVaultDialog({
             slotProps={textFieldSlotProps("auth-backup-label")}
           />
           <Stack className="auth-dialog-tool-actions" direction="row" spacing={0.6}>
+            <input
+              ref={importPackageInputRef}
+              className="auth-import-input"
+              type="file"
+              accept=".json,.rcodex-auth.json,application/json"
+              onChange={handleImportPackageChange}
+            />
+            <Button
+              className="auth-backup-action"
+              size="small"
+              variant="outlined"
+              startIcon={<FileUploadRoundedIcon />}
+              onClick={() => importPackageInputRef.current?.click()}
+              disabled={busy || loading}
+            >
+              导入包
+            </Button>
             <Button
               className="auth-backup-action"
               size="small"
@@ -1958,15 +3106,61 @@ function AuthVaultDialog({
           </Stack>
         </Box>
 
+        <Box className="auth-dialog-filters">
+          <TextField
+            size="small"
+            value={profileQuery}
+            onChange={(event) => setProfileQuery(event.target.value)}
+            placeholder="搜索 profile、账号或路径…"
+            slotProps={{
+              htmlInput: {
+                "aria-label": "搜索认证 profile",
+                name: "auth-profile-search",
+                autoComplete: "off",
+                spellCheck: false,
+              },
+              input: {
+                startAdornment: (
+                  <InputAdornment position="start">
+                    <SearchRoundedIcon fontSize="small" />
+                  </InputAdornment>
+                ),
+              },
+            }}
+          />
+          <TextField
+            size="small"
+            value={backupQuery}
+            onChange={(event) => setBackupQuery(event.target.value)}
+            placeholder="搜索备份、来源或账号…"
+            slotProps={{
+              htmlInput: {
+                "aria-label": "搜索认证备份",
+                name: "auth-backup-search",
+                autoComplete: "off",
+                spellCheck: false,
+              },
+              input: {
+                startAdornment: (
+                  <InputAdornment position="start">
+                    <SearchRoundedIcon fontSize="small" />
+                  </InputAdornment>
+                ),
+              },
+            }}
+          />
+        </Box>
+
         <Box className="auth-dialog-grid">
           <Box className="auth-pane auth-profile-pane">
             <Stack className="auth-pane-title" direction="row" spacing={1} sx={{ alignItems: "center" }}>
               <AccountCircleRoundedIcon fontSize="small" />
               <Typography variant="subtitle2">当前认证</Typography>
+              <Chip size="small" label={`${filteredProfiles.length}/${profiles.length}`} />
             </Stack>
             <Box className="auth-list">
-              {profiles.length > 0 ? (
-                profiles.map((profile) => {
+              {filteredProfiles.length > 0 ? (
+                filteredProfiles.map((profile) => {
                   const checked = selectedBackupableNames.includes(profile.profileName);
                   return (
                     <Box
@@ -2013,7 +3207,9 @@ function AuthVaultDialog({
               ) : (
                 <Box className="auth-empty">
                   <AccountCircleRoundedIcon />
-                  <Typography variant="body2">暂无 profile。</Typography>
+                  <Typography variant="body2">
+                    {profiles.length > 0 ? "没有匹配的认证 profile。" : "暂无 profile。"}
+                  </Typography>
                 </Box>
               )}
             </Box>
@@ -2023,36 +3219,86 @@ function AuthVaultDialog({
             <Stack className="auth-pane-title" direction="row" spacing={1} sx={{ alignItems: "center" }}>
               <VpnKeyRoundedIcon fontSize="small" />
               <Typography variant="subtitle2">认证备份</Typography>
+              <Chip size="small" label={`${filteredBackups.length}/${backups.length}`} />
             </Stack>
             <Box className="auth-list">
-              {backups.length > 0 ? (
-                backups.map((backup) => (
-                  <button
-                    key={backup.id}
-                    type="button"
-                    className={`auth-backup-row ${backup.id === selectedBackup?.id ? "selected" : ""}`}
-                    onClick={() => onBackupSelect(backup.id)}
-                  >
-                    <Box className="auth-row-main">
-                      <Typography variant="subtitle2" translate="no" title={backup.label}>
-                        {backup.label}
-                      </Typography>
-                      <Typography variant="caption">{accountInfoLabel(backup.account)}</Typography>
-                      <Typography variant="caption">
-                        {formatSessionTime(backup.createdAt)}
-                        {backup.sourceProfileName ? ` · ${backup.sourceProfileLabel ?? backup.sourceProfileName}` : ""}
-                      </Typography>
+              {filteredBackups.length > 0 ? (
+                filteredBackupGroups.map((group) => {
+                  const groupDuplicateCount = group.accountKey
+                    ? backupAccountCounts.get(group.accountKey) ?? group.backups.length
+                    : group.backups.length;
+                  return (
+                    <Box key={group.key} className="auth-backup-group">
+                      <Box className="auth-backup-group-header">
+                        <Box className="auth-backup-group-title">
+                          <Typography variant="caption" translate="no" title={group.label}>
+                            {group.label}
+                          </Typography>
+                          <Typography variant="caption">
+                            {groupDuplicateCount > 1 ? `${groupDuplicateCount} 份备份` : "1 份备份"}
+                          </Typography>
+                        </Box>
+                        {group.accountKey && groupDuplicateCount > 1 ? (
+                          <Button
+                            className="auth-cleanup-action"
+                            size="small"
+                            variant="text"
+                            color="warning"
+                            onClick={() => onCleanupBackups(group.accountKey, group.label, groupDuplicateCount)}
+                            disabled={busy}
+                          >
+                            清理重复
+                          </Button>
+                        ) : null}
+                      </Box>
+                      <Box className="auth-backup-group-list">
+                        {group.backups.map((backup) => {
+                          const duplicateCount = backupAccountCounts.get(codexAccountKey(backup.account)) ?? 0;
+                          return (
+                            <button
+                              key={backup.id}
+                              type="button"
+                              className={`auth-backup-row ${backup.id === selectedBackup?.id ? "selected" : ""}`}
+                              onClick={() => onBackupSelect(backup.id)}
+                            >
+                              <Box className="auth-row-main">
+                                <Typography variant="subtitle2" translate="no" title={backup.label}>
+                                  {backup.label}
+                                </Typography>
+                                <Typography variant="caption">{accountInfoLabel(backup.account)}</Typography>
+                                {backup.note ? (
+                                  <Typography variant="caption" title={backup.note}>
+                                    {backup.note}
+                                  </Typography>
+                                ) : null}
+                                <Typography variant="caption">
+                                  {formatSessionTime(backup.createdAt)}
+                                  {backup.sourceProfileName
+                                    ? ` · ${backup.sourceProfileLabel ?? backup.sourceProfileName}`
+                                    : ""}
+                                </Typography>
+                              </Box>
+                              <Box className="auth-row-tags">
+                                {backup.pinned ? <Chip size="small" label="置顶" /> : null}
+                                {duplicateCount > 1 ? (
+                                  <Chip size="small" variant="outlined" label={`重复 ${duplicateCount}`} />
+                                ) : null}
+                                {backup.hasRefreshToken ? <Chip size="small" color="success" label="可刷新" /> : null}
+                                <Chip size="small" variant="outlined" label={backup.exists ? "可用" : "缺失"} />
+                              </Box>
+                            </button>
+                          );
+                        })}
+                      </Box>
                     </Box>
-                    <Box className="auth-row-tags">
-                      {backup.hasRefreshToken ? <Chip size="small" color="success" label="可刷新" /> : null}
-                      <Chip size="small" variant="outlined" label={backup.exists ? "可用" : "缺失"} />
-                    </Box>
-                  </button>
-                ))
+                  );
+                })
               ) : (
                 <Box className="auth-empty">
                   <VpnKeyRoundedIcon />
-                  <Typography variant="body2">还没有认证备份。</Typography>
+                  <Typography variant="body2">
+                    {backups.length > 0 ? "没有匹配的认证备份。" : "还没有认证备份。"}
+                  </Typography>
                 </Box>
               )}
             </Box>
@@ -2065,17 +3311,93 @@ function AuthVaultDialog({
             </Stack>
             {selectedBackup ? (
               <Box className="auth-detail-card">
-                <Typography variant="h6" translate="no" title={selectedBackup.label}>
-                  {selectedBackup.label}
-                </Typography>
+                <Box className="auth-backup-editor">
+                  <TextField
+                    className="auth-backup-label-input"
+                    size="small"
+                    label="备份名称"
+                    value={backupEdit.label}
+                    onChange={(event) =>
+                      setBackupEdit((current) => ({ ...current, label: event.target.value }))
+                    }
+                    slotProps={textFieldSlotProps("auth-edit-backup-label")}
+                  />
+                  <Button
+                    className={`auth-pin-action ${backupEdit.pinned ? "active" : ""}`}
+                    size="small"
+                    variant={backupEdit.pinned ? "contained" : "outlined"}
+                    startIcon={<PushPinRoundedIcon />}
+                    onClick={() =>
+                      setBackupEdit((current) => ({ ...current, pinned: !current.pinned }))
+                    }
+                  >
+                    置顶
+                  </Button>
+                  <TextField
+                    className="auth-backup-note-input"
+                    size="small"
+                    label="备注"
+                    value={backupEdit.note}
+                    onChange={(event) =>
+                      setBackupEdit((current) => ({ ...current, note: event.target.value }))
+                    }
+                    placeholder="例如账号用途、适用场景…"
+                    slotProps={textFieldSlotProps("auth-edit-backup-note")}
+                  />
+                  <Button
+                    className="auth-save-backup-action"
+                    size="small"
+                    variant="outlined"
+                    startIcon={<SaveRoundedIcon />}
+                    onClick={() =>
+                      onUpdateBackup(
+                        selectedBackup.id,
+                        backupEdit.label,
+                        backupEdit.note,
+                        backupEdit.pinned,
+                      )
+                    }
+                    disabled={!backupEditDirty || !backupEdit.label.trim() || busy}
+                  >
+                    保存
+                  </Button>
+                </Box>
                 <Typography variant="body2">{accountInfoLabel(selectedBackup.account)}</Typography>
                 <Typography variant="caption" title={selectedBackup.path} translate="no">
                   {compactPath(selectedBackup.path)}
                 </Typography>
                 <Stack className="auth-detail-tags" direction="row" spacing={0.6}>
+                  {selectedBackup.pinned ? <Chip size="small" label="已置顶" /> : null}
+                  {selectedDuplicateCount > 1 ? (
+                    <Chip size="small" variant="outlined" label={`同账号 ${selectedDuplicateCount} 份`} />
+                  ) : null}
                   <Chip size="small" label={selectedBackup.exists ? "文件可用" : "文件缺失"} />
                   {selectedBackup.hasRefreshToken ? <Chip size="small" color="success" label="含 refresh_token" /> : null}
+                  {sameAccount ? <Chip size="small" variant="outlined" label="同账号" /> : null}
                 </Stack>
+                <Box className="auth-apply-preview">
+                  <Box className="auth-preview-card source">
+                    <Typography variant="caption">来源备份</Typography>
+                    <Typography variant="subtitle2" title={selectedBackup.label} translate="no">
+                      {selectedBackup.label}
+                    </Typography>
+                    <Typography variant="caption">{accountInfoLabel(selectedBackup.account)}</Typography>
+                  </Box>
+                  <Box className="auth-preview-card target">
+                    <Typography variant="caption">目标当前</Typography>
+                    <Typography variant="subtitle2" translate="no">
+                      {selectedProfile ? authSlotLabel(selectedProfile) : "未选择"}
+                    </Typography>
+                    <Typography variant="caption">{accountInfoLabel(selectedProfile?.account ?? null)}</Typography>
+                  </Box>
+                  <Box className="auth-preview-card result">
+                    <Typography variant="caption">应用后</Typography>
+                    <Typography variant="subtitle2" translate="no">
+                      {selectedProfile ? authSlotLabel(selectedProfile) : "未选择"}
+                    </Typography>
+                    <Typography variant="caption">{accountInfoLabel(selectedBackup.account)}</Typography>
+                  </Box>
+                </Box>
                 <Alert className="auth-detail-alert" severity={targetLocked ? "warning" : "info"}>
                   {targetHint}
                 </Alert>
@@ -2099,6 +3421,14 @@ function AuthVaultDialog({
                   </Button>
                   <Button
                     variant="outlined"
+                    startIcon={<SaveRoundedIcon />}
+                    onClick={() => onExportBackup(selectedBackup.id)}
+                    disabled={!selectedBackup.exists || busy}
+                  >
+                    导出
+                  </Button>
+                  <Button
+                    variant="outlined"
                     startIcon={<FolderRoundedIcon />}
                     onClick={() => onReveal(selectedBackup.path)}
                     disabled={!selectedBackup.exists}
@@ -2114,6 +3444,51 @@ function AuthVaultDialog({
                   >
                     删除
                   </Button>
+                </Box>
+                <Box className="auth-rollback-panel">
+                  <Stack direction="row" spacing={0.7} sx={{ alignItems: "center" }}>
+                    <RestartAltRoundedIcon fontSize="small" />
+                    <Typography variant="subtitle2">最近应用</Typography>
+                  </Stack>
+                  {targetApplications.length > 0 ? (
+                    <Box className="auth-application-list">
+                      {targetApplications.map((application) => {
+                        const canRollback =
+                          application.previousAuthExists &&
+                          !application.rolledBackAt &&
+                          !targetLocked &&
+                          !busy;
+                        return (
+                          <Box key={application.id} className="auth-application-row">
+                            <Box className="auth-row-main">
+                              <Typography variant="subtitle2" title={application.backupLabel} translate="no">
+                                {application.backupLabel}
+                              </Typography>
+                              <Typography variant="caption">
+                                {formatSessionTime(application.appliedAt)}
+                                {application.rolledBackAt
+                                  ? ` · 已回滚 ${formatSessionTime(application.rolledBackAt)}`
+                                  : ""}
+                              </Typography>
+                              <Typography variant="caption">{accountInfoLabel(application.appliedAccount)}</Typography>
+                            </Box>
+                            <Button
+                              size="small"
+                              variant="outlined"
+                              onClick={() => onRollbackApplication(application.id)}
+                              disabled={!canRollback}
+                            >
+                              回滚
+                            </Button>
+                          </Box>
+                        );
+                      })}
+                    </Box>
+                  ) : (
+                    <Typography className="auth-rollback-empty" variant="caption">
+                      这个 profile 还没有应用记录。
+                    </Typography>
+                  )}
                 </Box>
               </Box>
             ) : (
@@ -2376,15 +3751,49 @@ function accountLabel(profile: ProfileInfo): string {
   return accountInfoLabel(profile.account);
 }
 
-function accountInfoLabel(account: ProfileInfo["account"] | AuthBackupEntry["account"]): string {
+function accountInfoLabel(
+  account: ProfileInfo["account"] | AuthBackupEntry["account"] | AuthApplicationEntry["appliedAccount"],
+): string {
   if (!account) {
     return "未登录";
   }
   return account.email ?? account.name ?? account.accountId ?? account.authMode ?? "已登录";
 }
 
+function codexAccountKey(
+  account: ProfileInfo["account"] | AuthBackupEntry["account"] | AuthApplicationEntry["appliedAccount"],
+): string {
+  if (!account) {
+    return "";
+  }
+  return account.accountId ?? account.userId ?? account.email ?? account.name ?? "";
+}
+
+function sameCodexAccount(
+  left: ProfileInfo["account"] | AuthBackupEntry["account"] | AuthApplicationEntry["appliedAccount"],
+  right: ProfileInfo["account"] | AuthBackupEntry["account"] | AuthApplicationEntry["appliedAccount"],
+): boolean {
+  const leftKey = codexAccountKey(left);
+  const rightKey = codexAccountKey(right);
+  return Boolean(leftKey && rightKey && leftKey === rightKey);
+}
+
 function authSlotLabel(profile: AuthProfileSlot): string {
   return profile.profileAlias || profile.profileName;
+}
+
+function wechatBridgeLabel(bridge: WechatBridgeEntry): string {
+  return bridge.profileLabel || bridge.profileName;
+}
+
+function wechatBridgeStatusLabel(bridge: WechatBridgeEntry): string {
+  if (bridge.running) {
+    return "运行中";
+  }
+  if (bridge.tokenExists) {
+    return "已绑定";
+  }
+  return "未绑定";
 }
 
 function profileSourceLabel(profile: ProfileInfo): string {
