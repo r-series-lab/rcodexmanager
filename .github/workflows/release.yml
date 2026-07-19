@@ -1,4 +1,4 @@
-name: Release preview desktop packages
+name: Release rCodexManager packages
 
 on:
   workflow_dispatch:
@@ -59,10 +59,30 @@ jobs:
             target/${{ matrix.target }}/release/bundle/**/*.msi
             target/${{ matrix.target }}/release/bundle/**/*.exe
 
+  headless:
+    name: Build Linux headless node
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Build Linux node package
+        run: ./scripts/package-headless-cli.sh linux-x86_64
+
+      - name: Upload Linux node artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: rcodexmanager-linux-x86_64
+          if-no-files-found: error
+          path: dist/rcodexmanager-linux-x86_64.tar.gz
+
   publish:
     name: Create draft GitHub Release
     if: startsWith(github.ref, 'refs/tags/v')
-    needs: build
+    needs: [build, headless]
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -81,6 +101,6 @@ jobs:
           prerelease: false
           files: release-assets/**
           body: |
-            Stage-one preview desktop packages.
+            rCodexManager desktop packages and the Linux headless server-node package.
 
-            macOS packages are ad-hoc signed but not Developer ID signed or notarized. Windows packages are not Authenticode signed. macOS Gatekeeper and Windows SmartScreen may show warnings.
+            macOS packages are ad-hoc signed but not Developer ID signed or notarized. Windows packages are not Authenticode signed. macOS Gatekeeper and Windows SmartScreen may show warnings. The Linux archive contains the headless CLI and its user-local installer.

@@ -1,138 +1,126 @@
 # rCodexManager
 
-`rCodexManager` 是一个本地优先的 Codex profile 管理工具，用来集中查看、创建、启动、终止、重置和维护多个独立的 Codex 桌面实例。
+`rCodexManager` 是一个本地优先的 Codex 多 profile 工作台。它把多个隔离的 Codex 实例、历史会话、登录态备份、远程消息渠道和第三方模型路由集中在一个桌面应用与 CLI 中管理，也支持从 Mac 通过 SSH 管理 Linux 服务器上的 Codex。
 
-它管理的核心对象是：
+它适合这些场景：
 
-- `~/.zshrc` 里的 `codex-*` 启动函数。
+- 为日常开发、深度研究、插件测试或服务器任务准备互不干扰的 Codex profile。
+- 快速确认每个 profile 的运行、登录、模型和最近会话状态。
+- 在停止中的 profile 之间安全备份、应用和回滚登录态。
+- 通过微信或飞书 Bot 远程连接指定 profile。
+- 为阿里 Qwen、GLM、本地模型或自定义 Responses 服务生成和维护 Codex 路由配置。
+- 在 Mac 中查看 Linux 节点、远程 Profile、会话、认证、路由、渠道和 Doctor 状态，并执行受保护的服务端操作。
+
+技术栈：`Tauri 2 + Rust + React 19 + TypeScript + Material UI`
+
+## 产品能力
+
+| 模块 | 主要能力 | 数据加载策略 |
+| --- | --- | --- |
+| Profile 工作区 | 创建、复制、编辑、启动、终止、重置、归档、账号导入、额度窗口查询、网络修复 | 首页只读取 profile 状态和最近摘要 |
+| Doctor 诊断 | 一键检查启动配置、profile 路径、进程、认证、模型路由、代理、认证库与远程渠道 | 只读执行，报告自动脱敏 |
+| 会话中心 | 搜索、profile/分类筛选、分页、摘要/来源详情、复制摘要 | 先读索引，选中后才读取单条 JSONL 详情 |
+| 认证库 | 单个或批量备份、导入预检、导入导出、备注/置顶、应用、回滚、重复清理 | 打开弹窗后加载，30 秒缓存 |
+| 远程渠道 | 微信扫码、启停、重启、可恢复解绑；飞书外部运行时绑定、启停和日志 | 仅在等待连接或运行时轮询 |
+| 模型路由 | 状态检查、模板、草稿测试、配置预览、应用、恢复、自检、代理诊断 | 打开弹窗后加载，敏感字段只保存在内存 |
+| 服务器节点 | SSH 探测、远程 Profile 生命周期、会话、认证、模型路由、渠道和 Doctor | 不在首页预加载，切换标签后按需调用远程 JSON CLI |
+
+桌面窗口默认宽度为 `900px`，最小尺寸为 `900×520`。各管理域共用紧凑的主从式弹窗、亮色/暗色/跟随系统主题和统一的加载、错误、空状态与安全确认交互。
+
+设置弹窗中的“运行诊断”可生成一份只读 Doctor 报告。诊断不会修改 profile、认证或渠道配置；报告只保留状态和可操作建议，并隐藏 token、密钥、邮箱与完整本机路径。出现问题时建议先运行诊断，再进入对应管理中心处理。
+
+## Profile 模型
+
+rCodexManager 读取并维护以下本地资源：
+
+- 默认 profile：`~/.codex` 与 Codex 默认 user data。
+- 自定义 profile：自动检测的 `~/.zshrc` 或 `~/.bashrc` 中的 `codex-*` 启动函数。
 - 每个 profile 独立的 `CODEX_HOME`。
-- 每个 profile 独立的 `--user-data-dir`。
-- rCodexManager 自己维护的别名、分类和备注。
+- 每个桌面 profile 独立的 `--user-data-dir`。
+- rCodexManager 自有的别名、分类和备注。
 
-它不会管理 Codex 账号订阅或云端状态，也不会默认删除历史会话数据。所有破坏性操作都采用保守策略：先备份、先归档，默认 profile 受保护。
+创建 profile 时会生成目录、`config.toml` 和启动函数。桌面 profile 使用 macOS `open -n -a "Codex"`；`--server` profile 使用适合 Linux/服务器的 `CODEX_HOME=... codex "$@"` 启动函数。由 Mac 远程启动服务器 Profile 时，服务端会使用独立 `tmux` 会话保持 Codex 运行，并通过 `CODEX_HOME` 识别真实运行状态。
 
-技术栈：`Tauri 2 + Rust + React + Vite + TypeScript + Material UI`
+默认 `codex` profile 受到保护，不能删除、重置、覆盖认证或应用模型路由。运行中的 profile 不能执行认证写入或模型路由写入。
 
-## 适合做什么
+## 主要管理域
 
-- 给 Codex 准备多个隔离实例，例如主力、深度研究、轻量问答、插件测试。
-- 为不同实例配置不同的 `CODEX_HOME`、user data、模型和 reasoning effort。
-- 从一个界面查看 profile 是否运行、是否登录、最近会话是什么。
-- 快速启动或终止某个独立 Codex 实例。
-- 复制或导入可信登录态到某个停止中的 profile。
-- 检查当前账号额度窗口。
-- 修复 Codex WebSocket / 代理环境相关问题。
+### Profile 列表与详情
 
-## 桌面功能
+- 从默认目录和 Bash/Zsh 启动配置自动发现 profile。
+- 支持关键词、运行/登录/会话状态与分类筛选。
+- 展示账号、模型、路径、最近会话、WebSocket feature 和进程状态。
+- 按需读取 5 小时、周额度及其他 usage 窗口；展示已用比例、重置时间和可执行的过期/网络错误提示，不持久化 access token。
+- 网络修复会检查 WebSocket feature、代理状态和启动环境；修改前保留配置备份，并且不会接管来源不明的代理进程。
+- 行点击会选择 profile，并在侧栏收起时自动展开详情。
+- 操作列固定在列表右侧，横向滚动时保持对齐。
 
-### Profile 列表
+### 会话中心
 
-- 自动读取默认 `codex` profile。
-- 扫描 `~/.zshrc` 中的 `codex-*` 启动函数。
-- 解析每个启动函数里的 `CODEX_HOME` 和 `--user-data-dir`。
-- 显示 profile 总数、运行中数量、已识别账号数量。
-- 支持按分类筛选和关键词搜索。
-- 支持亮色 / 暗色模式。
-- 每个卡片显示别名、命令名、账号状态和最近会话标题。
+- 读取 `<CODEX_HOME>/session_index.jsonl` 建立分页列表。
+- 默认每页 10 条，可切换 `10/20/50`。
+- 搜索时采用有界扫描，不在打开弹窗时读取全部会话正文。
+- 选中一条会话后才读取对应 `sessions/**/*.jsonl`。
+- 详情按 `profile + session id + updatedAt` 缓存，并忽略过期响应。
 
-### Profile 详情
+### 认证库
 
-选择一个 profile 后，右侧详情区会展示：
+- 从一个或多个 profile 创建认证备份，批量任务返回逐项结果。
+- 导入 `.rcodex-auth.json` 前先执行只读预检。
+- 识别有效、损坏和文件缺失的备份；无效备份不能应用。
+- 应用前备份目标 `auth.json`，并记录可回滚的应用历史。
+- 支持标签、备注、置顶、导入、导出、删除和同账号重复清理。
 
-- 命令名、别名、分类。
-- 模型和 reasoning effort。
-- `CODEX_HOME` 路径。
-- user data 路径。
-- `config.toml` 是否存在。
-- WebSocket feature flag 是否启用。
-- 当前是否运行，以及匹配到的进程数量。
-- 账号信息，例如邮箱、姓名、计划类型、组织名称。
-- 最近一次会话的标题、摘要、目录和时间。
-- 额度窗口查询结果。
+认证库用于管理用户明确授权的本地登录态，不绕过 Codex 登录机制，也不会把 token 发送到 rCodexManager 自有服务。
 
-### 创建 profile
+### 远程渠道
 
-新增 profile 会完成这些动作：
+微信渠道按 profile 管理独立 `wechat-acp` 实例：
 
-- 校验命令名必须以 `codex-` 开头。
-- 自动生成默认目录：
-  - `~/.codex-<suffix>`
-  - `~/Library/Application Support/Codex-<TitleSuffix>`
-- 创建 `CODEX_HOME` 和 user data 目录。
-- 写入新的 `config.toml`。
-- 在 `~/.zshrc` 中追加启动函数。
-- 写入本地元数据：别名、分类、备注。
+- 支持扫码启动、停止、重启、日志和 profile 切换。
+- 解绑会先停止实例，再把 token 移入时间戳备份目录。
+- 服务器 profile 可生成或安装用户级 systemd service。
 
-默认模型为 `gpt-5.5`，默认 reasoning effort 为 `xhigh`。
+飞书渠道复用用户自行安装的 [`codex-remote-feishu`](https://github.com/kxn/codex-remote-feishu)：
 
-### 启动与终止
+- rCodexManager 不捆绑、不静默下载该外部运行时。
+- 使用独立实例 `rcodexmanager`，数据位于 `~/.rcodexmanager/feishu-remote/`。
+- 一次绑定一个 Codex profile，支持配置、启动、停止、重启和脱敏日志。
+- App ID 与 App Secret 只在外部运行时的 WebSetup 中保存，rCodexManager 不读取这些凭据。
 
-- 启动 profile 等价于使用 macOS `open -n -a "Codex"` 启动一个新的 Codex 实例。
-- 启动时会带上该 profile 的 `CODEX_HOME` 和 `--user-data-dir`。
-- 如果系统代理可识别，启动时会附加代理环境变量。
-- 终止只会 kill 匹配该 profile user data 路径的 Codex 主进程。
-- 默认 `codex` profile 不支持安全终止，需要在 Codex 内手动退出。
+### 模型路由
 
-### 编辑、删除与重置
+模型路由管理目标 profile 的 `config.toml`，支持：
 
-- 编辑只修改 rCodexManager 本地元数据，例如别名和分类。
-- 删除默认只移除 `.zshrc` 启动函数，不删除数据目录。
-- 删除时可选择归档 profile 数据目录。
-- 重置会先归档旧 `CODEX_HOME`，再写入新的 `config.toml`。
-- 重置可选择是否同时归档 user data 目录。
-- 默认 `codex` profile 受保护，不能删除、重置或覆盖导入。
-- `.zshrc` 写入前会生成备份文件。
+- `aliyun-qwen`：阿里百炼/Qwen Responses-compatible 直连。
+- `glm`：智谱/Z.ai Chat-compatible 上游，通常需要 Responses 转换代理。
+- `local-openai`：本地 OpenAI-compatible Chat 上游。
+- `custom-responses`：自定义 Responses-compatible 服务。
 
-### 账号导入
+桌面端提供基础内置代理，也可以打开 cc-switch 使用更成熟的 provider 适配。cc-switch 是推荐增强，不是 rCodexManager 的硬依赖。
 
-账号导入用于把可信来源的登录态写入目标 profile 的 `auth.json`。
+应用模型路由前必须先预览；写入前会备份 `config.toml`，且永远不修改 `auth.json`。API key 仅存在于当前弹窗内存，CLI 只接受环境变量名，不接受明文 key 参数。
 
-- 支持来源为 Codex `auth.json` 或可规范化的 ChatGPT session JSON。
-- 只会写入目标 profile 的 `CODEX_HOME/auth.json`。
-- 已有 `auth.json` 会先复制备份。
-- 需要显式确认敏感 token 导入。
-- 目标 profile 必须处于停止状态。
-- 默认 `codex` profile 受保护，不允许覆盖导入。
-- 如果来源没有 refresh token，登录态后续可能过期。
+内置转换代理支持把 Chat Completions 上游转换为 Codex 使用的 Responses 接口，并处理流式文本、工具调用、结束状态和 usage 摘要。它适合本地验证和基础 provider 兼容；复杂路由、供应商管理和长期运行仍建议交给 cc-switch 或独立网关。
 
-### 额度查询
+### 服务器节点
 
-额度查询会读取目标 profile 的 `auth.json`，使用 access token 访问只读 usage 接口：
+Mac App 顶部的“服务器节点”入口通过已配置的 SSH Host 连接 Linux，不要求服务器运行桌面环境，也不开放额外管理端口。
 
-```text
-https://chatgpt.com/backend-api/wham/usage
-```
-
-返回内容会整理成多个额度窗口：
-
-- 窗口名称。
-- 已用百分比。
-- 剩余百分比。
-- 窗口分钟数。
-- 重置时间。
-- 是否仍可用。
-- 是否触达限制。
-
-rCodexManager 不会把查询得到的 token 另存一份。
-
-### 网络修复
-
-网络修复用于处理 Codex Responses WebSocket 或 macOS 启动环境代理问题。
-
-它会：
-
-- 确保 profile 的 `config.toml` 存在。
-- 启用 WebSocket feature flags：
-  - `responses_websockets`
-  - `responses_websockets_v2`
-  - `responses_websocket_response_processed`
-- 尝试读取当前 macOS 系统代理。
-- 默认尝试把代理写入 `launchctl` 环境，供后续启动的 Codex 继承。
-- 可通过 CLI 的 `--skip-launchctl` 只更新 `config.toml`，不改 launch 环境。
+- Mac 只保存节点名称、SSH Host 和远程 CLI 路径，不保存 SSH 密码、私钥、API key 或服务端 token。
+- 服务器安装无界面的 `rcodexmanager` CLI；所有远程调用返回单个 JSON 对象。
+- 支持按需查看 Profile、会话、认证、模型路由、微信/飞书渠道和 Doctor；已读取的节点元数据在当前 App 进程内缓存 30 秒。
+- 服务器会话支持搜索、Profile 筛选和 `10/20/50` 分页，只在选中会话后读取单条详情；切换筛选时会丢弃过期响应。
+- 支持创建服务器 Profile、启动/停止、认证备份与应用、路由预览/测试/应用/恢复。
+- 默认 Profile 和运行中 Profile 继续受到写入保护；敏感操作仍需二次确认。
+- 远程启动依赖服务器安装 `tmux`；普通查看、诊断和配置检查不依赖 `tmux`。
+- SSH 输出在命令执行期间持续读取，支持有界的大型会话详情，不会等待进程结束后才排空管道。
+- 查询、会话详情、网络自检和渠道启动使用不同超时；每次操作返回任务号、耗时和超时上限。
+- 同一 Mac App 不允许向同一节点同时发起两个写操作，读取操作仍可独立执行。
+- 节点弹窗保留当前窗口内每个节点最近 10 条任务摘要；只读任务支持安全重试，写入失败会先提示刷新状态。
+- 常见 SSH、超时、依赖缺失和版本不兼容错误会转换为可执行建议，诊断信息可脱敏复制给 AI 排查。
 
 ## 快速开始
-
-安装依赖并启动桌面开发版：
 
 ```bash
 npm install
@@ -145,117 +133,99 @@ npm run dev
 npm run build
 ```
 
-Rust 检查与测试：
+测试无界面节点，并在 Linux 或发布工作流中构建归档：
 
 ```bash
+npm run headless:test
+npm run headless:package
+```
+
+将 `dist/rcodexmanager-linux-<arch>.tar.gz` 上传到服务器并解压后：
+
+```bash
+./install.sh
+~/.local/bin/rcodexmanager --json doctor
+```
+
+如果非交互 SSH 的 `PATH` 不包含 `~/.local/bin`，在 Mac 的节点设置中填写绝对路径，例如 `/home/admin/.local/bin/rcodexmanager`。服务器需要已有 Codex CLI、SSH 公钥登录；启停 Profile 还需要 `tmux`。
+
+服务器节点保持手动安装模式。可以让 AI 通过 SSH 完成上传、解压、执行 `install.sh` 和 Doctor 验证；App 不负责修改 SSH、防火墙或自动升级服务器组件。
+
+### Codex Skill
+
+仓库内的 `skills/rcodexmanager` 是 Skill 标准源文件，支持 Mac 本地、Mac 管理 Linux 以及 Linux 无界面 CLI。安装到默认 Codex：
+
+```bash
+npm run skill:install
+npm run skill:check
+```
+
+安装到隔离 Profile 的 `CODEX_HOME`：
+
+```bash
+npm run skill:install -- --home "$HOME/.codex-g"
+```
+
+更新 Skill 时先修改仓库版本，再执行安装脚本；不要直接维护 `~/.codex/skills/rcodexmanager` 副本。
+
+只验证前端和 Rust：
+
+```bash
+npm run web:build
 npm run rust-check
 npm run rust-test
 ```
 
-## CLI 用法
+## CLI
 
-开发期可从项目根目录运行：
+CLI 与桌面端共享同一套 Rust 核心逻辑。自动化调用建议始终使用 `--json`。
 
-```bash
-cargo run --manifest-path ./src-tauri/Cargo.toml -- info --json
-cargo run --manifest-path ./src-tauri/Cargo.toml -- capabilities --json
-cargo run --manifest-path ./src-tauri/Cargo.toml -- list --json
-```
-
-构建后可直接调用二进制：
+开发期从源码运行：
 
 ```bash
-./target/debug/rcodexmanager info --json
-./target/debug/rcodexmanager capabilities --json
-./target/debug/rcodexmanager list --json
+cargo run --quiet --manifest-path ./src-tauri/Cargo.toml -- --json info
+cargo run --quiet --manifest-path ./src-tauri/Cargo.toml -- --json list
 ```
 
-### 全局参数
-
-| 参数 | 说明 |
-| --- | --- |
-| `--json` | 输出单个机器友好的 JSON 对象 |
-| `--home <PATH>` | 使用指定 home 目录，适合测试或自动化 |
-| `--zshrc <PATH>` | 使用指定 zsh 配置文件，适合隔离环境 |
-
-### 常用命令
+安装后二进制调用：
 
 ```bash
-# 查看应用信息
-rcodexmanager info --json
-
-# 查看 CLI 能力清单
-rcodexmanager capabilities --json
-
-# 列出 profile
-rcodexmanager list --json
-
-# 创建 profile
-rcodexmanager create \
-  --name codex-f \
-  --model gpt-5.5 \
-  --reasoning-effort xhigh \
-  --alias Draft \
-  --category 深度 \
-  --json
-
-# 更新别名、分类和备注
-rcodexmanager update \
-  --name codex-f \
-  --alias 主力 \
-  --category 平衡 \
-  --note 日常使用 \
-  --json
-
-# 启动 profile
-rcodexmanager launch --name codex-f --json
-
-# 终止 profile，stop 是 terminate 的别名
-rcodexmanager terminate --name codex-f --json
-rcodexmanager stop --name codex-f --json
-
-# 查询额度
-rcodexmanager quota --name codex-f --json
-
-# 导入可信 auth.json
-rcodexmanager import-auth \
-  --name codex-f \
-  --source /path/to/auth.json \
-  --confirm-sensitive \
-  --json
-
-# 修复 WebSocket / 代理环境
-rcodexmanager repair-network --name codex-f --json
-rcodexmanager repair-network --name codex-f --skip-launchctl --json
-
-# 重置 profile；默认会重置 user-data-dir
-rcodexmanager reset \
-  --name codex-f \
-  --model gpt-5.5 \
-  --reasoning-effort medium \
-  --json
-
-# 保留 user-data-dir，仅重建 CODEX_HOME/config.toml
-rcodexmanager reset --name codex-f --keep-user-data --json
-
-# 删除启动函数；默认保留数据目录
-rcodexmanager delete --name codex-f --json
-
-# 删除启动函数并归档数据目录
-rcodexmanager delete --name codex-f --archive-data --json
+rcodexmanager --json info
+rcodexmanager --json capabilities
+rcodexmanager --json list
+rcodexmanager --json quota --name codex-g
 ```
 
-测试或自动化时可指定隔离路径：
+常用示例：
 
 ```bash
-rcodexmanager \
-  --home /tmp/mock-home \
-  --zshrc /tmp/mock-home/.zshrc \
-  list \
-  --json
+# 一键只读诊断；错误项存在时退出码为 1
+rcodexmanager --json doctor
+
+# 分页读取会话索引，再按需读取详情
+rcodexmanager --json sessions list --profile codex-g --limit 20
+rcodexmanager --json sessions detail --profile codex-g --session-id <id>
+
+# 批量备份认证并只读预检导入包
+rcodexmanager --json auth backup-many --name codex-b --name codex-g --label Snapshot
+rcodexmanager --json auth preview-import --file ./backup.rcodex-auth.json
+
+# 查看远程渠道
+rcodexmanager --json wechat status
+rcodexmanager --json feishu status
+
+# 预览并测试模型路由草稿
+rcodexmanager --json model-route preview --name codex-g --preset glm --model glm-4.6 \
+  --proxy-base-url http://127.0.0.1:15721/v1 \
+  --upstream-base-url https://open.bigmodel.cn/api/paas/v4
+rcodexmanager --json model-route test-draft --name codex-g --preset glm --model glm-4.6 \
+  --upstream-base-url https://open.bigmodel.cn/api/paas/v4 \
+  --api-key-env ZAI_API_KEY
 ```
 
-## JSON 输出约定
+完整参数、JSON 合同和安全说明见 [CLI 文档](docs/cli.md)。
+
+## JSON 合同
 
 成功：
 
@@ -263,10 +233,7 @@ rcodexmanager \
 {
   "ok": true,
   "command": "list",
-  "data": {
-    "profileCount": 4,
-    "profiles": []
-  }
+  "data": {}
 }
 ```
 
@@ -277,65 +244,80 @@ rcodexmanager \
   "ok": false,
   "error": {
     "code": "invalid_arguments",
-    "message": "profile name must start with codex-"
+    "message": "..."
   }
 }
 ```
 
-CLI 会根据错误类型返回非零退出码，自动化脚本建议只解析 `ok`、`command`、`data`、`error` 字段。
+常见退出码：`0` 成功，`1` 操作失败，`2` 参数或确认缺失，`3` 资源不存在。
 
-## 数据边界
+## 数据与安全
 
 | 数据 | 默认位置 |
 | --- | --- |
-| 启动函数 | `~/.zshrc` |
-| rCodexManager 元数据 | `~/.rcodexmanager/profile-metadata.json` |
+| 启动函数 | 自动检测的 `~/.zshrc` 或 `~/.bashrc` |
+| Mac 服务器节点元数据 | `~/.rcodexmanager/server-nodes.json` |
+| profile 元数据 | `~/.rcodexmanager/profile-metadata.json` |
 | 默认 Codex profile | `~/.codex` |
-| 默认 Codex user data | `~/Library/Application Support/Codex` |
-| 新 profile 的 CODEX_HOME | `~/.codex-<suffix>` |
-| 新 profile 的 user data | `~/Library/Application Support/Codex-<TitleSuffix>` |
-| Codex 配置 | `<CODEX_HOME>/config.toml` |
-| Codex 登录态 | `<CODEX_HOME>/auth.json` |
-| Codex 会话索引 | `<CODEX_HOME>/session_index.jsonl` |
-| Codex 会话文件 | `<CODEX_HOME>/sessions/**/*.jsonl` |
+| 自定义 CODEX_HOME | `~/.codex-<suffix>` |
+| 自定义桌面 user data | `~/Library/Application Support/Codex-<TitleSuffix>` |
+| Codex 配置/登录态 | `<CODEX_HOME>/config.toml`、`<CODEX_HOME>/auth.json` |
+| 会话索引/正文 | `<CODEX_HOME>/session_index.jsonl`、`<CODEX_HOME>/sessions/**/*.jsonl` |
+| 认证库 | `~/.rcodexmanager/auth-vault.json`、`auth-vault/*.auth.json` |
+| 微信桥接 | `~/.rcodexmanager/wechat-bridges.json`、`wechat-bridges/` |
+| 飞书绑定/运行时 | `~/.rcodexmanager/feishu-remote.json`、`feishu-remote/` |
 
 安全策略：
 
-- `.zshrc` 写入前会生成 `.zshrc.rcodexmanager-backup-*`。
-- 删除带 `--archive-data` 时，目录会移动为带时间戳的备份目录。
-- 重置会归档旧目录，不直接覆盖删除。
-- 导入账号会备份旧 `auth.json`。
-- 默认 profile 受保护，避免误伤正在使用的主 Codex。
+- Shell 启动配置、`config.toml` 和目标 `auth.json` 在关键写入前备份。
+- 删除 profile 默认只删除启动函数；`--archive-data` 也只是归档目录。
+- 微信解绑归档 token，不直接永久删除。
+- 认证应用、回滚、导入、导出、删除和清理要求明确的敏感操作确认。
+- 模型路由不写 `auth.json`，日志不记录请求正文、token 或 API key。
+- rCodexManager 不会停止无法确认归属的外部代理进程。
+- 服务器连接复用用户已有 SSH 配置和主机校验；rCodexManager 不复制或持久化 SSH 凭据。
+- 远程模型路由拒绝明文 API key，只允许传入服务器环境变量名称。
+- 单次远程 stdout 上限为 `8 MiB`，超限会明确失败并要求缩小请求；不会静默返回不完整 JSON。
 
 ## 开发命令
 
 ```bash
-npm run dev          # 启动 Tauri 桌面开发版
-npm run build        # 构建桌面应用
+npm run dev          # Tauri 桌面开发版
 npm run web:dev      # 仅启动 Vite 前端
 npm run web:build    # TypeScript + Vite 构建
+npm run web:test     # Vitest + React Testing Library
+npm run web:test:e2e # Playwright 多尺寸、多主题验证
 npm run rust-check   # Rust 类型检查
-npm run rust-test    # Rust 测试，包含 CLI contract
-npm run size         # 查看构建缓存和产物体积
-npm run clean        # 清理构建产物
-npm run clean:all    # 清理构建产物和 node_modules
+npm run rust-test    # Rust 单测与 CLI contract
+npm run headless:test  # Linux 无界面 CLI 测试
+npm run headless:package # Linux 无界面节点归档
+npm run build        # 桌面安装包
 ```
 
 ## 项目结构
 
 ```text
-src/               React 前端、主题、API 封装和类型定义
-src-tauri/         Tauri 桌面壳、CLI、profile 管理核心逻辑
-src-tauri/tests/   CLI contract 测试
-scripts/           本地开发和构建脚本
+src/                         React 前端、主题、API 和类型
+src/features/                会话、认证、远程渠道、模型路由、服务器节点弹窗
+src/components/manager/      管理弹窗公共外壳与交互组件
+src-tauri/src/core.rs        桌面与 CLI 共用的业务核心
+src-tauri/src/cli.rs         CLI 参数、帮助和 JSON 输出
+src-tauri/src/remote.rs      Mac 到 Linux 的 SSH JSON 节点协议
+src-tauri/tests/             Rust 集成与 CLI contract 测试
+headless-cli/                不依赖 Tauri/桌面的 Linux CLI crate
+skills/rcodexmanager/         可安装到 Mac/Linux CODEX_HOME 的标准 Skill
+docs/cli.md                  完整 CLI 参考
 ```
 
-## 非目标
+## 边界
 
-- 不管理 Codex 账号、订阅、组织或云端权限。
-- 不解析所有 shell 语法，只针对常见 `name() { ... }` 启动函数。
+- 不管理 Codex 订阅、组织或云端权限。
+- 不解析所有 shell 语法，只支持项目约定的 `name() { ... }` 启动函数。
 - 不默认删除历史会话数据。
-- 不绕过 Codex 的登录机制，只在用户确认后写入本地登录态文件。
+- 不内置完整 provider 商店、余额服务或持久化密钥库。
+- 不接管用户已有的 codex-remote 默认实例或 cc-switch 进程。
+- 不把 Mac 桌面界面搬到 Linux；Linux 只运行无界面 CLI 和用户明确启动的渠道/终端进程。
+- 不提供远程终端画面；需要交互式使用时可在服务器执行 `tmux attach -t rcodexmanager-<profile>`。
 
 ## License
 

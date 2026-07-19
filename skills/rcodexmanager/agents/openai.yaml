@@ -1,0 +1,4 @@
+interface:
+  display_name: "rCodexManager"
+  short_description: "Manage Codex on Mac and Linux nodes"
+  default_prompt: "Use $rcodexmanager to identify whether this is a Mac-local or Linux-node task, inspect the relevant Codex state, and perform the requested operation safely."
