@@ -27,7 +27,7 @@ rcodexmanager desktop
 Source fallback:
 
 ```bash
-cargo run --quiet --manifest-path /Users/ikiru/Documents/r-series-public/rcodexmanager/src-tauri/Cargo.toml -- --json info
+cargo run --quiet --manifest-path /path/to/rcodexmanager/src-tauri/Cargo.toml -- --json info
 ```
 
 Global flags: `--json`, `--home <PATH>`, `--shell-rc <PATH>`. `--zshrc` remains a compatibility alias.
@@ -61,10 +61,10 @@ tar -xzf rcodexmanager-linux-x86_64.tar.gz
 Agent-led Mac-to-Linux inspection may use the configured SSH alias directly:
 
 ```bash
-ssh aliyun-zsrb '/home/admin/.local/bin/rcodexmanager --json info'
-ssh aliyun-zsrb '/home/admin/.local/bin/rcodexmanager --json capabilities'
-ssh aliyun-zsrb '/home/admin/.local/bin/rcodexmanager --json doctor'
-ssh aliyun-zsrb '/home/admin/.local/bin/rcodexmanager --json list'
+ssh demo-server '/home/demo/.local/bin/rcodexmanager --json info'
+ssh demo-server '/home/demo/.local/bin/rcodexmanager --json capabilities'
+ssh demo-server '/home/demo/.local/bin/rcodexmanager --json doctor'
+ssh demo-server '/home/demo/.local/bin/rcodexmanager --json list'
 ```
 
 Keep all stdout machine-readable. Do not prefix/suffix the remote command with status text when parsing JSON.
@@ -87,6 +87,7 @@ rcodexmanager --json copy --source codex-b --name codex-f
 rcodexmanager --json copy --source codex-b --name codex-f --auth-source codex-b --confirm-sensitive
 
 rcodexmanager --json update --name codex-f --alias 主力 --category 平衡 --note 日常使用
+rcodexmanager --json model set --name codex-f --model gpt-5.5 --reasoning-effort xhigh
 rcodexmanager --json launch --name codex-f
 rcodexmanager --json terminate --name codex-f
 rcodexmanager --json stop --name codex-f
@@ -97,7 +98,7 @@ rcodexmanager --json delete --name codex-f
 rcodexmanager --json delete --name codex-f --archive-data
 ```
 
-`stop` aliases `terminate`. `--server` writes a Linux-friendly launcher. Linux `launch` uses a persistent `rcodexmanager-<profile>` tmux session and status maps processes by `CODEX_HOME`. Default `codex` is protected.
+`stop` aliases `terminate`. `--server` writes a Linux-friendly launcher. Linux `launch` uses a persistent `rcodexmanager-<profile>` tmux session and status maps processes by `CODEX_HOME`. `model set` backs up and changes only model fields, preserving auth, sessions, provider routing, and User Data. Default `codex` is protected.
 
 ## Sessions
 

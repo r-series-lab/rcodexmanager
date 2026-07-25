@@ -76,6 +76,16 @@ If a session changed between list/detail, pass its `updatedAt` to prevent stale 
 
 If apply fails, do not manually copy token files. Report the error and preserved backup.
 
+## Sync A Mac Profile To Linux
+
+1. Probe the server node and refresh its Profile list.
+2. Choose a local non-default `codex-*` Profile and a new server Profile name.
+3. Confirm that only model settings, alias, and category are copied by default; sessions and desktop User Data stay local.
+4. If authentication is requested, require explicit sensitive confirmation and stream the auth body over SSH stdin. Never place it in a command argument, task log, or node metadata.
+5. Refresh the server Profile list and verify the target account and stopped state before launch.
+
+If Profile creation succeeds but auth import fails, do not blindly retry creation. Refresh the server list first, then repair authentication on the existing target.
+
 ## Import An Auth Package
 
 1. Run `auth preview-import --file <path>`.

@@ -1,6 +1,6 @@
 [package]
 name = "rcodexmanager"
-version = "0.1.0"
+version = "0.1.2"
 description = "A local Codex profile manager for independent desktop instances"
 authors = ["r"]
 edition = "2021"
@@ -17,6 +17,7 @@ base64 = "0.22.1"
 chrono = { version = "0.4.42", features = ["clock"] }
 clap = { version = "4.5.53", features = ["derive"] }
 dirs = "6.0.0"
+glob = "0.3.3"
 reqwest = { version = "0.12.24", default-features = false, features = ["blocking", "json", "rustls-tls"] }
 serde = { version = "1.0.228", features = ["derive"] }
 serde_json = "1.0.145"

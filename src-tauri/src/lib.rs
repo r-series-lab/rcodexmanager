@@ -13,6 +13,16 @@ async fn list_server_nodes_command() -> Result<remote::ServerNodeReport, String>
 }
 
 #[tauri::command]
+async fn list_ssh_hosts_command() -> Result<remote::SshHostReport, String> {
+    tauri::async_runtime::spawn_blocking(|| {
+        let context = core::ProfileContext::from_options(None, None)?;
+        remote::list_ssh_hosts(&context)
+    })
+    .await
+    .map_err(|error| error.to_string())?
+}
+
+#[tauri::command]
 async fn upsert_server_node_command(
     input: remote::UpsertServerNodeInput,
 ) -> Result<remote::ServerNodeReport, String> {
@@ -55,6 +65,18 @@ async fn run_server_node_operation_command(
     tauri::async_runtime::spawn_blocking(move || {
         let context = core::ProfileContext::from_options(None, None)?;
         remote::run_server_node_operation(&context, input)
+    })
+    .await
+    .map_err(|error| error.to_string())?
+}
+
+#[tauri::command]
+async fn sync_server_profile_command(
+    input: remote::SyncServerProfileInput,
+) -> Result<remote::SyncServerProfileReport, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let context = core::ProfileContext::from_options(None, None)?;
+        remote::sync_server_profile(&context, input)
     })
     .await
     .map_err(|error| error.to_string())?
@@ -598,10 +620,12 @@ pub fn run() {
     tauri::Builder::default()
         .invoke_handler(tauri::generate_handler![
             list_server_nodes_command,
+            list_ssh_hosts_command,
             upsert_server_node_command,
             delete_server_node_command,
             probe_server_node_command,
             run_server_node_operation_command,
+            sync_server_profile_command,
             run_doctor_command,
             list_profiles_command,
             list_profile_sessions_command,

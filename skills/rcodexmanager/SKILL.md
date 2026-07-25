@@ -32,14 +32,14 @@ rcodexmanager --json info
 Otherwise use the source checkout:
 
 ```bash
-cd /Users/ikiru/Documents/r-series-public/rcodexmanager
+cd /path/to/rcodexmanager
 cargo run --quiet --manifest-path ./src-tauri/Cargo.toml -- --json info
 ```
 
 In source-checkout examples below, replace `rcodexmanager` with:
 
 ```bash
-cargo run --quiet --manifest-path /Users/ikiru/Documents/r-series-public/rcodexmanager/src-tauri/Cargo.toml --
+cargo run --quiet --manifest-path /path/to/rcodexmanager/src-tauri/Cargo.toml --
 ```
 
 Keep the global `--json` flag after `--` when using `cargo run`.
@@ -47,8 +47,8 @@ Keep the global `--json` flag after `--` when using `cargo run`.
 On a Linux server, prefer the installed headless node:
 
 ```bash
-ssh aliyun-zsrb '/home/admin/.local/bin/rcodexmanager --json info'
-ssh aliyun-zsrb '/home/admin/.local/bin/rcodexmanager --json doctor'
+ssh demo-server '/home/demo/.local/bin/rcodexmanager --json info'
+ssh demo-server '/home/demo/.local/bin/rcodexmanager --json doctor'
 ```
 
 The headless build reports `desktopAvailable=false`. It auto-detects `.zshrc` or `.bashrc`; use `--shell-rc <PATH>` only when detection is wrong.
@@ -111,7 +111,8 @@ Use the desktop app for:
 2. For create/copy, confirm the new command starts with `codex-` and paths do not collide.
 3. For launch, avoid starting a duplicate when `isRunning=true`.
 4. For terminate, target the exact custom profile; default `codex` cannot be safely terminated.
-5. For reset/delete, explain whether user data is retained or archived before executing.
+5. For a model-only change, use `model set` on a stopped custom profile and verify `model` plus `modelProvider` from a fresh `list`. Do not use `reset` for this.
+6. For reset/delete, explain whether user data is retained or archived before executing.
 
 On Linux, managed launch uses a `rcodexmanager-<profile>` tmux session. After launch/terminate, verify `isRunning` from a fresh `list`; do not infer success from process creation alone.
 
@@ -123,6 +124,7 @@ On Linux, managed launch uses a `rcodexmanager-<profile>` tmux session. After la
 4. Load only the selected tab/resource: profiles, sessions, auth, route, channel, or diagnostics.
    The App keeps non-secret resource metadata in process memory for 30 seconds; use refresh when evidence must be current.
 5. Treat remote default and running profiles with the same protections as local profiles.
+6. For Mac-to-Linux profile sync, create a new stopped server profile first. Transfer auth only after explicit confirmation, only over SSH stdin, and verify the new profile from a fresh server list. Never copy sessions or desktop User Data.
 6. For remote auth/route writes, preview or select a valid backup, confirm once, then refresh state.
 7. For server launch, require `tmux`; viewing and configuration inspection remain available without it.
 8. Report the node, profile, transition, and backup evidence without exposing remote paths that contain credentials.
@@ -182,7 +184,7 @@ When the App reports a possible version mismatch, compare `info` and `capabiliti
 Only build an installer when explicitly requested. For normal changes run the smallest relevant checks first:
 
 ```bash
-cd /Users/ikiru/Documents/r-series-public/rcodexmanager
+cd /path/to/rcodexmanager
 npm run web:build
 npm run rust-check
 npm run rust-test

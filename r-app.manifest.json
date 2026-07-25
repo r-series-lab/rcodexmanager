@@ -1,0 +1,291 @@
+{
+  "$schema": "https://r.rurie.top/schemas/r-app.manifest.schema.json",
+  "schemaVersion": 1,
+  "identity": {
+    "slug": "rcodexmanager",
+    "repo": "rcodexmanager",
+    "name": "rCodexManager",
+    "binary": "rcodexmanager",
+    "package": "rcodexmanager",
+    "coreCrate": "rcodexmanager",
+    "tauriCrate": "rcodexmanager",
+    "identifier": "app.rseries.rcodexmanager"
+  },
+  "product": {
+    "architecture": "modular-workbench",
+    "category": "Codex 多 Profile 工作台",
+    "tagline": "把隔离的 Codex 工作环境收进一个控制台。",
+    "description": "统一管理本地 Profile、历史会话、登录态备份、远程渠道、模型路由，以及通过 SSH 连接的 Linux Codex 节点。",
+    "stage": "开发预览",
+    "localFirst": true,
+    "nonGoals": [
+      "合并不同 Profile 的 CODEX_HOME、会话和登录态",
+      "保存 SSH 私钥或把认证内容写入命令参数和诊断",
+      "绕过确认直接执行认证、路由或远端破坏性写入"
+    ]
+  },
+  "website": {
+    "publish": true,
+    "index": "02",
+    "accent": "#3978f6",
+    "accentSoft": "#dfe9ff",
+    "platforms": ["macOS", "Windows", "Linux CLI"],
+    "formats": ["Tauri", "Rust", "JSON CLI", "SSH"],
+    "facts": [
+      { "label": "核心对象", "value": "隔离 Codex Profile" },
+      { "label": "远端协议", "value": "SSH + 单对象 JSON" },
+      { "label": "敏感数据", "value": "本机保存与脱敏诊断" }
+    ],
+    "capabilities": [
+      {
+        "icon": "Layers3",
+        "title": "Profile 工作区",
+        "body": "发现、创建、复制、启动和归档相互隔离的 Codex 环境，并快速读取关键状态。"
+      },
+      {
+        "icon": "MessagesSquare",
+        "title": "会话中心",
+        "body": "分页搜索会话索引，只有选中记录后才读取对应 JSONL 正文。"
+      },
+      {
+        "icon": "KeyRound",
+        "title": "认证库",
+        "body": "对登录态执行备份、预检、应用和回滚，所有写入都有保护与明确确认。"
+      },
+      {
+        "icon": "RadioTower",
+        "title": "远程渠道",
+        "body": "为指定 Profile 管理微信与飞书连接，同时保持外部运行时和凭据边界清楚。"
+      },
+      {
+        "icon": "Route",
+        "title": "模型路由",
+        "body": "预览、测试、应用和恢复第三方模型路由，写配置前备份且不修改 auth.json。"
+      },
+      {
+        "icon": "ServerCog",
+        "title": "Linux 节点",
+        "body": "从 Mac 通过既有 SSH 配置管理无界面节点，不开放额外管理端口。"
+      }
+    ],
+    "workflow": [
+      {
+        "label": "发现",
+        "title": "汇总本地与远端 Profile",
+        "body": "读取默认目录、Shell 启动函数和已配置 SSH 节点，建立统一状态视图。"
+      },
+      {
+        "label": "诊断",
+        "title": "先运行只读 Doctor",
+        "body": "检查启动、路径、进程、认证、路由、代理和渠道，并生成脱敏建议。"
+      },
+      {
+        "label": "管理",
+        "title": "进入对应管理域处理",
+        "body": "按需加载会话、认证、渠道、路由或服务器节点，避免首页预取敏感正文。"
+      },
+      {
+        "label": "自动化",
+        "title": "复用同一套 JSON 合同",
+        "body": "桌面端与 CLI 共享 Rust 核心，Agent 可以按能力发现和安全顺序执行。"
+      }
+    ],
+    "boundary": {
+      "title": "高权限动作必须保持可见、可回滚",
+      "body": "认证、配置和远端写入均有运行状态保护、备份和显式确认。应用不保存 SSH 凭据，不把密钥写入参数或诊断，也不接管来源不明的外部进程。"
+    },
+    "releaseSummary": "0.1.2 增加服务器 Profile 的模型与 Provider 反显、安全模型切换和远端版本兼容提示。",
+    "screenshots": []
+  },
+  "documentation": [
+    {
+      "id": "overview",
+      "label": "产品与使用概览",
+      "description": "Profile、会话、认证、渠道、模型路由、服务器节点与安全边界。",
+      "group": "开始使用",
+      "source": "README.md"
+    },
+    {
+      "id": "cli",
+      "label": "CLI 完整参考",
+      "description": "命令、JSON 合同、远端节点和 Agent 安全执行顺序。",
+      "group": "自动化",
+      "source": "docs/cli.md"
+    },
+    {
+      "id": "release-workflow",
+      "label": "发布流程",
+      "description": "源码检查、服务器 Tag、桌面与 Headless 云端构建以及 Draft Release 边界。",
+      "group": "版本",
+      "source": "docs/RELEASE_WORKFLOW.md"
+    },
+    {
+      "id": "changelog",
+      "label": "更新日志",
+      "description": "按版本记录功能、安全、兼容性和文档变化。",
+      "group": "版本",
+      "source": "CHANGELOG.md"
+    }
+  ],
+  "localization": {
+    "defaultLocale": "zh",
+    "translations": {
+      "en": {
+        "product": {
+          "category": "Multi-profile Codex workbench",
+          "tagline": "Bring isolated Codex environments into one control surface.",
+          "description": "Manage local profiles, session history, authentication backups, remote messaging channels, model routing, and headless Linux Codex nodes over SSH.",
+          "stage": "Development preview",
+          "nonGoals": [
+            "Merge CODEX_HOME, sessions, or authentication state across profiles",
+            "Store SSH private keys or expose credentials in command arguments and diagnostics",
+            "Run destructive authentication, routing, or remote writes without explicit confirmation"
+          ]
+        },
+        "website": {
+          "facts": [
+            { "label": "Core object", "value": "Isolated Codex profile" },
+            { "label": "Remote protocol", "value": "SSH + single-object JSON" },
+            { "label": "Sensitive data", "value": "Local storage and redacted diagnostics" }
+          ],
+          "capabilities": [
+            {
+              "icon": "Layers3",
+              "title": "Profile workspace",
+              "body": "Discover, create, copy, launch, stop, and archive isolated Codex environments while keeping their paths, sessions, and login state separate."
+            },
+            {
+              "icon": "MessagesSquare",
+              "title": "Session center",
+              "body": "Search a bounded, paginated session index and load an individual JSONL transcript only after the user selects it."
+            },
+            {
+              "icon": "KeyRound",
+              "title": "Authentication vault",
+              "body": "Back up, preview, apply, and roll back authorized login state with runtime protection, recovery copies, and explicit confirmation."
+            },
+            {
+              "icon": "RadioTower",
+              "title": "Remote channels",
+              "body": "Manage WeChat and Feishu connections for a selected profile while keeping third-party runtimes and credentials outside the app boundary."
+            },
+            {
+              "icon": "Route",
+              "title": "Model routing",
+              "body": "Preview, test, apply, and restore third-party model routes with configuration backups and no writes to auth.json."
+            },
+            {
+              "icon": "ServerCog",
+              "title": "Linux nodes",
+              "body": "Manage headless Codex nodes from macOS through existing SSH configuration without opening an additional management port."
+            }
+          ],
+          "workflow": [
+            {
+              "label": "Discover",
+              "title": "Collect local and remote profiles",
+              "body": "Read default directories, shell launch functions, and configured SSH nodes to establish one status view."
+            },
+            {
+              "label": "Diagnose",
+              "title": "Run the read-only doctor first",
+              "body": "Check launch configuration, paths, processes, authentication, routing, proxies, and channels with redacted recommendations."
+            },
+            {
+              "label": "Manage",
+              "title": "Enter the relevant management domain",
+              "body": "Load sessions, authentication, channels, routing, or server nodes only when needed instead of prefetching sensitive content."
+            },
+            {
+              "label": "Automate",
+              "title": "Reuse the same JSON contract",
+              "body": "The desktop app and CLI share the Rust core so agents can discover capabilities and follow the same guarded action order."
+            }
+          ],
+          "boundary": {
+            "title": "Privileged actions remain visible and recoverable",
+            "body": "Authentication, configuration, and remote writes use runtime guards, backups, and explicit confirmation. The app does not store SSH credentials, place secrets in arguments or diagnostics, or take over external processes whose ownership cannot be established."
+          },
+          "releaseSummary": "Version 0.1.2 adds server-profile model and provider visibility, guarded model switching, and remote version compatibility guidance."
+        },
+        "documentation": [
+          {
+            "id": "overview",
+            "label": "Product and usage overview",
+            "description": "Profiles, sessions, authentication, channels, model routing, Linux nodes, CLI, and security boundaries.",
+            "group": "Getting started",
+            "source": "README_EN.md",
+            "reviewedForVersion": "0.1.2"
+          },
+          {
+            "id": "release-workflow",
+            "label": "Release workflow",
+            "description": "Source checks, server-created Tags, desktop and headless builds, and Draft Release review.",
+            "group": "Releases",
+            "source": "docs/RELEASE_WORKFLOW_EN.md",
+            "reviewedForVersion": "0.1.2"
+          },
+          {
+            "id": "changelog",
+            "label": "Changelog",
+            "description": "Features, security, compatibility, and documentation changes by version.",
+            "group": "Releases",
+            "source": "CHANGELOG_EN.md",
+            "reviewedForVersion": "0.1.2"
+          }
+        ]
+      }
+    }
+  },
+  "cli": {
+    "contractVersion": 1,
+    "jsonFlagPosition": "global-before-command",
+    "infoCommand": ["--json", "info"],
+    "capabilitiesCommand": ["--json", "capabilities"],
+    "doctorCommand": ["--json", "doctor"],
+    "domains": [
+      "profiles",
+      "sessions",
+      "auth",
+      "model",
+      "wechat",
+      "feishu",
+      "model-route",
+      "network"
+    ],
+    "highRiskPolicy": "认证导入、Profile 删除或重置、模型路由写入和远端配置变更必须先检查运行状态、生成备份并要求显式敏感操作确认。"
+  },
+  "runtime": {
+    "configKind": "mixed",
+    "configPath": "~/.codex*/config.toml 与 ~/.zshrc 或 ~/.bashrc",
+    "stateKind": "files",
+    "storagePath": "~/.rcodexmanager/",
+    "secretPolicy": "认证正文仅保存在本机受限文件中；SSH 凭据沿用系统配置，密钥和令牌不得进入参数、节点元数据、历史或诊断。"
+  },
+  "quality": {
+    "requiredScripts": [
+      "dev",
+      "build",
+      "check",
+      "manifest:check",
+      "manifest:check:release",
+      "repo:check",
+      "release:check",
+      "rustfmt:check",
+      "web:build",
+      "web:test",
+      "web:test:e2e",
+      "rust-check",
+      "rust-test",
+      "headless:test",
+      "test:scripts"
+    ],
+    "validationCommands": [
+      "npm run check",
+      "npm run manifest:check:release",
+      "npm run release:check",
+      "npm run web:test:e2e",
+      "npm run skill:check"
+    ]
+  }
+}

@@ -7,6 +7,7 @@ export interface ProfileInfo {
   userDataDir: string;
   configPath: string;
   model: string | null;
+  modelProvider?: string | null;
   reasoningEffort: string | null;
   homeExists: boolean;
   userDataExists: boolean;
@@ -127,6 +128,21 @@ export interface ServerNodeReport {
   nodes: ServerNodeConfig[];
 }
 
+export interface SshHostOption {
+  alias: string;
+  hostname: string | null;
+  user: string | null;
+  port: number | null;
+  sourcePath: string;
+}
+
+export interface SshHostReport {
+  generatedAt: string;
+  configPath: string;
+  configExists: boolean;
+  hosts: SshHostOption[];
+}
+
 export interface UpsertServerNodeInput {
   id: string | null;
   name: string;
@@ -172,6 +188,7 @@ export type ServerNodeOperation =
   | { kind: "create-profile"; input: CreateProfileInput }
   | { kind: "launch-profile"; profileName: string }
   | { kind: "terminate-profile"; profileName: string }
+  | { kind: "update-profile-model"; input: UpdateProfileModelInput }
   | { kind: "create-auth-backup"; profileName: string; label: string | null }
   | {
       kind: "apply-auth-backup";
@@ -185,9 +202,34 @@ export type ServerNodeOperation =
   | { kind: "model-route-apply"; input: ApplyModelRouteInput }
   | { kind: "model-route-restore"; profileName: string; confirmSensitive: boolean };
 
+export interface UpdateProfileModelInput {
+  profileName: string;
+  model: string;
+  reasoningEffort: string | null;
+}
+
 export interface RunServerNodeOperationInput {
   nodeId: string;
   operation: ServerNodeOperation;
+}
+
+export interface SyncServerProfileInput {
+  nodeId: string;
+  sourceProfileName: string;
+  targetProfileName: string;
+  syncAuth: boolean;
+  confirmSensitive: boolean;
+}
+
+export interface SyncServerProfileReport {
+  nodeId: string;
+  operationId: string;
+  generatedAt: string;
+  sourceProfileName: string;
+  targetProfileName: string;
+  authSynced: boolean;
+  sourceAccount: CodexAccountInfo | null;
+  profile: ProfileInfo;
 }
 
 export interface ServerNodeOperationReport<T = unknown> {

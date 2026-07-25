@@ -1,0 +1,6 @@
+# Local visual QA, authentication captures, and generated archives never enter
+# the clean publishing snapshot.
+/audit-before-*.png
+/design-qa.md
+/tmp/
+/test-results/

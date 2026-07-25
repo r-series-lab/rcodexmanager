@@ -11,9 +11,15 @@ node_modules
 dist
 dist-ssr
 target
+test-results
+tmp
 *.local
 .env
 .env.*
+
+# Local visual audit captures
+/audit-before-*.png
+/design-qa.md
 
 # Editor directories and files
 .vscode/*

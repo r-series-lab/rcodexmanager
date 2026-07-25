@@ -1,13 +1,15 @@
 use crate::core::{
-    ApplyModelRouteInput, CreateProfileInput, ListProfileSessionsInput, ModelRoutePreset,
-    PreviewModelRouteInput, ProfileContext, ReadProfileSessionDetailInput,
+    list_profiles, ApplyModelRouteInput, CodexAccountInfo, CreateProfileInput,
+    ListProfileSessionsInput, ModelRoutePreset, PreviewModelRouteInput, ProfileContext,
+    ReadProfileSessionDetailInput, UpdateProfileModelInput,
 };
 use chrono::Utc;
+use glob::glob;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::collections::BTreeSet;
 use std::fs;
-use std::io::Read;
+use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -64,6 +66,25 @@ pub struct ServerNodeReport {
 
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
+pub struct SshHostOption {
+    pub alias: String,
+    pub hostname: Option<String>,
+    pub user: Option<String>,
+    pub port: Option<u16>,
+    pub source_path: String,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SshHostReport {
+    pub generated_at: String,
+    pub config_path: String,
+    pub config_exists: bool,
+    pub hosts: Vec<SshHostOption>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
 pub struct ServerNodeStatus {
     pub node_id: String,
     pub checked_at: String,
@@ -94,7 +115,11 @@ pub struct ProbeServerNodeInput {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(tag = "kind", rename_all = "kebab-case")]
+#[serde(
+    tag = "kind",
+    rename_all = "kebab-case",
+    rename_all_fields = "camelCase"
+)]
 pub enum ServerNodeOperation {
     Doctor,
     ListProfiles,
@@ -132,6 +157,9 @@ pub enum ServerNodeOperation {
     TerminateProfile {
         profile_name: String,
     },
+    UpdateProfileModel {
+        input: UpdateProfileModelInput,
+    },
     CreateAuthBackup {
         profile_name: String,
         label: Option<String>,
@@ -164,6 +192,31 @@ pub enum ServerNodeOperation {
 pub struct RunServerNodeOperationInput {
     pub node_id: String,
     pub operation: ServerNodeOperation,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SyncServerProfileInput {
+    pub node_id: String,
+    pub source_profile_name: String,
+    pub target_profile_name: String,
+    #[serde(default)]
+    pub sync_auth: bool,
+    #[serde(default)]
+    pub confirm_sensitive: bool,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SyncServerProfileReport {
+    pub node_id: String,
+    pub operation_id: String,
+    pub generated_at: String,
+    pub source_profile_name: String,
+    pub target_profile_name: String,
+    pub auth_synced: bool,
+    pub source_account: Option<CodexAccountInfo>,
+    pub profile: Value,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -222,6 +275,51 @@ impl Drop for ServerNodeWriteGuard {
 pub fn list_server_nodes(context: &ProfileContext) -> Result<ServerNodeReport, String> {
     let store = read_server_node_store(context)?;
     Ok(report_from_store(context, store))
+}
+
+pub fn list_ssh_hosts(context: &ProfileContext) -> Result<SshHostReport, String> {
+    let ssh_dir = context.home_dir.join(".ssh");
+    let config_path = ssh_dir.join("config");
+    if !config_path.is_file() {
+        return Ok(SshHostReport {
+            generated_at: Utc::now().to_rfc3339(),
+            config_path: display_home_path(&context.home_dir, &config_path),
+            config_exists: false,
+            hosts: Vec::new(),
+        });
+    }
+
+    let mut visited = BTreeSet::new();
+    let mut seen_aliases = BTreeSet::new();
+    let mut aliases = Vec::new();
+    collect_ssh_host_aliases(
+        &config_path,
+        &ssh_dir,
+        &mut visited,
+        &mut seen_aliases,
+        &mut aliases,
+    )?;
+
+    let hosts = aliases
+        .into_iter()
+        .map(|(alias, source_path)| {
+            let (hostname, user, port) = resolve_ssh_host(&config_path, &alias);
+            SshHostOption {
+                alias,
+                hostname,
+                user,
+                port,
+                source_path: display_home_path(&context.home_dir, &source_path),
+            }
+        })
+        .collect();
+
+    Ok(SshHostReport {
+        generated_at: Utc::now().to_rfc3339(),
+        config_path: display_home_path(&context.home_dir, &config_path),
+        config_exists: true,
+        hosts,
+    })
 }
 
 pub fn upsert_server_node(
@@ -302,6 +400,171 @@ pub fn run_server_node_operation(
     input: RunServerNodeOperationInput,
 ) -> Result<ServerNodeOperationReport, String> {
     run_server_node_operation_with_ssh(context, input, Path::new("ssh"))
+}
+
+pub fn sync_server_profile(
+    context: &ProfileContext,
+    input: SyncServerProfileInput,
+) -> Result<SyncServerProfileReport, String> {
+    sync_server_profile_with_ssh(context, input, Path::new("ssh"))
+}
+
+pub fn sync_server_profile_with_ssh(
+    context: &ProfileContext,
+    input: SyncServerProfileInput,
+    ssh_binary: &Path,
+) -> Result<SyncServerProfileReport, String> {
+    let operation_id = next_server_node_operation_id();
+    let target_name = input.target_profile_name.trim();
+    if !target_name.starts_with("codex-")
+        || target_name.len() > 80
+        || !target_name.chars().all(|character| {
+            character.is_ascii_lowercase() || character.is_ascii_digit() || character == '-'
+        })
+    {
+        return Err(format!(
+            "{operation_id}: target profile name must start with codex- and use lowercase letters, numbers, or hyphens"
+        ));
+    }
+    if input.sync_auth && !input.confirm_sensitive {
+        return Err(format!(
+            "{operation_id}: explicit confirmation is required before syncing authentication"
+        ));
+    }
+
+    let source_report = list_profiles(context)?;
+    let source = source_report
+        .profiles
+        .into_iter()
+        .find(|profile| profile.name == input.source_profile_name)
+        .ok_or_else(|| {
+            format!(
+                "{operation_id}: local source profile not found: {}",
+                input.source_profile_name
+            )
+        })?;
+    let auth_bytes = if input.sync_auth {
+        let auth_path = PathBuf::from(&source.codex_home).join("auth.json");
+        let bytes = fs::read(&auth_path).map_err(|error| {
+            format!(
+                "{operation_id}: failed to read local auth.json for {}: {error}",
+                source.name
+            )
+        })?;
+        if bytes.len() > 2 * 1024 * 1024 {
+            return Err(format!(
+                "{operation_id}: local auth.json is unexpectedly large; refusing to transfer it"
+            ));
+        }
+        serde_json::from_slice::<Value>(&bytes).map_err(|error| {
+            format!(
+                "{operation_id}: local auth.json for {} is invalid JSON: {error}",
+                source.name
+            )
+        })?;
+        Some(bytes)
+    } else {
+        None
+    };
+
+    let node = find_server_node(context, &input.node_id)?;
+    let _write_guard = acquire_server_node_write_guard(&node.id)
+        .map_err(|message| format!("{operation_id}: {message}"))?;
+    let create_arguments = operation_arguments(ServerNodeOperation::CreateProfile {
+        input: CreateProfileInput {
+            name: target_name.to_string(),
+            codex_home: None,
+            user_data_dir: None,
+            model: source.model.clone(),
+            reasoning_effort: source.reasoning_effort.clone(),
+            alias: source.alias.clone(),
+            category: Some(source.category.clone()),
+            note: source.note.clone(),
+            launcher_kind: None,
+        },
+    })?;
+    let create_report = run_remote_cli(
+        ssh_binary,
+        &node,
+        &create_arguments,
+        SSH_WRITE_TIMEOUT,
+        format!("{operation_id}-create"),
+        Utc::now().to_rfc3339(),
+    )?;
+    if !create_report.ok {
+        return Err(format!(
+            "{operation_id}: {}",
+            server_operation_error(&create_report, "failed to create the server profile")
+        ));
+    }
+
+    if let Some(auth_bytes) = auth_bytes.as_deref() {
+        let remote_command = format!(
+            "set -eu; umask 077; tmp_dir=$(mktemp -d \"${{TMPDIR:-/tmp}}/rcodexmanager-auth-sync.XXXXXX\"); trap 'rm -rf \"$tmp_dir\"' EXIT HUP INT TERM; cat > \"$tmp_dir/auth.json\"; chmod 600 \"$tmp_dir/auth.json\"; {} --json import-auth --name {} --source \"$tmp_dir/auth.json\" --confirm-sensitive",
+            shell_quote(&node.remote_binary),
+            shell_quote(target_name),
+        );
+        let output = run_ssh_with_input(
+            ssh_binary,
+            &node,
+            &remote_command,
+            SSH_WRITE_TIMEOUT,
+            Some(auth_bytes),
+        )?;
+        let auth_report = remote_cli_report_from_output(
+            &node,
+            output,
+            SSH_WRITE_TIMEOUT,
+            format!("{operation_id}-auth"),
+            Utc::now().to_rfc3339(),
+        )?;
+        if !auth_report.ok {
+            return Err(format!(
+                "{operation_id}: server profile was created, but authentication sync failed: {}",
+                server_operation_error(&auth_report, "remote authentication import failed")
+            ));
+        }
+    }
+
+    let verify_report = run_remote_cli(
+        ssh_binary,
+        &node,
+        &["list".to_string()],
+        SSH_READ_TIMEOUT,
+        format!("{operation_id}-verify"),
+        Utc::now().to_rfc3339(),
+    )?;
+    if !verify_report.ok {
+        return Err(format!(
+            "{operation_id}: profile sync completed, but verification failed: {}",
+            server_operation_error(&verify_report, "remote profile verification failed")
+        ));
+    }
+    let profile = verify_report
+        .data
+        .as_ref()
+        .and_then(|data| data.get("profiles"))
+        .and_then(Value::as_array)
+        .and_then(|profiles| {
+            profiles
+                .iter()
+                .find(|profile| profile.get("name").and_then(Value::as_str) == Some(target_name))
+        })
+        .cloned()
+        .ok_or_else(|| {
+            format!("{operation_id}: synced profile was not returned by verification")
+        })?;
+
+    Ok(SyncServerProfileReport {
+        node_id: node.id,
+        operation_id,
+        generated_at: Utc::now().to_rfc3339(),
+        source_profile_name: source.name,
+        target_profile_name: target_name.to_string(),
+        auth_synced: input.sync_auth,
+        source_account: source.account,
+        profile,
+    })
 }
 
 pub fn probe_server_node_with_ssh(
@@ -432,6 +695,7 @@ fn operation_is_write(operation: &ServerNodeOperation) -> bool {
             | ServerNodeOperation::CreateProfile { .. }
             | ServerNodeOperation::LaunchProfile { .. }
             | ServerNodeOperation::TerminateProfile { .. }
+            | ServerNodeOperation::UpdateProfileModel { .. }
             | ServerNodeOperation::CreateAuthBackup { .. }
             | ServerNodeOperation::ApplyAuthBackup { .. }
             | ServerNodeOperation::WechatStart { .. }
@@ -544,6 +808,17 @@ fn operation_arguments(operation: ServerNodeOperation) -> Result<Vec<String>, St
         ServerNodeOperation::TerminateProfile { profile_name } => {
             arguments.extend(["terminate".to_string(), "--name".to_string(), profile_name]);
         }
+        ServerNodeOperation::UpdateProfileModel { input } => {
+            arguments.extend([
+                "model".to_string(),
+                "set".to_string(),
+                "--name".to_string(),
+                input.profile_name,
+                "--model".to_string(),
+                input.model,
+            ]);
+            push_option(&mut arguments, "--reasoning-effort", input.reasoning_effort);
+        }
         ServerNodeOperation::CreateAuthBackup {
             profile_name,
             label,
@@ -645,6 +920,16 @@ fn run_remote_cli(
         .collect::<Vec<_>>()
         .join(" ");
     let output = run_ssh(ssh_binary, node, &remote_command, timeout)?;
+    remote_cli_report_from_output(node, output, timeout, operation_id, started_at)
+}
+
+fn remote_cli_report_from_output(
+    node: &ServerNodeConfig,
+    output: ProcessOutput,
+    timeout: Duration,
+    operation_id: String,
+    started_at: String,
+) -> Result<ServerNodeOperationReport, String> {
     if output.stdout_truncated {
         return Err(format!(
             "server node output exceeded {} MiB; narrow the request and retry",
@@ -679,11 +964,32 @@ fn run_remote_cli(
     })
 }
 
+fn server_operation_error(report: &ServerNodeOperationReport, fallback: &str) -> String {
+    report
+        .error
+        .as_ref()
+        .and_then(|error| error.get("message"))
+        .and_then(Value::as_str)
+        .filter(|message| !message.trim().is_empty())
+        .unwrap_or(fallback)
+        .to_string()
+}
+
 fn run_ssh(
     ssh_binary: &Path,
     node: &ServerNodeConfig,
     remote_command: &str,
     timeout: Duration,
+) -> Result<ProcessOutput, String> {
+    run_ssh_with_input(ssh_binary, node, remote_command, timeout, None)
+}
+
+fn run_ssh_with_input(
+    ssh_binary: &Path,
+    node: &ServerNodeConfig,
+    remote_command: &str,
+    timeout: Duration,
+    input: Option<&[u8]>,
 ) -> Result<ProcessOutput, String> {
     let started = Instant::now();
     let mut child = Command::new(ssh_binary)
@@ -699,11 +1005,25 @@ fn run_ssh(
             &node.ssh_target,
             remote_command,
         ])
-        .stdin(Stdio::null())
+        .stdin(if input.is_some() {
+            Stdio::piped()
+        } else {
+            Stdio::null()
+        })
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .spawn()
         .map_err(|error| format!("failed to start ssh: {error}"))?;
+
+    if let Some(input) = input {
+        let mut stdin = child
+            .stdin
+            .take()
+            .ok_or_else(|| "failed to open ssh stdin".to_string())?;
+        stdin
+            .write_all(input)
+            .map_err(|error| format!("failed to stream sensitive input over ssh: {error}"))?;
+    }
 
     let stdout = child
         .stdout
@@ -855,6 +1175,212 @@ fn find_server_node(context: &ProfileContext, node_id: &str) -> Result<ServerNod
         .ok_or_else(|| format!("server node not found: {node_id}"))
 }
 
+fn collect_ssh_host_aliases(
+    config_path: &Path,
+    ssh_dir: &Path,
+    visited: &mut BTreeSet<PathBuf>,
+    seen_aliases: &mut BTreeSet<String>,
+    aliases: &mut Vec<(String, PathBuf)>,
+) -> Result<(), String> {
+    let visit_key = fs::canonicalize(config_path).unwrap_or_else(|_| config_path.to_path_buf());
+    if !visited.insert(visit_key) || !config_path.is_file() {
+        return Ok(());
+    }
+
+    let body = fs::read_to_string(config_path).map_err(|error| {
+        format!(
+            "failed to read SSH config {}: {error}",
+            config_path.display()
+        )
+    })?;
+    for raw_line in body.lines() {
+        let line = strip_ssh_comment(raw_line).trim();
+        let Some((keyword, arguments)) = ssh_keyword_and_arguments(line) else {
+            continue;
+        };
+
+        if keyword.eq_ignore_ascii_case("host") {
+            for alias in split_ssh_tokens(arguments) {
+                if is_literal_ssh_host_alias(&alias) && seen_aliases.insert(alias.clone()) {
+                    aliases.push((alias, config_path.to_path_buf()));
+                }
+            }
+        } else if keyword.eq_ignore_ascii_case("include") {
+            for include in split_ssh_tokens(arguments) {
+                for included_path in expand_ssh_include(&include, ssh_dir)? {
+                    collect_ssh_host_aliases(
+                        &included_path,
+                        ssh_dir,
+                        visited,
+                        seen_aliases,
+                        aliases,
+                    )?;
+                }
+            }
+        }
+    }
+    Ok(())
+}
+
+fn strip_ssh_comment(value: &str) -> &str {
+    let mut quote = None;
+    let mut escaped = false;
+    for (index, character) in value.char_indices() {
+        if escaped {
+            escaped = false;
+            continue;
+        }
+        if character == '\\' {
+            escaped = true;
+            continue;
+        }
+        if matches!(character, '\'' | '"') {
+            if quote == Some(character) {
+                quote = None;
+            } else if quote.is_none() {
+                quote = Some(character);
+            }
+            continue;
+        }
+        if character == '#' && quote.is_none() {
+            return &value[..index];
+        }
+    }
+    value
+}
+
+fn ssh_keyword_and_arguments(value: &str) -> Option<(&str, &str)> {
+    let value = value.trim();
+    if value.is_empty() {
+        return None;
+    }
+    let split_at = value
+        .char_indices()
+        .find(|(_, character)| character.is_ascii_whitespace() || *character == '=')
+        .map(|(index, _)| index)?;
+    let arguments = value[split_at..]
+        .trim_start_matches(|character: char| character.is_ascii_whitespace() || character == '=')
+        .trim();
+    Some((&value[..split_at], arguments))
+}
+
+fn split_ssh_tokens(value: &str) -> Vec<String> {
+    let mut tokens = Vec::new();
+    let mut current = String::new();
+    let mut quote = None;
+    let mut escaped = false;
+    for character in value.chars() {
+        if escaped {
+            current.push(character);
+            escaped = false;
+            continue;
+        }
+        if character == '\\' {
+            escaped = true;
+            continue;
+        }
+        if matches!(character, '\'' | '"') {
+            if quote == Some(character) {
+                quote = None;
+            } else if quote.is_none() {
+                quote = Some(character);
+            } else {
+                current.push(character);
+            }
+            continue;
+        }
+        if character.is_ascii_whitespace() && quote.is_none() {
+            if !current.is_empty() {
+                tokens.push(std::mem::take(&mut current));
+            }
+        } else {
+            current.push(character);
+        }
+    }
+    if escaped {
+        current.push('\\');
+    }
+    if !current.is_empty() {
+        tokens.push(current);
+    }
+    tokens
+}
+
+fn is_literal_ssh_host_alias(value: &str) -> bool {
+    !value.is_empty()
+        && !value.starts_with('!')
+        && !value.contains(['*', '?', '[', ']', '%'])
+        && validate_ssh_target(value).is_ok()
+}
+
+fn expand_ssh_include(value: &str, ssh_dir: &Path) -> Result<Vec<PathBuf>, String> {
+    let home_dir = ssh_dir.parent().unwrap_or(ssh_dir);
+    let expanded = if value == "~" {
+        home_dir.to_path_buf()
+    } else if let Some(relative) = value.strip_prefix("~/") {
+        home_dir.join(relative)
+    } else {
+        let path = PathBuf::from(value);
+        if path.is_absolute() {
+            path
+        } else {
+            ssh_dir.join(path)
+        }
+    };
+
+    if !value.contains(['*', '?', '[']) {
+        return Ok(vec![expanded]);
+    }
+
+    let pattern = expanded.to_string_lossy();
+    let paths = glob(&pattern)
+        .map_err(|error| format!("invalid SSH Include pattern {value}: {error}"))?
+        .filter_map(Result::ok)
+        .filter(|path| path.is_file())
+        .collect();
+    Ok(paths)
+}
+
+fn resolve_ssh_host(
+    config_path: &Path,
+    alias: &str,
+) -> (Option<String>, Option<String>, Option<u16>) {
+    let Ok(output) = Command::new("ssh")
+        .arg("-F")
+        .arg(config_path)
+        .args(["-G", alias])
+        .output()
+    else {
+        return (None, None, None);
+    };
+    if !output.status.success() {
+        return (None, None, None);
+    }
+
+    let mut hostname = None;
+    let mut user = None;
+    let mut port = None;
+    for line in String::from_utf8_lossy(&output.stdout).lines() {
+        let Some((key, value)) = line.split_once(char::is_whitespace) else {
+            continue;
+        };
+        let value = value.trim();
+        match key {
+            "hostname" => hostname = Some(value.to_string()),
+            "user" => user = Some(value.to_string()),
+            "port" => port = value.parse().ok(),
+            _ => {}
+        }
+    }
+    (hostname, user, port)
+}
+
+fn display_home_path(home_dir: &Path, path: &Path) -> String {
+    path.strip_prefix(home_dir)
+        .map(|relative| format!("~/{}", relative.to_string_lossy()))
+        .unwrap_or_else(|_| path.to_string_lossy().to_string())
+}
+
 fn validate_node_name(value: &str) -> Result<(), String> {
     if value.is_empty() || value.chars().count() > 48 {
         return Err("server node name must contain 1 to 48 characters".to_string());
@@ -979,6 +1505,7 @@ fn slug_fragment(value: &str) -> String {
 mod tests {
     use super::*;
     use std::io::Cursor;
+    use tempfile::tempdir;
 
     #[test]
     fn shell_quote_handles_single_quotes() {
@@ -987,10 +1514,61 @@ mod tests {
 
     #[test]
     fn ssh_target_rejects_options_and_shell_syntax() {
-        assert!(validate_ssh_target("aliyun-zsrb").is_ok());
+        assert!(validate_ssh_target("demo-server").is_ok());
         assert!(validate_ssh_target("admin@example.com").is_ok());
         assert!(validate_ssh_target("-oProxyCommand=x").is_err());
         assert!(validate_ssh_target("host; rm -rf /").is_err());
+    }
+
+    #[test]
+    fn ssh_config_discovery_reads_includes_and_ignores_patterns() {
+        let root = tempdir().expect("temp home");
+        let ssh_dir = root.path().join(".ssh");
+        let include_dir = ssh_dir.join("config.d");
+        fs::create_dir_all(&include_dir).expect("create SSH config directory");
+        fs::write(
+            ssh_dir.join("config"),
+            "Host *\n  ServerAliveInterval 30\nInclude config.d/*.conf\nHost aliyun demo-server # cloud aliases\n  HostName 127.0.0.1\n",
+        )
+        .expect("write root config");
+        fs::write(
+            include_dir.join("work.conf"),
+            "Host github-work\n  HostName github.com\nHost !blocked *.internal\n",
+        )
+        .expect("write included config");
+
+        let mut visited = BTreeSet::new();
+        let mut seen = BTreeSet::new();
+        let mut aliases = Vec::new();
+        collect_ssh_host_aliases(
+            &ssh_dir.join("config"),
+            &ssh_dir,
+            &mut visited,
+            &mut seen,
+            &mut aliases,
+        )
+        .expect("discover aliases");
+
+        assert_eq!(
+            aliases
+                .into_iter()
+                .map(|(alias, _)| alias)
+                .collect::<Vec<_>>(),
+            ["github-work", "aliyun", "demo-server"]
+        );
+    }
+
+    #[test]
+    fn ssh_tokenizer_keeps_quoted_include_paths() {
+        assert_eq!(
+            split_ssh_tokens("\"config.d/work hosts.conf\" config.d/personal.conf"),
+            ["config.d/work hosts.conf", "config.d/personal.conf"]
+        );
+        assert_eq!(strip_ssh_comment("Host cloud # note"), "Host cloud ");
+        assert_eq!(
+            strip_ssh_comment("Host \"cloud#prod\""),
+            "Host \"cloud#prod\""
+        );
     }
 
     #[test]
@@ -1019,6 +1597,32 @@ mod tests {
             },
         };
         assert!(operation_arguments(operation).is_err());
+    }
+
+    #[test]
+    fn profile_model_update_forwards_model_and_reasoning_effort() {
+        let arguments = operation_arguments(ServerNodeOperation::UpdateProfileModel {
+            input: UpdateProfileModelInput {
+                profile_name: "codex-p".to_string(),
+                model: "gpt-5.5".to_string(),
+                reasoning_effort: Some("xhigh".to_string()),
+            },
+        })
+        .expect("operation arguments");
+        assert_eq!(
+            arguments,
+            [
+                "model",
+                "set",
+                "--name",
+                "codex-p",
+                "--model",
+                "gpt-5.5",
+                "--reasoning-effort",
+                "xhigh",
+            ]
+            .map(str::to_string)
+        );
     }
 
     #[test]
@@ -1056,6 +1660,35 @@ mod tests {
             }),
             SSH_CHANNEL_TIMEOUT
         );
+    }
+
+    #[test]
+    fn wechat_operations_forward_the_selected_profile() {
+        for (operation, action) in [
+            (
+                ServerNodeOperation::WechatStart {
+                    profile_name: "codex-p".to_string(),
+                },
+                "start",
+            ),
+            (
+                ServerNodeOperation::WechatStop {
+                    profile_name: "codex-p".to_string(),
+                },
+                "stop",
+            ),
+            (
+                ServerNodeOperation::WechatRestart {
+                    profile_name: "codex-p".to_string(),
+                },
+                "restart",
+            ),
+        ] {
+            assert_eq!(
+                operation_arguments(operation).expect("operation arguments"),
+                ["wechat", action, "--name", "codex-p"].map(str::to_string)
+            );
+        }
     }
 
     #[test]

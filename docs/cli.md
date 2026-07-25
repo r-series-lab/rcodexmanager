@@ -13,7 +13,7 @@ rcodexmanager --json info
 源码目录：
 
 ```bash
-cd /Users/ikiru/Documents/r-series-public/rcodexmanager
+cd /path/to/rcodexmanager
 cargo run --quiet --manifest-path ./src-tauri/Cargo.toml -- --json info
 ```
 
@@ -87,8 +87,8 @@ CLI 自动优先读取已存在的 `~/.zshrc`，其次读取 `~/.bashrc`。服�
 Mac App 的“服务器节点”通过本机 SSH 配置执行远程 JSON 命令。节点设置只包含显示名称、SSH Host 和远程 CLI 路径；SSH 密码、私钥、API key、认证正文与渠道 token 不进入节点元数据。推荐使用 SSH alias 和绝对 CLI 路径：
 
 ```text
-SSH Host: aliyun-zsrb
-远程 CLI: /home/admin/.local/bin/rcodexmanager
+SSH Host: demo-server
+远程 CLI: /home/demo/.local/bin/rcodexmanager
 ```
 
 远程协议要求 stdout 中只有一个 CLI JSON envelope。连接提示或 SSH Host 错误应保留在 stderr，不能混入业务 JSON。
@@ -98,6 +98,8 @@ Mac 端会在 SSH 运行期间并发读取 stdout/stderr，避免大于系统管
 节点弹窗在当前窗口内为每个节点保留最近 10 条非敏感任务摘要。Doctor、列表/状态、会话读取、路由预览和自检可以安全重试；创建、启停、认证应用、渠道启停和路由写入失败后必须先刷新状态，避免重复执行已经在服务器完成的操作。复制诊断会包含任务号和耗时，并脱敏常见凭据字段。
 
 节点的 Profile、认证、模型路由、渠道、Doctor 与会话分页结果在 App 进程内缓存 30 秒。会话列表通过 `profileName/query/offset/limit` 分页，详情只在用户选择后执行 `read-session`；缓存不写入磁盘，重新启动 App 后自动清空。
+
+Mac App 的 Profiles 页还提供“从本机同步”。它先通过远端 CLI 创建新的服务器 Profile，再按用户选择导入本机认证，最后重新读取服务器列表确认结果。认证正文只经 SSH 标准输入传输，不作为命令参数，也不会写入节点元数据或任务历史；服务器端临时文件会在导入结束后清理。该入口不会复制本机会话和桌面 User Data。
 
 ## Doctor 诊断
 
@@ -132,6 +134,9 @@ rcodexmanager --json copy --source codex-b --name codex-f \
 # 更新本地元数据
 rcodexmanager --json update --name codex-f --alias 主力 --category 平衡 --note 日常使用
 
+# 只更新模型与推理等级；保留认证、会话、Provider 路由和 User Data
+rcodexmanager --json model set --name codex-f --model gpt-5.5 --reasoning-effort xhigh
+
 # 生命周期
 rcodexmanager --json launch --name codex-f
 rcodexmanager --json terminate --name codex-f
@@ -146,7 +151,9 @@ rcodexmanager --json delete --name codex-f
 rcodexmanager --json delete --name codex-f --archive-data
 ```
 
-默认 `codex` profile 不能删除、重置或安全终止。执行写操作前先用 `list` 检查 `isDefault` 和 `isRunning`。
+默认 `codex` profile 不能删除、重置、修改模型或安全终止。执行写操作前先用 `list` 检查 `isDefault` 和 `isRunning`。
+
+`model set` 会备份当前 `config.toml`，只更新顶层 `model` 和 `model_reasoning_effort`，并保留 `model_provider`、Provider 配置、认证和会话。运行中的 Profile 必须先停止。不要为了切换模型使用 `reset`，后者会归档并重建 Profile 数据目录。
 
 Linux 的 `launch` 使用 `rcodexmanager-<profile>` 命名的独立 `tmux` 会话保持交互式 Codex 运行，`terminate` 只停止对应的受管会话。`list` 通过进程环境中的 `CODEX_HOME` 和受管 tmux 会话双重识别状态。服务器未安装 `tmux` 时，查看、会话、认证和路由命令仍可用，但 `launch` 会返回明确的依赖错误。
 

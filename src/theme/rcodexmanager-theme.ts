@@ -12,14 +12,14 @@ const fontFamily = [
 ].join(", ");
 
 const lightTokens = {
-  bg: "rgba(243,246,250,0.58)",
-  panel: "rgba(250,252,255,0.72)",
-  line: "rgba(52,76,96,0.14)",
-  text: "#17202b",
-  muted: "rgba(63,79,97,0.68)",
-  accent: "#5c7085",
-  accentHover: "#455a70",
-  success: "#3f8269",
+  bg: "rgba(247,249,252,0.92)",
+  panel: "rgba(255,255,255,0.94)",
+  line: "rgba(112,132,158,0.2)",
+  text: "#152033",
+  muted: "rgba(82,101,126,0.72)",
+  accent: "#246fe8",
+  accentHover: "#175dcc",
+  success: "#1f9d58",
   warning: "#a86c1c",
 };
 
@@ -48,12 +48,12 @@ export function createRcodexManagerTheme(styleMode: CodexManagerStyleMode) {
       fontFamily,
       h5: {
         letterSpacing: 0,
-        fontWeight: 800,
+        fontWeight: 740,
         fontSize: "1.02rem",
       },
       h6: {
         letterSpacing: 0,
-        fontWeight: 800,
+        fontWeight: 720,
         fontSize: "0.95rem",
       },
       subtitle1: {
@@ -64,7 +64,7 @@ export function createRcodexManagerTheme(styleMode: CodexManagerStyleMode) {
       },
       button: {
         textTransform: "none",
-        fontWeight: 800,
+        fontWeight: 680,
         letterSpacing: 0,
         fontSize: "0.76rem",
       },
@@ -171,7 +171,7 @@ export function createRcodexManagerTheme(styleMode: CodexManagerStyleMode) {
           root: {
             height: 21,
             borderRadius: 8,
-            fontWeight: 800,
+            fontWeight: 680,
             fontSize: "0.68rem",
             maxWidth: "100%",
           },

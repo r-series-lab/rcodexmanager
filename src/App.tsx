@@ -15,12 +15,15 @@ import EditRoundedIcon from "@mui/icons-material/EditRounded";
 import ErrorOutlineRoundedIcon from "@mui/icons-material/ErrorOutlineRounded";
 import FactCheckRoundedIcon from "@mui/icons-material/FactCheckRounded";
 import FileUploadRoundedIcon from "@mui/icons-material/FileUploadRounded";
+import FormatListBulletedRoundedIcon from "@mui/icons-material/FormatListBulletedRounded";
 import FolderRoundedIcon from "@mui/icons-material/FolderRounded";
+import ForumRoundedIcon from "@mui/icons-material/ForumRounded";
 import HubRoundedIcon from "@mui/icons-material/HubRounded";
 import KeyboardArrowDownRoundedIcon from "@mui/icons-material/KeyboardArrowDownRounded";
 import KeyboardArrowLeftRoundedIcon from "@mui/icons-material/KeyboardArrowLeftRounded";
 import KeyboardArrowRightRoundedIcon from "@mui/icons-material/KeyboardArrowRightRounded";
 import LightModeRoundedIcon from "@mui/icons-material/LightModeRounded";
+import MoreVertRoundedIcon from "@mui/icons-material/MoreVertRounded";
 import OpenInNewRoundedIcon from "@mui/icons-material/OpenInNewRounded";
 import PlayArrowRoundedIcon from "@mui/icons-material/PlayArrowRounded";
 import RefreshRoundedIcon from "@mui/icons-material/RefreshRounded";
@@ -29,7 +32,6 @@ import SearchRoundedIcon from "@mui/icons-material/SearchRounded";
 import SettingsRoundedIcon from "@mui/icons-material/SettingsRounded";
 import SettingsEthernetRoundedIcon from "@mui/icons-material/SettingsEthernetRounded";
 import StarOutlineRoundedIcon from "@mui/icons-material/StarOutlineRounded";
-import StorageRoundedIcon from "@mui/icons-material/StorageRounded";
 import StopCircleRoundedIcon from "@mui/icons-material/StopCircleRounded";
 import TerminalRoundedIcon from "@mui/icons-material/TerminalRounded";
 import VpnKeyRoundedIcon from "@mui/icons-material/VpnKeyRounded";
@@ -144,6 +146,12 @@ import { ModelRouteDialog } from "./features/model-route/ModelRouteDialog";
 import { ServerNodesDialog } from "./features/server-nodes/ServerNodesDialog";
 import { isDialogResourceFresh } from "./components/manager";
 import { useActionRegistry } from "./hooks/useActionRegistry";
+import {
+  PROFILE_SORT_OPTIONS,
+  parseProfileSortMode,
+  sortProfiles,
+  type ProfileSortMode,
+} from "./lib/profileSorting";
 
 type FeedbackState = {
   severity: "success" | "info" | "warning" | "error";
@@ -217,6 +225,8 @@ type FeatureCommandItem = {
 type ThemePreference = CodexManagerStyleMode | "system";
 
 const NO_AUTH_SOURCE = "__none__";
+const PROFILE_SORT_STORAGE_KEY = "rcodexmanager-profile-sort";
+const ACTIVE_PROFILE_STORAGE_KEY = "rcodexmanager-active-profile";
 
 const DEFAULT_FORM: CreateProfileInput = {
   name: "codex-f",
@@ -235,6 +245,14 @@ const FREE_PLAN_LABELS = new Set(["free", "trial"]);
 function initialThemePreference(): ThemePreference {
   const stored = window.localStorage.getItem("rcodexmanager-style");
   return stored === "light" || stored === "dark" || stored === "system" ? stored : "system";
+}
+
+function initialProfileSortMode(): ProfileSortMode {
+  return parseProfileSortMode(window.localStorage.getItem(PROFILE_SORT_STORAGE_KEY));
+}
+
+function initialActiveProfileName(): string {
+  return window.localStorage.getItem(ACTIVE_PROFILE_STORAGE_KEY)?.trim() || "";
 }
 
 function getSystemStyleMode(): CodexManagerStyleMode {
@@ -344,11 +362,7 @@ function FeatureCommandGrid({ items }: { items: FeatureCommandItem[] }) {
             <span className="command-title">{item.title}</span>
             <span className="command-subtitle">{item.subtitle}</span>
           </span>
-          {item.countLabel ? (
-            <span className="command-count">{item.countLabel}</span>
-          ) : (
-            <span className="command-action">{item.actionLabel ?? "打开"}</span>
-          )}
+          <KeyboardArrowRightRoundedIcon className="command-chevron" aria-hidden="true" />
         </button>
       ))}
     </Box>
@@ -394,7 +408,8 @@ function App() {
   const styleMode = themePreference === "system" ? systemStyleMode : themePreference;
   const theme = useMemo(() => createRcodexManagerTheme(styleMode), [styleMode]);
   const [report, setReport] = useState<ProfileReport | null>(null);
-  const [activeName, setActiveName] = useState("");
+  const [activeName, setActiveName] = useState(initialActiveProfileName);
+  const [profileSort, setProfileSort] = useState<ProfileSortMode>(initialProfileSortMode);
   const [query, setQuery] = useState("");
   const [categoryFilter, setCategoryFilter] = useState("all");
   const [statusFilter, setStatusFilter] = useState("all");
@@ -457,10 +472,6 @@ function App() {
   const resourceUpdatedAtRef = useRef({ auth: null as number | null, wechat: null as number | null, feishu: null as number | null, modelRoute: null as number | null });
 
   const profiles = report?.profiles ?? [];
-  const activeProfile = useMemo(
-    () => profiles.find((profile) => profile.name === activeName) ?? profiles[0] ?? null,
-    [activeName, profiles],
-  );
   const contextMenuProfile = useMemo(
     () =>
       profileContextMenu
@@ -500,7 +511,7 @@ function App() {
   );
   const visibleProfiles = useMemo(() => {
     const normalizedQuery = query.trim().toLowerCase();
-    return profiles.filter((profile) => {
+    const filtered = profiles.filter((profile) => {
       if (!matchesCategoryFilter(profile, categoryFilter)) {
         return false;
       }
@@ -533,16 +544,26 @@ function App() {
       .toLowerCase()
       .includes(normalizedQuery);
     });
-  }, [categoryFilter, profiles, query, statusFilter]);
+    return sortProfiles(filtered, profileSort);
+  }, [categoryFilter, profileSort, profiles, query, statusFilter]);
+  const activeProfile = useMemo(
+    () => profiles.find((profile) => profile.name === activeName) ?? visibleProfiles[0] ?? null,
+    [activeName, profiles, visibleProfiles],
+  );
   useEffect(() => {
-    if (
-      visibleProfiles.length > 0 &&
-      activeProfile &&
-      !visibleProfiles.some((profile) => profile.name === activeProfile.name)
-    ) {
-      setActiveName(visibleProfiles[0].name);
+    if (!report) return;
+    if (!visibleProfiles.some((profile) => profile.name === activeName)) {
+      setActiveName(visibleProfiles[0]?.name ?? "");
     }
-  }, [activeProfile, visibleProfiles]);
+  }, [activeName, report, visibleProfiles]);
+  useEffect(() => {
+    window.localStorage.setItem(PROFILE_SORT_STORAGE_KEY, profileSort);
+  }, [profileSort]);
+  useEffect(() => {
+    if (activeName) {
+      window.localStorage.setItem(ACTIVE_PROFILE_STORAGE_KEY, activeName);
+    }
+  }, [activeName]);
   const sessionItems = useMemo<SessionCenterItem[]>(
     () =>
       sessionReport
@@ -577,7 +598,7 @@ function App() {
       key: "sessions",
       title: "会话中心",
       subtitle: "最近会话与摘要",
-      icon: <TerminalRoundedIcon fontSize="small" />,
+      icon: <ForumRoundedIcon fontSize="small" />,
       countLabel: sessionCountLabel,
       actionLabel: "打开",
       onClick: handleOpenSessionCenter,
@@ -666,7 +687,7 @@ function App() {
         if (nextReport.profiles.some((profile) => profile.name === current)) {
           return current;
         }
-        return nextReport.profiles[0]?.name ?? "";
+        return sortProfiles(nextReport.profiles, profileSort)[0]?.name ?? "";
       });
       setSessionReport(null);
       sessionResourceRef.current = { key: "", updatedAt: null };
@@ -2075,7 +2096,7 @@ function App() {
                 aria-label="打开服务器节点"
                 onClick={() => setServerNodesDialogOpen(true)}
               >
-                <StorageRoundedIcon />
+                <FormatListBulletedRoundedIcon />
               </IconButton>
             </Tooltip>
             <Tooltip title={inspectorCollapsed ? "展开详情栏" : "收起详情栏"}>
@@ -2296,26 +2317,52 @@ function App() {
                       </MenuItem>
                     ))}
                   </TextField>
+                  <TextField
+                    className="profile-sort-select"
+                    select
+                    size="small"
+                    value={profileSort}
+                    onChange={(event) => setProfileSort(event.target.value as ProfileSortMode)}
+                    slotProps={{
+                      htmlInput: {
+                        "aria-label": "Profile 排序",
+                        name: "profile-sort",
+                        autoComplete: "off",
+                      },
+                    }}
+                  >
+                    {PROFILE_SORT_OPTIONS.map((option) => (
+                      <MenuItem key={option.value} value={option.value}>{option.label}</MenuItem>
+                    ))}
+                  </TextField>
                 </Box>
                 <Box className="status-filter-strip" aria-label="状态筛选">
-                  {statusFilterOptions.map((option) => (
-                    <button
-                      key={option.key}
-                      type="button"
-                      className={`status-filter-chip ${statusFilter === option.key ? "selected" : ""}`}
-                      aria-pressed={statusFilter === option.key}
-                      onClick={() => setStatusFilter(option.key)}
-                    >
-                      {renderStatusFilterIcon(option.key)}
-                      <span>{option.label}</span>
-                      <strong>{option.count}</strong>
-                    </button>
-                  ))}
+                  <Box className="status-filter-options">
+                    {statusFilterOptions.map((option) => (
+                      <button
+                        key={option.key}
+                        type="button"
+                        className={`status-filter-chip ${statusFilter === option.key ? "selected" : ""}`}
+                        aria-pressed={statusFilter === option.key}
+                        onClick={() => setStatusFilter(option.key)}
+                      >
+                        {renderStatusFilterIcon(option.key)}
+                        <span>{option.label}</span>
+                        <strong>{option.count}</strong>
+                      </button>
+                    ))}
+                  </Box>
                   <Stack className="profile-icon-actions status-filter-actions" direction="row" spacing={0.4}>
                     <Tooltip title="新增 profile">
-                      <IconButton aria-label="新增 profile" onClick={() => setCreateDialogOpen(true)}>
-                        <AddRoundedIcon />
-                      </IconButton>
+                      <Button
+                        className="profile-create-button"
+                        aria-label="新增 profile"
+                        variant="outlined"
+                        startIcon={<AddRoundedIcon />}
+                        onClick={() => setCreateDialogOpen(true)}
+                      >
+                        新建
+                      </Button>
                     </Tooltip>
                     <Tooltip title="刷新 profile">
                       <span>
@@ -2406,19 +2453,33 @@ function App() {
                 <Box className="inspector-content">
                   <Box className="inspector-hero">
                     <Box className="inspector-title">
-                      <Box className="inspector-title-main">
-                        <Typography variant="caption" color="text.secondary">
+                      <Box className="inspector-profile-heading">
+                        <Typography className="inspector-eyebrow" variant="caption" color="text.secondary">
                           当前 profile
                         </Typography>
-                        <Typography variant="h5" component="h2" translate="no">
-                          {activeProfile.alias || activeProfile.name}
-                        </Typography>
-                        <Typography variant="body2" color="text.secondary" translate="no">
-                          {activeProfile.name}
-                        </Typography>
+                        <Box className="inspector-profile-identity">
+                          <span
+                            className={`profile-avatar inspector-profile-avatar ${profileAvatarTone(activeProfile)}`}
+                            translate="no"
+                          >
+                            {(activeProfile.alias || activeProfile.name).slice(0, 1)}
+                          </span>
+                          <Box className="inspector-title-main">
+                          <Typography variant="h5" component="h2" translate="no">
+                            {activeProfile.alias || activeProfile.name}
+                          </Typography>
+                          <Typography variant="body2" color="text.secondary" translate="no">
+                            {activeProfile.name}
+                          </Typography>
+                          </Box>
+                        </Box>
                       </Box>
                       <Stack className="inspector-title-badges" direction="row" spacing={0.5}>
-                        <Chip size="small" label={profileSourceLabel(activeProfile)} />
+                        <Chip
+                          className={`inspector-runtime-badge ${activeProfile.isRunning ? "running" : "idle"}`}
+                          size="small"
+                          label={activeProfile.isRunning ? "运行中" : "已停止"}
+                        />
                       </Stack>
                     </Box>
 
@@ -2432,11 +2493,20 @@ function App() {
                       <Button
                         className={`hero-launch-action ${activeProfile.isRunning ? "running" : ""}`}
                         variant={activeProfile.isRunning ? "outlined" : "contained"}
-                        startIcon={<PlayArrowRoundedIcon />}
-                        onClick={() => void handleLaunchProfile(activeProfile)}
-                        disabled={isActionBusy(actionKeys.profileLifecycle(activeProfile.name)) || activeProfile.isRunning}
+                        startIcon={activeProfile.isRunning ? <StopCircleRoundedIcon /> : <PlayArrowRoundedIcon />}
+                        onClick={() => {
+                          if (activeProfile.isRunning) {
+                            void handleTerminateProfile(activeProfile);
+                          } else {
+                            void handleLaunchProfile(activeProfile);
+                          }
+                        }}
+                        disabled={
+                          isActionBusy(actionKeys.profileLifecycle(activeProfile.name)) ||
+                          (activeProfile.isRunning && activeProfile.isDefault)
+                        }
                       >
-                        {activeProfile.isRunning ? "运行中" : "启动"}
+                        {activeProfile.isRunning ? "停止运行" : "启动"}
                       </Button>
                       <Button
                         className="hero-repair-action"
@@ -2478,14 +2548,19 @@ function App() {
                   </Box>
 
                   <Box className="inspector-body">
-                    <Box className="inspector-system-list">
-                      <PathBlock title="CODEX_HOME" path={activeProfile.codexHome} exists={activeProfile.homeExists} />
-                      <PathBlock
-                        title="User Data"
-                        path={activeProfile.userDataDir}
-                        exists={activeProfile.userDataExists}
-                      />
-
+                    <Box className="inspector-section">
+                      <Typography className="inspector-section-label" variant="caption">路径与数据</Typography>
+                      <Box className="inspector-system-list">
+                        <PathBlock title="CODEX_HOME" path={activeProfile.codexHome} exists={activeProfile.homeExists} />
+                        <PathBlock
+                          title="User Data"
+                          path={activeProfile.userDataDir}
+                          exists={activeProfile.userDataExists}
+                        />
+                      </Box>
+                    </Box>
+                    <Box className="inspector-section">
+                      <Typography className="inspector-section-label" variant="caption">账号</Typography>
                       <AccountBlock profile={activeProfile} />
                     </Box>
 
@@ -2505,14 +2580,14 @@ function App() {
                         startIcon={<ContentCopyRoundedIcon />}
                         onClick={() => handleOpenCopyDialog(activeProfile)}
                       >
-                        复制
+                        复制 profile
                       </Button>
                       <Button
                         variant="outlined"
                         startIcon={<EditRoundedIcon />}
                         onClick={() => setEditDialogOpen(true)}
                       >
-                        编辑
+                        编辑 profile
                       </Button>
                     </Box>
                   </Box>
@@ -3268,6 +3343,18 @@ function ProfileCard({
               )}
             </IconButton>
           </span>
+        </Tooltip>
+        <Tooltip title="更多操作">
+          <IconButton
+            className="profile-more-button"
+            aria-label={`更多 ${profile.name}`}
+            onClick={(event) => {
+              event.stopPropagation();
+              onContextMenu(event);
+            }}
+          >
+            <MoreVertRoundedIcon fontSize="small" />
+          </IconButton>
         </Tooltip>
       </Box>
     </Box>

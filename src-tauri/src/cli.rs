@@ -11,16 +11,16 @@ use crate::core::{
     restart_feishu_remote, restart_wechat_bridge, restore_model_route, rollback_auth_application,
     run_doctor, start_feishu_remote, start_wechat_bridge, stop_feishu_remote, stop_wechat_bridge,
     terminate_profile, unbind_wechat_bridge, update_auth_backup, update_profile_metadata,
-    ApplyAuthBackupInput, ApplyModelRouteInput, CheckModelRouteProxyInput, CleanupAuthBackupsInput,
-    ConfigureFeishuRemoteInput, CopyProfileInput, CreateAuthBackupInput, CreateAuthBackupsInput,
-    CreateProfileInput, DeleteAuthBackupInput, DoctorReport, ExportAuthBackupInput,
-    FeishuRemotePage, ImportAuthBackupPackageInput, ImportAuthInput,
+    update_profile_model, ApplyAuthBackupInput, ApplyModelRouteInput, CheckModelRouteProxyInput,
+    CleanupAuthBackupsInput, ConfigureFeishuRemoteInput, CopyProfileInput, CreateAuthBackupInput,
+    CreateAuthBackupsInput, CreateProfileInput, DeleteAuthBackupInput, DoctorReport,
+    ExportAuthBackupInput, FeishuRemotePage, ImportAuthBackupPackageInput, ImportAuthInput,
     InstallWechatBridgeServiceInput, ListProfileSessionsInput, ModelRoutePreset,
     PreviewAuthBackupPackageInput, PreviewModelRouteInput, ProfileContext, ProfileLauncherKind,
     ProfileMetadataInput, ReadFeishuRemoteLogInput, ReadProfileSessionDetailInput,
     ReadWechatBridgeLogInput, ResetProfileInput, RestartWechatBridgeInput, RestoreModelRouteInput,
     RollbackAuthApplicationInput, StartFeishuRemoteInput, StartWechatBridgeInput,
-    StopWechatBridgeInput, UnbindWechatBridgeInput, UpdateAuthBackupInput,
+    StopWechatBridgeInput, UnbindWechatBridgeInput, UpdateAuthBackupInput, UpdateProfileModelInput,
 };
 use clap::error::ErrorKind;
 use clap::{Parser, Subcommand, ValueEnum};
@@ -183,6 +183,11 @@ pub enum Commands {
         #[command(subcommand)]
         command: SessionCommands,
     },
+    /// Inspect or safely update a profile's model configuration.
+    Model {
+        #[command(subcommand)]
+        command: ProfileModelCommands,
+    },
     /// Manage per-profile WeChat ACP bridges.
     Wechat {
         #[command(subcommand)]
@@ -198,6 +203,19 @@ pub enum Commands {
     ModelRoute {
         #[command(subcommand)]
         command: ModelRouteCommands,
+    },
+}
+
+#[derive(Debug, Subcommand)]
+pub enum ProfileModelCommands {
+    /// Update only model fields in config.toml after backing it up.
+    Set {
+        #[arg(long)]
+        name: String,
+        #[arg(long)]
+        model: String,
+        #[arg(long)]
+        reasoning_effort: Option<String>,
     },
 }
 
@@ -702,6 +720,16 @@ fn capability_manifest(desktop_available: bool) -> CapabilityManifest {
                 ],
             },
             CapabilityInfo {
+                command: "model set",
+                description: "Back up config.toml and update only the model and reasoning effort for a stopped custom profile, preserving auth, sessions, provider routing, and user data.",
+                json_supported: true,
+                reads_files: true,
+                writes_files: true,
+                examples: vec![
+                    "rcodexmanager model set --name codex-f --model gpt-5.5 --reasoning-effort xhigh --json",
+                ],
+            },
+            CapabilityInfo {
                 command: "delete",
                 description: "Remove a launcher function; --archive-data also moves profile directories aside.",
                 json_supported: true,
@@ -1084,6 +1112,29 @@ pub fn run_from_env_with_desktop(desktop_available: bool) -> CliOutcome {
                 CliOutcome::Exit(0)
             }
             Err(message) => emit_action_error(cli.json, &message),
+        },
+        Some(Commands::Model { command }) => match command {
+            ProfileModelCommands::Set {
+                name,
+                model,
+                reasoning_effort,
+            } => match update_profile_model(
+                &context,
+                UpdateProfileModelInput {
+                    profile_name: name,
+                    model,
+                    reasoning_effort,
+                },
+            ) {
+                Ok(report) => {
+                    emit_success(cli.json, "model-set", &report);
+                    if !cli.json {
+                        println!("{}", report.message);
+                    }
+                    CliOutcome::Exit(0)
+                }
+                Err(message) => emit_action_error(cli.json, &message),
+            },
         },
         Some(Commands::Launch { name }) => match launch_profile(&context, &name) {
             Ok(report) => {

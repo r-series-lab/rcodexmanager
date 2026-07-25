@@ -1,16 +1,43 @@
-# Changelog
+# 更新日志
+
+[English](CHANGELOG_EN.md)
+
+## 尚未发布
+
+### 变更
+
+- 将更新日志拆分为中英文入口，在 App Manifest 中登记英文文档源，并将其纳入版本复核。
+- 将根级 `RELEASE.md` 发布入口与中英文发布合同保持一致。
+
+## 0.1.2
+
+- 在 Mac 节点管理器中增加服务器 Profile 的模型与 Provider 反显。
+- 增加可搜索的模型选择，数据来自服务器 Profile 中发现的模型与路由预设，同时保留自由输入模型名称的能力。
+- 增加 `model set`：备份 `config.toml` 后安全更新模型与 reasoning 字段，同时保留认证、会话、Provider 路由和 User Data。
+- 增加功能级服务器 CLI 版本兼容提示，并在较旧节点上禁用不受支持的模型写入。
+- 增加中英文发布文档、可由机器检查的源码边界，以及由服务器创建 Tag 的 Draft 预发布流程。
+- 增加发布门禁，拒绝尚未针对当前应用版本完成复核的本地化文档。
+- 为 Tauri WebView 启用严格的生产环境 CSP、隔离的 Vite HMR 策略，并冻结 JavaScript 原型。
+
+## 0.1.1
+
+- 修复 Mac 到 Linux 的远程操作字段，确保所选 Profile 名称正确传递给微信及其他服务器命令。
+- 改进服务器微信状态检测，覆盖外部管理的实例、二维码展示、兼容 Node.js 选择、启动失败报告与等待扫码轮询。
+- 增加“从 Mac 同步”：根据本地模型元数据创建 Linux Profile，并可在明确确认后通过 SSH 标准输入传输认证信息。
+- 确保认证正文不进入命令参数、节点元数据、任务历史和诊断；导入的 `auth.json` 文件现会在 Unix 上使用私有文件权限。
+- 增加服务器节点 UI 与协议测试，覆盖浅色、深色、默认和紧凑窗口尺寸。
 
 ## 0.1.0
 
-- Initial `rCodexManager` MVP for managing local Codex profile launchers.
-- Added compact grouped profile board with editable alias, category, and notes.
-- Added unified session, auth vault, WeChat/Feishu channel, model-route, and Doctor management dialogs.
-- Added Mac-to-Linux server-node management over SSH JSON without an extra management port.
-- Added a Linux headless CLI with Bash/Zsh detection and tmux-backed server profile lifecycle.
-- Added bounded streaming SSH output, workload-specific timeouts, operation ids, and per-node write exclusion.
-- Added session-only server-node task history, actionable remote error guidance, redacted diagnostic copy, and read-only retry controls.
-- Expanded the rCodexManager Skill with explicit Mac-local, Mac-to-Linux, and Linux-headless workflows.
-- Added a versioned canonical rCodexManager Skill plus install/synchronization checks for any CODEX_HOME.
-- Made capability descriptions platform-aware for macOS desktop and Linux headless network/proxy workflows.
-- Added browser-only server-node failure fixtures and E2E coverage for SSH auth, missing CLI, read timeout, and concurrent writes.
-- Added a 30-second in-memory server-node resource cache plus paginated remote session search and selection-only detail loading.
+- 发布用于管理本地 Codex Profile 启动器的首个 `rCodexManager` MVP。
+- 增加紧凑的分组 Profile 面板，可编辑别名、分类和备注。
+- 增加统一的会话、认证库、微信/飞书渠道、模型路由与 Doctor 管理对话框。
+- 增加基于 SSH JSON 的 Mac 到 Linux 服务器节点管理，无需开放额外管理端口。
+- 增加 Linux 无界面 CLI，支持 Bash/Zsh 检测及由 tmux 承载的服务器 Profile 生命周期管理。
+- 增加有界的 SSH 流式输出、按工作负载区分的超时、操作 ID 与逐节点写入互斥。
+- 增加仅限当前会话的服务器节点任务历史、可操作的远程错误指引、脱敏诊断副本和只读重试控制。
+- 扩展 rCodexManager Skill，明确 Mac 本机、Mac 到 Linux 与 Linux 无界面工作流。
+- 增加带版本的标准 rCodexManager Skill，并为任意 CODEX_HOME 提供安装/同步检查。
+- 让能力说明感知平台差异，覆盖 macOS 桌面端和 Linux 无界面网络/代理工作流。
+- 增加仅浏览器环境使用的服务器节点失败 fixture，以及针对 SSH 认证、CLI 缺失、读取超时与并发写入的 E2E 覆盖。
+- 增加 30 秒内存服务器节点资源缓存，以及分页远程会话搜索和仅在选中后加载详情。

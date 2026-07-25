@@ -21,11 +21,14 @@ import SearchRoundedIcon from "@mui/icons-material/SearchRounded";
 import RestartAltRoundedIcon from "@mui/icons-material/RestartAltRounded";
 import StopCircleRoundedIcon from "@mui/icons-material/StopCircleRounded";
 import StorageRoundedIcon from "@mui/icons-material/StorageRounded";
+import SyncAltRoundedIcon from "@mui/icons-material/SyncAltRounded";
 import TerminalRoundedIcon from "@mui/icons-material/TerminalRounded";
+import TuneRoundedIcon from "@mui/icons-material/TuneRounded";
 import VpnKeyRoundedIcon from "@mui/icons-material/VpnKeyRounded";
 import WarningAmberRoundedIcon from "@mui/icons-material/WarningAmberRounded";
 import {
   Alert,
+  Autocomplete,
   Box,
   Button,
   CircularProgress,
@@ -34,11 +37,13 @@ import {
   DialogActions,
   DialogContent,
   DialogTitle,
+  FormControlLabel,
   IconButton,
   InputAdornment,
   MenuItem,
   Skeleton,
   Stack,
+  Switch,
   TextField,
   Tooltip,
   Typography,
@@ -56,9 +61,12 @@ import {
 } from "../../components/manager";
 import {
   deleteServerNode,
+  listProfiles as listLocalProfiles,
   listServerNodes,
+  listSshHosts,
   probeServerNode,
   runServerNodeOperation,
+  syncServerProfile,
   upsertServerNode,
 } from "../../lib/api";
 import type {
@@ -78,6 +86,9 @@ import type {
   ProfileSessionSummary,
   ServerNodeProbeReport,
   ServerNodeReport,
+  SshHostOption,
+  SshHostReport,
+  SyncServerProfileReport,
   ServerNodeOperation,
   ServerNodeOperationReport,
   UpsertServerNodeInput,
@@ -100,6 +111,13 @@ import {
   taskFromServerNodeReport,
   type ServerNodeTaskEntry,
 } from "./serverNodeTasks";
+import { visibleWechatLog, wechatStatePresentation } from "./serverWechat";
+import {
+  PROFILE_SORT_OPTIONS,
+  parseProfileSortMode,
+  sortProfiles,
+  type ProfileSortMode,
+} from "../../lib/profileSorting";
 import "../manager-dialogs.css";
 
 type Feedback = { severity: "success" | "warning" | "error"; text: string };
@@ -108,8 +126,8 @@ type CachedChannels = { wechat: WechatBridgeReport; feishu: FeishuRemoteReport }
 
 const EMPTY_NODE_DRAFT: UpsertServerNodeInput = {
   id: null,
-  name: "阿里云 Codex",
-  sshTarget: "aliyun-zsrb",
+  name: "",
+  sshTarget: "",
   remoteBinary: "rcodexmanager",
 };
 
@@ -123,6 +141,38 @@ const EMPTY_PROFILE_DRAFT: CreateProfileInput = {
   category: "服务器",
   note: null,
 };
+
+const MIN_PROFILE_MODEL_UPDATE_VERSION = "0.1.2";
+const COMMON_REASONING_LEVELS = ["minimal", "low", "medium", "high", "xhigh"];
+const SERVER_PROFILE_SORT_STORAGE_KEY = "rcodexmanager-server-profile-sort";
+const SELECTED_SERVER_NODE_STORAGE_KEY = "rcodexmanager-selected-server-node";
+
+function selectedServerProfileStorageKey(nodeId: string): string {
+  return `rcodexmanager-selected-server-profile:${nodeId}`;
+}
+
+function storedServerNodeId(): string {
+  return window.localStorage.getItem(SELECTED_SERVER_NODE_STORAGE_KEY)?.trim() || "";
+}
+
+function storedServerProfileName(nodeId: string): string {
+  return window.localStorage.getItem(selectedServerProfileStorageKey(nodeId))?.trim() || "";
+}
+
+function storedServerProfileSort(): ProfileSortMode {
+  return parseProfileSortMode(window.localStorage.getItem(SERVER_PROFILE_SORT_STORAGE_KEY));
+}
+
+function versionAtLeast(value: string | null | undefined, minimum: string): boolean {
+  if (!value) return false;
+  const current = value.split(".").map((part) => Number.parseInt(part, 10) || 0);
+  const required = minimum.split(".").map((part) => Number.parseInt(part, 10) || 0);
+  for (let index = 0; index < Math.max(current.length, required.length); index += 1) {
+    if ((current[index] || 0) > (required[index] || 0)) return true;
+    if ((current[index] || 0) < (required[index] || 0)) return false;
+  }
+  return true;
+}
 
 function messageOf(error: unknown, fallback: string): string {
   if (error instanceof Error && error.message) return redactServerNodeText(error.message);
@@ -154,6 +204,9 @@ function actionLabel(action: string): string {
   if (action === "channels") return "读取远程渠道";
   if (action === "doctor") return "运行服务器诊断";
   if (action === "create-profile") return "创建服务器 Profile";
+  if (action === "load-local-profiles") return "读取本机 Profiles";
+  if (action === "sync-profile") return "同步 Profile 到服务器";
+  if (action === "update-model") return "更新服务器模型";
   if (action.startsWith("launch-profile:")) return "启动服务器 Profile";
   if (action.startsWith("terminate-profile:")) return "停止服务器 Profile";
   if (action.startsWith("auth-")) return "更新服务器认证库";
@@ -230,10 +283,11 @@ export function ServerNodesDialog({
   onFeedback?: (feedback: Feedback) => void;
 }) {
   const [report, setReport] = useState<ServerNodeReport | null>(null);
-  const [selectedNodeId, setSelectedNodeId] = useState("");
+  const [selectedNodeId, setSelectedNodeId] = useState(storedServerNodeId);
   const [probe, setProbe] = useState<ServerNodeProbeReport | null>(null);
   const [profiles, setProfiles] = useState<ProfileInfo[]>([]);
   const [selectedProfileName, setSelectedProfileName] = useState("");
+  const [profileSort, setProfileSort] = useState<ProfileSortMode>(storedServerProfileSort);
   const [sessions, setSessions] = useState<ProfileSessionReport | null>(null);
   const [sessionQuery, setSessionQuery] = useState("");
   const [sessionProfileName, setSessionProfileName] = useState("");
@@ -267,10 +321,21 @@ export function ServerNodesDialog({
   const [error, setError] = useState<string | null>(null);
   const [nodeDialogOpen, setNodeDialogOpen] = useState(false);
   const [nodeDraft, setNodeDraft] = useState<UpsertServerNodeInput>(EMPTY_NODE_DRAFT);
+  const [sshHostReport, setSshHostReport] = useState<SshHostReport | null>(null);
+  const [sshHostsLoading, setSshHostsLoading] = useState(false);
+  const [sshHostsError, setSshHostsError] = useState<string | null>(null);
+  const [nodeAdvancedOpen, setNodeAdvancedOpen] = useState(false);
   const [profileDialogOpen, setProfileDialogOpen] = useState(false);
   const [profileDraft, setProfileDraft] = useState<CreateProfileInput>(EMPTY_PROFILE_DRAFT);
+  const [profileModelDialogOpen, setProfileModelDialogOpen] = useState(false);
+  const [profileModelDraft, setProfileModelDraft] = useState({ model: "", reasoningEffort: "xhigh" });
+  const [profileSyncDialogOpen, setProfileSyncDialogOpen] = useState(false);
+  const [localProfiles, setLocalProfiles] = useState<ProfileInfo[]>([]);
+  const [syncSourceProfileName, setSyncSourceProfileName] = useState("");
+  const [syncTargetProfileName, setSyncTargetProfileName] = useState("");
+  const [syncAuth, setSyncAuth] = useState(true);
   const [confirmAction, setConfirmAction] = useState<
-    "delete-node" | "terminate-profile" | "apply-auth" | "apply-route" | "restore-route" | null
+    "delete-node" | "terminate-profile" | "apply-auth" | "apply-route" | "restore-route" | "sync-profile" | "update-model" | null
   >(null);
   const sessionListRequestRef = useRef(0);
   const sessionDetailRequestRef = useRef(0);
@@ -278,6 +343,7 @@ export function ServerNodesDialog({
 
   const nodes = report?.nodes ?? [];
   const selectedNode = nodes.find((node) => node.id === selectedNodeId) ?? null;
+  const sortedProfiles = useMemo(() => sortProfiles(profiles, profileSort), [profileSort, profiles]);
   const selectedProfile = profiles.find((profile) => profile.name === selectedProfileName) ?? null;
   const selectedBackup = auth?.backups.find((backup) => backup.id === selectedBackupId) ?? null;
   const selectedRoute = routes?.profiles.find((profile) => profile.profileName === selectedProfileName) ?? null;
@@ -287,6 +353,22 @@ export function ServerNodesDialog({
     && selectedWechat.managedByApp === false
     && (selectedWechat.tokenExists || selectedWechat.running),
   );
+  const selectedWechatState = wechatStatePresentation(selectedWechat?.connectionState);
+  const selectedWechatLog = selectedWechat ? visibleWechatLog(selectedWechat.logTail) : "";
+  const syncSourceProfile = localProfiles.find((profile) => profile.name === syncSourceProfileName) ?? null;
+  const syncTargetExists = profiles.some((profile) => profile.name === syncTargetProfileName.trim());
+  const supportsProfileModelUpdate = versionAtLeast(
+    probe?.status.cliVersion,
+    MIN_PROFILE_MODEL_UPDATE_VERSION,
+  );
+  const profileModelOptions = useMemo(() => Array.from(new Set([
+    ...profiles.map((profile) => profile.model),
+    ...(routes?.presets.map((preset) => preset.defaultModel) ?? []),
+  ].filter((value): value is string => Boolean(value?.trim())))).sort(), [profiles, routes]);
+  const reasoningOptions = useMemo(() => Array.from(new Set([
+    ...COMMON_REASONING_LEVELS,
+    ...profiles.map((profile) => profile.reasoningEffort).filter((value): value is string => Boolean(value)),
+  ])), [profiles]);
   const selectedSession = sessions?.sessions.find((item) => remoteSessionKey(item) === selectedSessionKey) ?? null;
   const selectedTasks = useMemo(
     () => taskHistory.filter((task) => task.nodeId === selectedNodeId),
@@ -309,12 +391,32 @@ export function ServerNodesDialog({
   }, [open]);
 
   useEffect(() => {
+    if (!nodeDialogOpen || sshHostReport || sshHostsLoading || sshHostsError) return;
+    void loadAvailableSshHosts();
+  }, [nodeDialogOpen, sshHostReport, sshHostsError, sshHostsLoading]);
+
+  useEffect(() => {
     selectedNodeIdRef.current = selectedNodeId;
+    if (selectedNodeId) {
+      window.localStorage.setItem(SELECTED_SERVER_NODE_STORAGE_KEY, selectedNodeId);
+    }
   }, [selectedNodeId]);
 
   useEffect(() => {
+    window.localStorage.setItem(SERVER_PROFILE_SORT_STORAGE_KEY, profileSort);
+  }, [profileSort]);
+
+  useEffect(() => {
+    if (selectedNodeId && selectedProfileName) {
+      window.localStorage.setItem(selectedServerProfileStorageKey(selectedNodeId), selectedProfileName);
+    }
+  }, [selectedNodeId, selectedProfileName]);
+
+  useEffect(() => {
     if (!open || !selectedNodeId) return;
-    hydrateNodeCache(selectedNodeId);
+    const rememberedProfileName = storedServerProfileName(selectedNodeId);
+    setSelectedProfileName(rememberedProfileName);
+    hydrateNodeCache(selectedNodeId, rememberedProfileName);
     setRoutePreview(null);
     setRouteCheck(null);
     setTaskHistoryOpen(false);
@@ -336,6 +438,48 @@ export function ServerNodesDialog({
     setRoutePreview(null);
     setRouteCheck(null);
   }, [selectedProfileName]);
+
+  useEffect(() => {
+    if (
+      !open
+      || tab !== "channels"
+      || !selectedNodeId
+      || !selectedProfileName
+      || selectedWechat?.connectionState !== "awaiting-scan"
+    ) return;
+
+    let cancelled = false;
+    const pollWechat = async () => {
+      try {
+        const result = await runServerNodeOperation<WechatBridgeReport>({
+          nodeId: selectedNodeId,
+          operation: { kind: "wechat-status", profileName: null },
+        });
+        if (cancelled || !result.ok || !result.data) return;
+        setWechat(result.data);
+        if (feishu) rememberResource(selectedNodeId, "channels", { wechat: result.data, feishu });
+        const bridge = result.data.bridges.find((item) => item.profileName === selectedProfileName);
+        if (bridge?.connectionState === "running" || bridge?.tokenExists) {
+          onFeedback?.({ severity: "success", text: `${selectedProfileName} 微信绑定成功` });
+        }
+      } catch {
+        // Keep the existing channel state; the next manual refresh can surface transport errors.
+      }
+    };
+    const timer = window.setInterval(() => void pollWechat(), 2500);
+    return () => {
+      cancelled = true;
+      window.clearInterval(timer);
+    };
+  }, [
+    open,
+    tab,
+    selectedNodeId,
+    selectedProfileName,
+    selectedWechat?.connectionState,
+    feishu,
+    onFeedback,
+  ]);
 
   useEffect(() => {
     if (!open || tab !== "sessions" || !selectedNodeId || !probe?.status.cliInstalled) return;
@@ -424,7 +568,7 @@ export function ServerNodesDialog({
           setSelectedProfileName((current) => (
             next.profiles.some((profile) => profile.name === current)
               ? current
-              : next.profiles[0]?.name ?? ""
+              : sortProfiles(next.profiles, profileSort)[0]?.name ?? ""
           ));
           break;
         }
@@ -490,7 +634,7 @@ export function ServerNodesDialog({
     setResourceUpdatedAt((current) => ({ ...current, [resource]: cached.updatedAt }));
   }
 
-  function hydrateNodeCache(nodeId: string) {
+  function hydrateNodeCache(nodeId: string, rememberedProfileName = storedServerProfileName(nodeId)) {
     const cachedProbe = readServerNodeCache<ServerNodeProbeReport>(serverNodeCacheKey(nodeId, "probe"));
     const cachedProfiles = readServerNodeCache<ProfileReport>(serverNodeCacheKey(nodeId, "profiles"));
     const cachedAuth = readServerNodeCache<AuthVaultReport>(serverNodeCacheKey(nodeId, "auth"));
@@ -500,12 +644,14 @@ export function ServerNodesDialog({
 
     setProbe(cachedProbe?.data ?? null);
     setProfiles(cachedProfiles?.data.profiles ?? []);
-    setSelectedProfileName((current) => {
-      const nextProfiles = cachedProfiles?.data.profiles ?? [];
-      return nextProfiles.some((profile) => profile.name === current)
-        ? current
-        : nextProfiles[0]?.name ?? "";
-    });
+    const nextProfiles = cachedProfiles?.data.profiles ?? [];
+    setSelectedProfileName(
+      nextProfiles.length === 0
+        ? rememberedProfileName
+        : nextProfiles.some((profile) => profile.name === rememberedProfileName)
+        ? rememberedProfileName
+        : sortProfiles(nextProfiles, profileSort)[0]?.name ?? "",
+    );
     setSessions(null);
     setAuth(cachedAuth?.data ?? null);
     setSelectedBackupId((current) => {
@@ -718,6 +864,28 @@ export function ServerNodesDialog({
     }
   }
 
+  async function loadAvailableSshHosts() {
+    if (sshHostsLoading) return;
+    setSshHostsLoading(true);
+    setSshHostsError(null);
+    try {
+      setSshHostReport(await listSshHosts());
+    } catch (loadError) {
+      setSshHostsError(messageOf(loadError, "读取 SSH 主机配置失败"));
+    } finally {
+      setSshHostsLoading(false);
+    }
+  }
+
+  function selectSshHost(value: string | SshHostOption | null) {
+    const sshTarget = typeof value === "string" ? value : value?.alias ?? "";
+    setNodeDraft((current) => ({
+      ...current,
+      sshTarget,
+      name: !current.id && !current.name.trim() && sshTarget ? sshTarget : current.name,
+    }));
+  }
+
   async function refreshSelectedNode(nodeId = selectedNodeId) {
     if (!nodeId) return;
     setAction("refresh");
@@ -742,7 +910,7 @@ export function ServerNodesDialog({
         setSelectedProfileName((current) =>
           result.data?.profiles.some((profile) => profile.name === current)
             ? current
-            : result.data?.profiles[0]?.name ?? "",
+            : sortProfiles(result.data?.profiles ?? [], profileSort)[0]?.name ?? "",
         );
       }
     } catch (refreshError) {
@@ -794,6 +962,7 @@ export function ServerNodesDialog({
     setAction("delete-node");
     try {
       clearServerNodeCacheForNode(selectedNode.id);
+      window.localStorage.removeItem(selectedServerProfileStorageKey(selectedNode.id));
       const next = await deleteServerNode(selectedNode.id);
       setReport(next);
       setSelectedNodeId(next.nodes[0]?.id ?? "");
@@ -835,6 +1004,96 @@ export function ServerNodesDialog({
       onFeedback?.({ severity: "success", text: `${profileDraft.name} 已在服务器创建` });
     } catch (createError) {
       setError(messageOf(createError, "创建服务器 profile 失败"));
+    } finally {
+      setAction(null);
+    }
+  }
+
+  function openProfileModelDialog() {
+    if (!selectedProfile) return;
+    setProfileModelDraft({
+      model: selectedProfile.model || "",
+      reasoningEffort: selectedProfile.reasoningEffort || "xhigh",
+    });
+    setProfileModelDialogOpen(true);
+  }
+
+  async function updateSelectedProfileModel() {
+    if (!selectedNodeId || !selectedProfile) return;
+    setAction("update-model");
+    setError(null);
+    try {
+      const result = await executeRemote({
+        kind: "update-profile-model",
+        input: {
+          profileName: selectedProfile.name,
+          model: profileModelDraft.model.trim(),
+          reasoningEffort: profileModelDraft.reasoningEffort.trim() || null,
+        },
+      });
+      if (!result.ok) throw new Error(result.error?.message || "更新服务器模型失败");
+      setConfirmAction(null);
+      setProfileModelDialogOpen(false);
+      clearServerNodeCacheForNode(selectedNodeId);
+      await refreshSelectedNode(selectedNodeId);
+      onFeedback?.({
+        severity: "success",
+        text: `${selectedProfile.name} 已切换为 ${profileModelDraft.model.trim()}`,
+      });
+    } catch (updateError) {
+      setConfirmAction(null);
+      setError(messageOf(updateError, "更新服务器模型失败"));
+    } finally {
+      setAction(null);
+    }
+  }
+
+  async function openProfileSyncDialog() {
+    setAction("load-local-profiles");
+    setError(null);
+    try {
+      const local = await listLocalProfiles();
+      const preferred = local.profiles.find((profile) => (
+        profile.name.startsWith("codex-")
+        && !profiles.some((remoteProfile) => remoteProfile.name === profile.name)
+      )) ?? local.profiles.find((profile) => profile.name.startsWith("codex-"));
+      setLocalProfiles(local.profiles);
+      setSyncSourceProfileName(preferred?.name ?? "");
+      setSyncTargetProfileName(preferred?.name ?? "");
+      setSyncAuth(Boolean(preferred?.account));
+      setProfileSyncDialogOpen(true);
+    } catch (loadError) {
+      setError(messageOf(loadError, "读取本机 Profiles 失败"));
+    } finally {
+      setAction(null);
+    }
+  }
+
+  async function syncSelectedProfile() {
+    if (!selectedNodeId || !syncSourceProfile) return;
+    setAction("sync-profile");
+    setError(null);
+    try {
+      const result: SyncServerProfileReport = await syncServerProfile({
+        nodeId: selectedNodeId,
+        sourceProfileName: syncSourceProfile.name,
+        targetProfileName: syncTargetProfileName,
+        syncAuth,
+        confirmSensitive: syncAuth,
+      });
+      clearServerNodeCacheForNode(selectedNodeId);
+      setConfirmAction(null);
+      setProfileSyncDialogOpen(false);
+      await refreshSelectedNode(selectedNodeId);
+      setSelectedProfileName(result.targetProfileName);
+      setTab("profiles");
+      onFeedback?.({
+        severity: "success",
+        text: `${result.targetProfileName} 已同步到服务器${result.authSynced ? "并完成认证" : ""}`,
+      });
+    } catch (syncError) {
+      setConfirmAction(null);
+      setError(messageOf(syncError, "同步服务器 Profile 失败"));
     } finally {
       setAction(null);
     }
@@ -977,7 +1236,11 @@ export function ServerNodesDialog({
       const next = await remoteData<WechatBridgeReport>({ kind, profileName: selectedProfile.name });
       setWechat(next);
       if (feishu) rememberResource(selectedNodeId, "channels", { wechat: next, feishu });
-      onFeedback?.({ severity: "success", text: `服务器微信桥接已${kind === "wechat-stop" ? "停止" : kind === "wechat-start" ? "启动" : "重启"}` });
+      const bridge = next.bridges.find((item) => item.profileName === selectedProfile.name);
+      const text = bridge?.connectionState === "awaiting-scan"
+        ? `${selectedProfile.name} 已启动，请扫描二维码`
+        : `服务器微信桥接已${kind === "wechat-stop" ? "停止" : kind === "wechat-start" ? "启动" : "重启"}`;
+      onFeedback?.({ severity: "success", text });
     } catch (channelError) {
       setError(messageOf(channelError, "服务器微信桥接操作失败"));
     } finally {
@@ -1072,6 +1335,18 @@ export function ServerNodesDialog({
       ) : null}
       {tab === "profiles" && probe?.status.cliInstalled ? (
         <Box className="server-profile-toolbar">
+          <TextField
+            className="server-profile-sort"
+            select
+            size="small"
+            value={profileSort}
+            onChange={(event) => setProfileSort(event.target.value as ProfileSortMode)}
+            slotProps={{ htmlInput: { "aria-label": "服务器 Profile 排序" } }}
+          >
+            {PROFILE_SORT_OPTIONS.map((option) => (
+              <MenuItem key={option.value} value={option.value}>{option.label}</MenuItem>
+            ))}
+          </TextField>
           <Button
             size="small"
             startIcon={<AddRoundedIcon />}
@@ -1081,6 +1356,14 @@ export function ServerNodesDialog({
             }}
           >
             新增服务器 Profile
+          </Button>
+          <Button
+            size="small"
+            startIcon={<SyncAltRoundedIcon />}
+            onClick={() => void openProfileSyncDialog()}
+            disabled={Boolean(action)}
+          >
+            从本机同步
           </Button>
         </Box>
       ) : null}
@@ -1220,6 +1503,11 @@ export function ServerNodesDialog({
           {probe?.status.reachable && !probe.status.codexInstalled ? (
             <Alert severity="warning">服务器尚未安装 Codex CLI；节点诊断可用，但 Profile 无法启动。</Alert>
           ) : null}
+          {probe?.status.cliInstalled && !supportsProfileModelUpdate ? (
+            <Alert severity="info">
+              服务器节点版本为 {probe.status.cliVersion || "未知"}；升级到 {MIN_PROFILE_MODEL_UPDATE_VERSION} 后可直接反显并选择 Profile 模型。
+            </Alert>
+          ) : null}
         </Box>
       ) : null}
 
@@ -1239,7 +1527,7 @@ export function ServerNodesDialog({
         ) : (
           <Box className="server-profile-layout">
             <Box className="server-profile-list">
-              {profiles.map((profile) => (
+              {sortedProfiles.map((profile) => (
                 <button
                   type="button"
                   key={profile.name}
@@ -1257,6 +1545,7 @@ export function ServerNodesDialog({
                 <Typography variant="caption" color="text.secondary">{selectedProfile.codexHome}</Typography>
                 <Box className="server-profile-meta">
                   <Fact label="模型" value={selectedProfile.model || "未配置"} />
+                  <Fact label="Provider" value={selectedProfile.modelProvider || "OpenAI 官方 / 默认"} />
                   <Fact label="推理等级" value={selectedProfile.reasoningEffort || "默认"} />
                   <Fact label="认证账户" value={accountIdentity(selectedProfile)} />
                   <Fact label="账户套餐" value={accountPlan(selectedProfile)} />
@@ -1264,6 +1553,16 @@ export function ServerNodesDialog({
                   <Fact label="运行状态" value={selectedProfile.isRunning ? "运行中" : "已停止"} />
                 </Box>
                 <Stack direction="row" spacing={1}>
+                  <Tooltip title={!supportsProfileModelUpdate ? `服务器节点需升级到 ${MIN_PROFILE_MODEL_UPDATE_VERSION}` : selectedProfile.isDefault ? "默认 Profile 受保护" : selectedProfile.isRunning ? "请先停止 Profile" : "配置模型与推理等级"}>
+                    <span>
+                      <Button
+                        variant="outlined"
+                        startIcon={<TuneRoundedIcon />}
+                        onClick={openProfileModelDialog}
+                        disabled={!supportsProfileModelUpdate || selectedProfile.isDefault || selectedProfile.isRunning}
+                      >配置模型</Button>
+                    </span>
+                  </Tooltip>
                   {selectedProfile.isRunning ? (
                     <Button
                       variant="outlined"
@@ -1305,7 +1604,7 @@ export function ServerNodesDialog({
               onChange={(event) => { setSessionProfileName(event.target.value); setSessionPage(1); }}
             >
               <MenuItem value="">全部 Profile</MenuItem>
-              {profiles.map((profile) => (
+              {sortedProfiles.map((profile) => (
                 <MenuItem key={profile.name} value={profile.name}>{profile.alias || profile.name}</MenuItem>
               ))}
             </TextField>
@@ -1399,7 +1698,7 @@ export function ServerNodesDialog({
               <Button size="small" startIcon={<VpnKeyRoundedIcon />} onClick={() => void createRemoteAuthBackup()} disabled={!selectedProfile || action === "auth-backup"}>备份当前</Button>
             </Box>
             <TextField select label="目标 Profile" size="small" value={selectedProfileName} onChange={(event) => setSelectedProfileName(event.target.value)}>
-              {profiles.map((profile) => <MenuItem key={profile.name} value={profile.name}>{profile.alias || profile.name} · {profile.isRunning ? "运行中" : profile.isDefault ? "默认保护" : "已停止"}</MenuItem>)}
+              {sortedProfiles.map((profile) => <MenuItem key={profile.name} value={profile.name}>{profile.alias || profile.name} · {profile.isRunning ? "运行中" : profile.isDefault ? "默认保护" : "已停止"}</MenuItem>)}
             </TextField>
             {selectedProfile ? (
               <Box className="server-profile-meta">
@@ -1469,12 +1768,23 @@ export function ServerNodesDialog({
         ) : (
           <Box className="server-resource-panel server-channel-panel">
             <Box className="server-channel-block">
-              <Box className="server-resource-heading"><Box><Typography variant="subtitle2">微信桥接</Typography><Typography variant="caption">{selectedWechat ? `实例 ${selectedWechat.instance}${selectedWechatIsExternal ? " · 外部服务" : ""}` : "未配置"}</Typography></Box><StatusBadge label={selectedWechat?.running ? "运行中" : selectedWechat?.tokenExists ? "已绑定" : "未绑定"} tone={selectedWechat?.running ? "success" : selectedWechat?.tokenExists ? "info" : "neutral"} /></Box>
+              <Box className="server-resource-heading"><Box><Typography variant="subtitle2">微信桥接</Typography><Typography variant="caption">{selectedWechat ? `实例 ${selectedWechat.instance}${selectedWechatIsExternal ? " · 外部服务" : ""}` : "未配置"}</Typography></Box><StatusBadge label={selectedWechatState.label} tone={selectedWechatState.tone} /></Box>
               {selectedWechatIsExternal ? <Alert severity="info">检测到服务器已有微信服务，当前仅监控状态，不会从 Mac 停止、重启或解绑。</Alert> : null}
+              {selectedWechat?.lastError ? <Alert severity="error">{selectedWechat.lastError}</Alert> : null}
+              {selectedWechat?.connectionState === "awaiting-scan" && selectedWechatLog ? (
+                <Box className="server-wechat-scan">
+                  <Box>
+                    <Typography variant="subtitle2">微信扫码绑定</Typography>
+                    <Typography variant="caption">使用微信扫描下方二维码；二维码过期会自动刷新，绑定状态也会自动更新。</Typography>
+                  </Box>
+                  <Box component="pre" className="feature-code-block server-wechat-qr-log">{selectedWechatLog}</Box>
+                </Box>
+              ) : null}
               <Stack direction="row" spacing={1}>
                 <Button startIcon={<PlayArrowRoundedIcon />} onClick={() => void runWechatAction("wechat-start")} disabled={!selectedProfile || Boolean(selectedWechat?.running) || selectedWechatIsExternal}>启动</Button>
                 <Button startIcon={<StopCircleRoundedIcon />} onClick={() => void runWechatAction("wechat-stop")} disabled={!selectedWechat?.running || selectedWechatIsExternal}>停止</Button>
                 <Button startIcon={<RestartAltRoundedIcon />} onClick={() => void runWechatAction("wechat-restart")} disabled={!selectedProfile || selectedWechatIsExternal}>重启</Button>
+                {selectedWechat?.connectionState === "awaiting-scan" ? <Button startIcon={<ReplayRoundedIcon />} onClick={() => void loadChannels()} disabled={Boolean(action)}>刷新扫码状态</Button> : null}
               </Stack>
             </Box>
             <Box className="server-channel-block">
@@ -1529,7 +1839,7 @@ export function ServerNodesDialog({
         className="server-nodes-dialog"
         actions={selectedNode ? (
           <>
-            <Button startIcon={<EditRoundedIcon />} onClick={() => { setNodeDraft({ id: selectedNode.id, name: selectedNode.name, sshTarget: selectedNode.sshTarget, remoteBinary: selectedNode.remoteBinary }); setNodeDialogOpen(true); }}>编辑节点</Button>
+            <Button startIcon={<EditRoundedIcon />} onClick={() => { setNodeDraft({ id: selectedNode.id, name: selectedNode.name, sshTarget: selectedNode.sshTarget, remoteBinary: selectedNode.remoteBinary }); setNodeAdvancedOpen(selectedNode.remoteBinary !== "rcodexmanager"); setNodeDialogOpen(true); }}>编辑节点</Button>
             <Button color="error" startIcon={<DeleteOutlineRoundedIcon />} onClick={() => setConfirmAction("delete-node")}>移除</Button>
           </>
         ) : undefined}
@@ -1542,7 +1852,7 @@ export function ServerNodesDialog({
             fullWidth
             slotProps={{ input: { startAdornment: <InputAdornment position="start"><SearchRoundedIcon /></InputAdornment> } }}
           />
-          <Tooltip title="新增服务器节点"><IconButton aria-label="新增服务器节点" onClick={() => { setNodeDraft(EMPTY_NODE_DRAFT); setNodeDialogOpen(true); }}><AddRoundedIcon /></IconButton></Tooltip>
+          <Tooltip title="新增服务器节点"><IconButton aria-label="新增服务器节点" onClick={() => { setNodeDraft({ ...EMPTY_NODE_DRAFT }); setNodeAdvancedOpen(false); setNodeDialogOpen(true); }}><AddRoundedIcon /></IconButton></Tooltip>
         </DialogToolbar>
         <MasterDetailLayout list={list} detail={detail} detailOpen={Boolean(selectedNode)} onBack={() => setSelectedNodeId("")} />
       </ManagerDialogShell>
@@ -1551,8 +1861,91 @@ export function ServerNodesDialog({
         <DialogTitle>{nodeDraft.id ? "编辑服务器节点" : "新增服务器节点"}</DialogTitle>
         <DialogContent className="server-node-form">
           <TextField label="名称" value={nodeDraft.name} onChange={(event) => setNodeDraft((current) => ({ ...current, name: event.target.value }))} fullWidth />
-          <TextField label="SSH 主机" value={nodeDraft.sshTarget} onChange={(event) => setNodeDraft((current) => ({ ...current, sshTarget: event.target.value }))} helperText="使用 ~/.ssh/config 中的 Host，例如 aliyun-zsrb" fullWidth />
-          <TextField label="远端 CLI" value={nodeDraft.remoteBinary || ""} onChange={(event) => setNodeDraft((current) => ({ ...current, remoteBinary: event.target.value }))} helperText="命令名或绝对路径，不保存 SSH 密钥" fullWidth />
+          <Autocomplete<SshHostOption, false, false, true>
+            freeSolo
+            options={sshHostReport?.hosts ?? []}
+            value={(sshHostReport?.hosts ?? []).find((host) => host.alias === nodeDraft.sshTarget) ?? null}
+            inputValue={nodeDraft.sshTarget}
+            loading={sshHostsLoading}
+            filterOptions={(options, state) => {
+              const value = state.inputValue.trim().toLowerCase();
+              if (!value) return options;
+              return options.filter((option) =>
+                `${option.alias} ${option.user ?? ""} ${option.hostname ?? ""} ${option.port ?? ""}`
+                  .toLowerCase()
+                  .includes(value),
+              );
+            }}
+            getOptionLabel={(option) => typeof option === "string" ? option : option.alias}
+            isOptionEqualToValue={(option, value) => typeof value !== "string" && option.alias === value.alias}
+            onChange={(_event, value) => selectSshHost(value)}
+            onInputChange={(_event, value) => setNodeDraft((current) => ({ ...current, sshTarget: value }))}
+            loadingText="正在读取 SSH 配置..."
+            noOptionsText="没有匹配的主机，可直接输入"
+            renderOption={(props, option) => {
+              const { key, ...optionProps } = props;
+              const endpoint = [
+                option.user && option.hostname ? `${option.user}@${option.hostname}` : option.hostname,
+                option.port ? `端口 ${option.port}` : null,
+              ].filter(Boolean).join(" · ");
+              return (
+                <Box component="li" key={key} {...optionProps} className="ssh-host-option">
+                  <Box className="ssh-host-option-copy">
+                    <Typography className="ssh-host-option-alias">{option.alias}</Typography>
+                    <Typography className="ssh-host-option-detail">{endpoint || option.sourcePath}</Typography>
+                  </Box>
+                  <Typography className="ssh-host-option-source">{option.sourcePath}</Typography>
+                </Box>
+              );
+            }}
+            renderInput={(params) => (
+              <TextField
+                {...params}
+                label="SSH 主机"
+                helperText={sshHostsError
+                  ? "SSH 配置读取失败，仍可直接输入主机别名或 user@host"
+                  : sshHostReport?.configExists === false
+                    ? `未找到 ${sshHostReport.configPath}，仍可直接输入`
+                    : sshHostReport
+                      ? `来自 ${sshHostReport.configPath} · ${sshHostReport.hosts.length} 个可用主机`
+                      : "读取 ~/.ssh/config，也可直接输入主机别名或 user@host"}
+                slotProps={{
+                  ...params.slotProps,
+                  input: {
+                    ...params.slotProps.input,
+                    endAdornment: (
+                      <>
+                        <Tooltip title="重新读取 SSH 配置">
+                          <span>
+                            <IconButton
+                              aria-label="重新读取 SSH 配置"
+                              size="small"
+                              disabled={sshHostsLoading}
+                              onMouseDown={(event) => event.preventDefault()}
+                              onClick={() => { setSshHostReport(null); setSshHostsError(null); void loadAvailableSshHosts(); }}
+                            >
+                              {sshHostsLoading ? <CircularProgress size={16} /> : <ReplayRoundedIcon fontSize="small" />}
+                            </IconButton>
+                          </span>
+                        </Tooltip>
+                        {params.slotProps.input.endAdornment}
+                      </>
+                    ),
+                  },
+                }}
+              />
+            )}
+          />
+          <Button
+            className="server-node-advanced-toggle"
+            onClick={() => setNodeAdvancedOpen((current) => !current)}
+            endIcon={nodeAdvancedOpen ? <ExpandLessRoundedIcon /> : <ExpandMoreRoundedIcon />}
+          >
+            高级设置
+          </Button>
+          <Collapse in={nodeAdvancedOpen} unmountOnExit>
+            <TextField label="远端 CLI" value={nodeDraft.remoteBinary || ""} onChange={(event) => setNodeDraft((current) => ({ ...current, remoteBinary: event.target.value }))} helperText="默认使用 rcodexmanager，也可填写绝对路径；不会保存 SSH 密钥" fullWidth />
+          </Collapse>
         </DialogContent>
         <DialogActions><Button onClick={() => setNodeDialogOpen(false)}>取消</Button><Button variant="contained" onClick={() => void saveNode()} disabled={!nodeDraft.name.trim() || !nodeDraft.sshTarget.trim() || action === "save-node"}>{action === "save-node" ? <CircularProgress size={18} /> : "保存并检查"}</Button></DialogActions>
       </Dialog>
@@ -1567,6 +1960,140 @@ export function ServerNodesDialog({
         <DialogActions><Button onClick={() => setProfileDialogOpen(false)}>取消</Button><Button variant="contained" onClick={() => void createServerProfile()} disabled={!/^codex-[a-z0-9-]+$/.test(profileDraft.name) || action === "create-profile"}>创建</Button></DialogActions>
       </Dialog>
 
+      <Dialog open={profileModelDialogOpen} onClose={() => setProfileModelDialogOpen(false)} fullWidth maxWidth="xs" className="app-task-dialog">
+        <DialogTitle>配置服务器模型</DialogTitle>
+        <DialogContent className="server-node-form">
+          <Box className="server-profile-meta">
+            <Fact label="Profile" value={selectedProfile?.alias || selectedProfile?.name || "-"} />
+            <Fact label="当前 Provider" value={selectedProfile?.modelProvider || "OpenAI 官方 / 默认"} />
+          </Box>
+          <Autocomplete
+            freeSolo
+            options={profileModelOptions}
+            value={profileModelDraft.model}
+            onChange={(_event, value) => setProfileModelDraft((current) => ({ ...current, model: value || "" }))}
+            onInputChange={(_event, value) => setProfileModelDraft((current) => ({ ...current, model: value }))}
+            renderInput={(params) => (
+              <TextField
+                {...params}
+                label="模型"
+                helperText="候选来自服务器已发现配置，也可以输入自定义模型名"
+              />
+            )}
+          />
+          <Autocomplete
+            freeSolo
+            options={reasoningOptions}
+            value={profileModelDraft.reasoningEffort}
+            onChange={(_event, value) => setProfileModelDraft((current) => ({ ...current, reasoningEffort: value || "" }))}
+            onInputChange={(_event, value) => setProfileModelDraft((current) => ({ ...current, reasoningEffort: value }))}
+            renderInput={(params) => <TextField {...params} label="推理等级" />}
+          />
+          <Alert severity={selectedProfile?.modelProvider ? "info" : "success"}>
+            {selectedProfile?.modelProvider
+              ? `将保留现有 Provider“${selectedProfile.modelProvider}”及路由配置，只更新模型和推理等级。`
+              : "将保留认证、会话和 User Data，只更新模型和推理等级。"}
+          </Alert>
+        </DialogContent>
+        <DialogActions>
+          <Button onClick={() => setProfileModelDialogOpen(false)}>取消</Button>
+          <Button
+            variant="contained"
+            startIcon={<TuneRoundedIcon />}
+            onClick={() => setConfirmAction("update-model")}
+            disabled={!profileModelDraft.model.trim() || !profileModelDraft.reasoningEffort.trim() || action === "update-model"}
+          >应用模型</Button>
+        </DialogActions>
+      </Dialog>
+
+      <Dialog open={profileSyncDialogOpen} onClose={() => setProfileSyncDialogOpen(false)} fullWidth maxWidth="sm" className="app-task-dialog">
+        <DialogTitle>从本机同步 Profile</DialogTitle>
+        <DialogContent className="server-node-form">
+          <TextField
+            select
+            label="本机 Profile"
+            value={syncSourceProfileName}
+            onChange={(event) => {
+              const name = event.target.value;
+              const source = localProfiles.find((profile) => profile.name === name);
+              setSyncSourceProfileName(name);
+              setSyncTargetProfileName(name);
+              setSyncAuth(Boolean(source?.account));
+            }}
+            fullWidth
+          >
+            {localProfiles.filter((profile) => profile.name.startsWith("codex-")).map((profile) => (
+              <MenuItem key={profile.name} value={profile.name}>
+                {profile.alias || profile.name} · {profile.account?.email || "未登录"}
+              </MenuItem>
+            ))}
+          </TextField>
+          <TextField
+            label="服务器 Profile 名称"
+            value={syncTargetProfileName}
+            onChange={(event) => setSyncTargetProfileName(event.target.value.trim().toLowerCase())}
+            error={syncTargetExists}
+            helperText={syncTargetExists ? "服务器上已经存在同名 Profile" : "必须以 codex- 开头"}
+            fullWidth
+          />
+          {syncSourceProfile ? (
+            <Box className="server-profile-meta">
+              <Fact label="模型" value={syncSourceProfile.model || "默认"} />
+              <Fact label="推理等级" value={syncSourceProfile.reasoningEffort || "默认"} />
+              <Fact label="认证账户" value={accountIdentity(syncSourceProfile)} />
+              <Fact label="账户套餐" value={accountPlan(syncSourceProfile)} />
+            </Box>
+          ) : null}
+          <FormControlLabel
+            control={(
+              <Switch
+                checked={syncAuth}
+                onChange={(event) => setSyncAuth(event.target.checked)}
+                disabled={!syncSourceProfile?.account}
+              />
+            )}
+            label="同步认证信息"
+          />
+          <Alert severity={syncAuth ? "warning" : "info"}>
+            {syncAuth
+              ? "认证仅通过 SSH 标准输入传输，服务器导入后立即清理临时文件，不保存到 Mac 应用元数据或任务日志。"
+              : "只同步模型、推理等级、别名和分类，不复制本机会话与 User Data。"}
+          </Alert>
+        </DialogContent>
+        <DialogActions>
+          <Button onClick={() => setProfileSyncDialogOpen(false)}>取消</Button>
+          <Button
+            variant="contained"
+            startIcon={<SyncAltRoundedIcon />}
+            onClick={() => syncAuth ? setConfirmAction("sync-profile") : void syncSelectedProfile()}
+            disabled={
+              !syncSourceProfile
+              || !/^codex-[a-z0-9-]+$/.test(syncTargetProfileName)
+              || syncTargetExists
+              || action === "sync-profile"
+            }
+          >同步到服务器</Button>
+        </DialogActions>
+      </Dialog>
+
+      <SensitiveActionConfirmDialog
+        open={confirmAction === "update-model"}
+        title={`更新 ${selectedProfile?.name || "服务器 Profile"} 的模型？`}
+        description={`将把模型切换为 ${profileModelDraft.model || "未填写"}，推理等级为 ${profileModelDraft.reasoningEffort || "默认"}。写入前会备份 config.toml，不修改认证、会话和 User Data。`}
+        confirmLabel="更新模型"
+        busy={action === "update-model"}
+        onCancel={() => setConfirmAction(null)}
+        onConfirm={() => void updateSelectedProfileModel()}
+      />
+      <SensitiveActionConfirmDialog
+        open={confirmAction === "sync-profile"}
+        title={`同步 ${syncSourceProfile?.name || "本机 Profile"} 的认证？`}
+        description={`将通过 SSH 加密连接把认证应用到服务器新 Profile ${syncTargetProfileName}。源文件不会修改，敏感内容不会进入任务日志。`}
+        confirmLabel="创建并同步"
+        busy={action === "sync-profile"}
+        onCancel={() => setConfirmAction(null)}
+        onConfirm={() => void syncSelectedProfile()}
+      />
       <SensitiveActionConfirmDialog
         open={confirmAction === "delete-node"}
         title="移除服务器节点？"

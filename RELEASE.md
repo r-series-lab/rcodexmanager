@@ -1,38 +1,10 @@
-# Release
+# 发布 / Release
 
-## rCodexManager 0.1.0
+维护中的发布合同提供中英文两个版本：
 
-- Desktop profile manager for local macOS and remote Linux Codex profiles.
-- Unified session, auth vault, remote-channel, model-route, Doctor, and server-node management.
-- Shared JSON CLI plus a Linux headless node that auto-detects Bash/Zsh and uses tmux for persistent profile lifecycle.
+- [发布流程](docs/RELEASE_WORKFLOW.md)
+- [Release workflow](docs/RELEASE_WORKFLOW_EN.md)
 
-This repository uses a stage-one preview release workflow.
+发布 Tag 只能由发布服务器在获批的周末窗口创建。不要上传开发 Mac 本地构建的安装包。
 
-## Targets
-
-- macOS Apple Silicon: `aarch64-apple-darwin`
-- macOS Intel: `x86_64-apple-darwin`
-- Windows x64: `x86_64-pc-windows-msvc`
-- Linux headless x64: `x86_64-unknown-linux-gnu`
-
-## How to Build
-
-Open GitHub Actions and run **Release rCodexManager packages** manually. The workflow uploads desktop packages and `rcodexmanager-linux-x86_64.tar.gz` as artifacts.
-
-To create a draft GitHub Release, push a version tag:
-
-```bash
-git tag v0.1.0
-git push origin v0.1.0
-```
-
-The workflow creates a draft release and attaches the generated macOS, Windows, and Linux headless packages.
-
-## Unsigned Package Notice
-
-These stage-one packages use macOS ad-hoc signing only and are not Developer ID signed or notarized. Windows packages are not Authenticode signed.
-
-- macOS may show a Gatekeeper warning.
-- Windows may show a SmartScreen warning.
-
-Signing and notarization are intentionally left for a later release stage.
+The maintained release contract is available in both Chinese and English. Release Tags are created by the publishing server during the approved weekend window; installers built on the development Mac must not be uploaded.

@@ -77,6 +77,7 @@ export function serverNodeOperationLabel(operation: ServerNodeOperation): string
     case "create-profile": return "创建服务器 Profile";
     case "launch-profile": return "启动服务器 Profile";
     case "terminate-profile": return "停止服务器 Profile";
+    case "update-profile-model": return "更新服务器模型";
   }
 }
 

@@ -169,6 +169,14 @@ pub struct ResetProfileInput {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
+pub struct UpdateProfileModelInput {
+    pub profile_name: String,
+    pub model: String,
+    pub reasoning_effort: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct ImportAuthInput {
     pub name: String,
     pub source_path: String,
@@ -418,6 +426,7 @@ pub struct ProfileInfo {
     pub user_data_dir: String,
     pub config_path: String,
     pub model: Option<String>,
+    pub model_provider: Option<String>,
     pub reasoning_effort: Option<String>,
     pub home_exists: bool,
     pub user_data_exists: bool,
@@ -1158,6 +1167,7 @@ pub fn list_profiles(context: &ProfileContext) -> Result<ProfileReport, String> 
                 user_data_dir: path_string(&user_data_dir),
                 config_path: path_string(&config_path),
                 model: config.model,
+                model_provider: config.model_provider,
                 reasoning_effort: config.reasoning_effort,
                 home_exists: codex_home.exists(),
                 user_data_exists: user_data_dir.exists(),
@@ -5316,6 +5326,62 @@ pub fn reset_profile(
     })
 }
 
+pub fn update_profile_model(
+    context: &ProfileContext,
+    input: UpdateProfileModelInput,
+) -> Result<ProfileActionReport, String> {
+    validate_profile_selector_name(&input.profile_name)?;
+    let profile = find_profile(context, &input.profile_name)?;
+    ensure_mutable_profile(&profile, "update model for")?;
+    if profile.is_running {
+        return Err(format!(
+            "{} is running; stop it before updating the model",
+            profile.name
+        ));
+    }
+
+    let model = validate_model_config_value(&input.model, "model")?;
+    let reasoning_effort = validate_model_config_value(
+        input
+            .reasoning_effort
+            .as_deref()
+            .or(profile.reasoning_effort.as_deref())
+            .unwrap_or(DEFAULT_REASONING_EFFORT),
+        "reasoning effort",
+    )?;
+    let config_path = PathBuf::from(&profile.config_path);
+    if let Some(parent) = config_path.parent() {
+        fs::create_dir_all(parent).map_err(|error| error.to_string())?;
+    }
+    let mut backups = Vec::new();
+    if config_path.exists() {
+        backups.push(backup_file_copy(&config_path, "model-update")?);
+    }
+    let mut table = read_toml_table_or_empty(&config_path)?;
+    table.insert("model".to_string(), toml::Value::String(model.clone()));
+    table.insert(
+        "model_reasoning_effort".to_string(),
+        toml::Value::String(reasoning_effort.clone()),
+    );
+    ensure_websocket_features_in_table(&mut table)?;
+    let config_text =
+        toml::to_string_pretty(&toml::Value::Table(table)).map_err(|error| error.to_string())?;
+    write_text_atomic(&config_path, &config_text)?;
+
+    let refreshed = find_profile(context, &profile.name)?;
+    Ok(ProfileActionReport {
+        generated_at: now_iso(),
+        action: "model-update".to_string(),
+        zshrc_path: path_string(&context.zshrc_path),
+        profile: Some(refreshed),
+        backups,
+        message: format!(
+            "updated {} model to {} / {}",
+            profile.name, model, reasoning_effort
+        ),
+    })
+}
+
 pub fn launch_profile(context: &ProfileContext, name: &str) -> Result<ProfileActionReport, String> {
     validate_profile_selector_name(name)?;
     let profile = find_profile(context, name)?;
@@ -5554,6 +5620,7 @@ pub fn import_profile_auth(
         backups.push(backup_file_copy(&target_auth_path, "import")?);
     }
     write_json_atomic(&target_auth_path, &imported.auth_json)?;
+    set_private_file_permissions(&target_auth_path)?;
 
     let refreshed = find_profile(context, &input.name)?;
     let refresh_hint = if imported.has_refresh_token {
@@ -5825,6 +5892,7 @@ fn default_profile_info(
         user_data_dir: path_string(&user_data_dir),
         config_path: path_string(&config_path),
         model: config.model,
+        model_provider: config.model_provider,
         reasoning_effort: config.reasoning_effort,
         home_exists: codex_home.exists(),
         user_data_exists: user_data_dir.exists(),
@@ -7342,6 +7410,18 @@ fn write_json_atomic(path: &Path, value: &Value) -> Result<(), String> {
         let _ = fs::remove_file(&tmp_path);
         error.to_string()
     })
+}
+
+fn set_private_file_permissions(path: &Path) -> Result<(), String> {
+    #[cfg(unix)]
+    {
+        let mut permissions = fs::metadata(path)
+            .map_err(|error| error.to_string())?
+            .permissions();
+        permissions.set_mode(0o600);
+        fs::set_permissions(path, permissions).map_err(|error| error.to_string())?;
+    }
+    Ok(())
 }
 
 fn write_text_atomic(path: &Path, contents: &str) -> Result<(), String> {
@@ -10750,6 +10830,7 @@ fn looks_like_chat_completions_url(value: &str) -> bool {
 #[derive(Debug, Default)]
 struct CodexConfig {
     model: Option<String>,
+    model_provider: Option<String>,
     reasoning_effort: Option<String>,
     websocket_features_enabled: bool,
 }
@@ -10758,14 +10839,38 @@ fn read_codex_config(config_path: &Path) -> CodexConfig {
     let Ok(contents) = fs::read_to_string(config_path) else {
         return CodexConfig::default();
     };
+    let parsed_table = contents
+        .parse::<toml::Value>()
+        .ok()
+        .and_then(|value| value.as_table().cloned());
+    let read_string = |key: &str| {
+        parsed_table
+            .as_ref()
+            .and_then(|table| table_string(table, key))
+            .or_else(|| read_top_level_string(&contents, key))
+    };
 
     CodexConfig {
-        model: read_top_level_string(&contents, "model"),
-        reasoning_effort: read_top_level_string(&contents, "model_reasoning_effort"),
+        model: read_string("model"),
+        model_provider: read_string("model_provider"),
+        reasoning_effort: read_string("model_reasoning_effort"),
         websocket_features_enabled: CODEX_WEBSOCKET_FEATURE_FLAGS
             .iter()
             .all(|flag| read_bool_in_section(&contents, "features", flag) == Some(true)),
     }
+}
+
+fn validate_model_config_value(value: &str, label: &str) -> Result<String, String> {
+    let value = value.trim();
+    if value.is_empty() {
+        return Err(format!("{label} is required"));
+    }
+    if value.chars().count() > 160 || value.chars().any(char::is_control) {
+        return Err(format!(
+            "{label} must contain at most 160 characters and no control characters"
+        ));
+    }
+    Ok(value.to_string())
 }
 
 fn derived_category(reasoning_effort: Option<&str>) -> String {
@@ -11181,12 +11286,12 @@ mod tests {
 
     #[test]
     fn user_data_dir_matching_uses_complete_argument_value() {
-        let default_dir = Path::new("/Users/ikiru/Library/Application Support/Codex");
-        let deep_dir = Path::new("/Users/ikiru/Library/Application Support/Codex-E");
+        let default_dir = Path::new("/Users/example/Library/Application Support/Codex");
+        let deep_dir = Path::new("/Users/example/Library/Application Support/Codex-E");
         let deep_command =
-            "/Applications/Codex.app/Contents/MacOS/Codex --user-data-dir=/Users/ikiru/Library/Application Support/Codex-E";
+            "/Applications/Codex.app/Contents/MacOS/Codex --user-data-dir=/Users/example/Library/Application Support/Codex-E";
         let default_command =
-            "/Applications/Codex.app/Contents/MacOS/Codex --user-data-dir=/Users/ikiru/Library/Application Support/Codex";
+            "/Applications/Codex.app/Contents/MacOS/Codex --user-data-dir=/Users/example/Library/Application Support/Codex";
 
         assert!(command_has_user_data_dir(deep_command, deep_dir));
         assert!(!command_has_user_data_dir(deep_command, default_dir));
@@ -11218,10 +11323,10 @@ mod tests {
     #[test]
     fn linux_process_environment_maps_codex_home_to_profile() {
         let codex_home = parse_codex_home_from_environ(
-            b"PATH=/usr/local/bin\0CODEX_HOME=/home/admin/.codex-remote-test\0TERM=xterm\0",
+            b"PATH=/usr/local/bin\0CODEX_HOME=/home/demo/.codex-remote-test\0TERM=xterm\0",
         )
         .unwrap();
-        assert_eq!(codex_home, Path::new("/home/admin/.codex-remote-test"));
+        assert_eq!(codex_home, Path::new("/home/demo/.codex-remote-test"));
 
         let processes = vec![RunningCodexProcess {
             pid: 42,
@@ -11231,8 +11336,8 @@ mod tests {
         assert_eq!(
             matching_profile_pids(
                 &processes,
-                Path::new("/home/admin/.codex-remote-test"),
-                Path::new("/home/admin/.local/share/rcodexmanager/profiles/codex-remote-test"),
+                Path::new("/home/demo/.codex-remote-test"),
+                Path::new("/home/demo/.local/share/rcodexmanager/profiles/codex-remote-test"),
             ),
             vec![42]
         );
@@ -11241,10 +11346,10 @@ mod tests {
     #[test]
     fn server_launch_command_quotes_profile_paths_and_proxy_values() {
         let command = server_profile_launch_command(
-            "/home/admin/codex profile",
+            "/home/demo/codex profile",
             Path::new("/usr/local/bin/codex"),
         );
-        assert!(command.starts_with("exec env CODEX_HOME='/home/admin/codex profile'"));
+        assert!(command.starts_with("exec env CODEX_HOME='/home/demo/codex profile'"));
         assert!(command.ends_with("'/usr/local/bin/codex'"));
     }
 

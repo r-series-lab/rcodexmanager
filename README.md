@@ -1,5 +1,9 @@
 # rCodexManager
 
+<p align="center">
+  中文 · <a href="README_EN.md">English</a>
+</p>
+
 `rCodexManager` 是一个本地优先的 Codex 多 profile 工作台。它把多个隔离的 Codex 实例、历史会话、登录态备份、远程消息渠道和第三方模型路由集中在一个桌面应用与 CLI 中管理，也支持从 Mac 通过 SSH 管理 Linux 服务器上的 Codex。
 
 它适合这些场景：
@@ -112,6 +116,9 @@ Mac App 顶部的“服务器节点”入口通过已配置的 SSH Host 连接 L
 - 支持按需查看 Profile、会话、认证、模型路由、微信/飞书渠道和 Doctor；已读取的节点元数据在当前 App 进程内缓存 30 秒。
 - 服务器会话支持搜索、Profile 筛选和 `10/20/50` 分页，只在选中会话后读取单条详情；切换筛选时会丢弃过期响应。
 - 支持创建服务器 Profile、启动/停止、认证备份与应用、路由预览/测试/应用/恢复。
+- Profile 列表反显模型、推理等级和 Provider；停止中的非默认 Profile 可从服务器已发现模型中选择或填写自定义模型。模型更新只写 `config.toml`，写入前备份，不影响认证、会话、路由和 User Data。
+- Profiles 页支持“从本机同步”：复制模型、推理等级、别名和分类到新的服务器 Profile；可选择同时同步登录认证，不复制会话和 User Data。
+- 认证同步必须二次确认，内容只经 SSH 标准输入传输。服务器临时文件使用私有权限并在导入后清理，认证正文不进入节点配置、任务历史或诊断日志。
 - 默认 Profile 和运行中 Profile 继续受到写入保护；敏感操作仍需二次确认。
 - 远程启动依赖服务器安装 `tmux`；普通查看、诊断和配置检查不依赖 `tmux`。
 - SSH 输出在命令执行期间持续读取，支持有界的大型会话详情，不会等待进程结束后才排空管道。
@@ -119,6 +126,7 @@ Mac App 顶部的“服务器节点”入口通过已配置的 SSH Host 连接 L
 - 同一 Mac App 不允许向同一节点同时发起两个写操作，读取操作仍可独立执行。
 - 节点弹窗保留当前窗口内每个节点最近 10 条任务摘要；只读任务支持安全重试，写入失败会先提示刷新状态。
 - 常见 SSH、超时、依赖缺失和版本不兼容错误会转换为可执行建议，诊断信息可脱敏复制给 AI 排查。
+- App 会检查节点 CLI 版本；服务器版本不支持某项写操作时会先提示升级并禁用对应按钮。
 
 ## 快速开始
 
@@ -131,6 +139,12 @@ npm run dev
 
 ```bash
 npm run build
+```
+
+`npm run build` 只用于本地开发验证，不作为正式 Release 资产来源。日常源码验收使用：
+
+```bash
+npm run check
 ```
 
 测试无界面节点，并在 Linux 或发布工作流中构建归档：
@@ -147,9 +161,15 @@ npm run headless:package
 ~/.local/bin/rcodexmanager --json doctor
 ```
 
-如果非交互 SSH 的 `PATH` 不包含 `~/.local/bin`，在 Mac 的节点设置中填写绝对路径，例如 `/home/admin/.local/bin/rcodexmanager`。服务器需要已有 Codex CLI、SSH 公钥登录；启停 Profile 还需要 `tmux`。
+如果非交互 SSH 的 `PATH` 不包含 `~/.local/bin`，在 Mac 的节点设置中填写绝对路径，例如 `/home/demo/.local/bin/rcodexmanager`。服务器需要已有 Codex CLI、SSH 公钥登录；启停 Profile 还需要 `tmux`。
 
 服务器节点保持手动安装模式。可以让 AI 通过 SSH 完成上传、解压、执行 `install.sh` 和 Doctor 验证；App 不负责修改 SSH、防火墙或自动升级服务器组件。
+
+## 发布流程
+
+rCodexManager 不从开发 Mac 上传桌面安装包或 Linux Headless 归档。批准的周末发布窗口内，由发布服务器生成过滤后的干净源码记录并推送与版本一致的 `vX.Y.Z` Tag；GitHub Actions 从该 Tag 构建 macOS、Windows 与 Linux Headless 候选产物，并创建带 SHA-256 清单的 Draft prerelease。
+
+当前 `0.1.x` 桌面包仍未完成 macOS Developer ID 签名与公证、Windows Authenticode 签名和 updater 闭环，因此不会作为官网正式下载。详见[发布流程](docs/RELEASE_WORKFLOW.md)，版本变化见[更新日志](CHANGELOG.md)。
 
 ### Codex Skill
 
@@ -283,6 +303,7 @@ rcodexmanager --json model-route test-draft --name codex-g --preset glm --model 
 
 ```bash
 npm run dev          # Tauri 桌面开发版
+npm run check        # 统一源码验收，不生成 Release 资产
 npm run web:dev      # 仅启动 Vite 前端
 npm run web:build    # TypeScript + Vite 构建
 npm run web:test     # Vitest + React Testing Library

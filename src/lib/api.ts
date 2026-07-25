@@ -68,12 +68,35 @@ import type {
   ServerNodeOperationReport,
   ServerNodeProbeReport,
   ServerNodeReport,
+  SshHostReport,
+  SyncServerProfileInput,
+  SyncServerProfileReport,
   UpsertServerNodeInput,
 } from "./types";
 
 export async function listServerNodes(): Promise<ServerNodeReport> {
   if (!isTauriRuntime()) return createMockServerNodeReport();
   return invoke<ServerNodeReport>("list_server_nodes_command");
+}
+
+export async function listSshHosts(): Promise<SshHostReport> {
+  if (!isTauriRuntime()) {
+    return {
+      generatedAt: new Date().toISOString(),
+      configPath: "~/.ssh/config",
+      configExists: true,
+      hosts: [
+        {
+          alias: "demo-server",
+          hostname: "203.0.113.10",
+          user: "admin",
+          port: 22,
+          sourcePath: "~/.ssh/config",
+        },
+      ],
+    };
+  }
+  return invoke<SshHostReport>("list_ssh_hosts_command");
 }
 
 export async function upsertServerNode(input: UpsertServerNodeInput): Promise<ServerNodeReport> {
@@ -115,6 +138,15 @@ export async function probeServerNode(nodeId: string): Promise<ServerNodeProbeRe
         },
       };
     }
+    if (scenario === "cli-old") {
+      return {
+        ...report,
+        status: {
+          ...report.status,
+          cliVersion: "0.1.1",
+        },
+      };
+    }
     return report;
   }
   return invoke<ServerNodeProbeReport>("probe_server_node_command", { input: { nodeId } });
@@ -144,6 +176,36 @@ export async function runServerNodeOperation<T = unknown>(
     return report as ServerNodeOperationReport<T>;
   }
   return invoke<ServerNodeOperationReport<T>>("run_server_node_operation_command", { input });
+}
+
+export async function syncServerProfile(
+  input: SyncServerProfileInput,
+): Promise<SyncServerProfileReport> {
+  if (!isTauriRuntime()) {
+    const source = createMockProfileReport().profiles.find((profile) => profile.name === input.sourceProfileName)
+      ?? createMockProfileReport().profiles[0];
+    return {
+      nodeId: input.nodeId,
+      operationId: `node-sync-${Date.now()}-mock`,
+      generatedAt: new Date().toISOString(),
+      sourceProfileName: source.name,
+      targetProfileName: input.targetProfileName,
+      authSynced: input.syncAuth,
+      sourceAccount: source.account,
+      profile: {
+        ...source,
+        name: input.targetProfileName,
+        codexHome: `/home/demo/.${input.targetProfileName}`,
+        userDataDir: `/home/demo/.local/share/rcodexmanager/profiles/${input.targetProfileName}`,
+        configPath: `/home/demo/.${input.targetProfileName}/config.toml`,
+        launcherKind: "server",
+        isRunning: false,
+        runningPids: [],
+        runningProcessCount: 0,
+      },
+    };
+  }
+  return invoke<SyncServerProfileReport>("sync_server_profile_command", { input });
 }
 
 function isTauriRuntime(): boolean {
@@ -652,7 +714,7 @@ export async function repairProfileNetwork(name: string): Promise<CodexNetworkRe
     return {
       generatedAt: new Date().toISOString(),
       profileName: name,
-      configPath: `/Users/ikiru/.${name}/config.toml`,
+      configPath: `~/.${name}/config.toml`,
       configUpdated: true,
       featureFlags: [
         "responses_websockets",
