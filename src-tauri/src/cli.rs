@@ -1,5 +1,5 @@
 use crate::core::{
-    app_identifier, app_name, apply_auth_backup, apply_model_route, binary_name,
+    app_identifier, app_name, apply_auth_backup, apply_model_route, archive_profile, binary_name,
     check_model_route_draft, check_model_route_proxy, cleanup_auth_backups,
     configure_feishu_remote, copy_profile, create_auth_backup, create_auth_backups, create_profile,
     delete_auth_backup, delete_profile, export_auth_backup, import_auth_backup_package,
@@ -7,14 +7,15 @@ use crate::core::{
     list_feishu_remote, list_model_routes, list_profile_sessions, list_profiles,
     list_wechat_bridges, open_feishu_remote_page, preview_auth_backup_package, preview_model_route,
     read_feishu_remote_log, read_model_route_proxy_status, read_profile_quota,
-    read_profile_session_detail, read_wechat_bridge_log, repair_profile_network, reset_profile,
-    restart_feishu_remote, restart_wechat_bridge, restore_model_route, rollback_auth_application,
-    run_doctor, start_feishu_remote, start_wechat_bridge, stop_feishu_remote, stop_wechat_bridge,
-    terminate_profile, unbind_wechat_bridge, update_auth_backup, update_profile_metadata,
-    update_profile_model, ApplyAuthBackupInput, ApplyModelRouteInput, CheckModelRouteProxyInput,
-    CleanupAuthBackupsInput, ConfigureFeishuRemoteInput, CopyProfileInput, CreateAuthBackupInput,
-    CreateAuthBackupsInput, CreateProfileInput, DeleteAuthBackupInput, DoctorReport,
-    ExportAuthBackupInput, FeishuRemotePage, ImportAuthBackupPackageInput, ImportAuthInput,
+    read_profile_session_detail, read_wechat_bridge_log, reset_profile, restart_feishu_remote,
+    restart_wechat_bridge, restore_archived_profile, restore_model_route,
+    rollback_auth_application, run_doctor, run_profile_login_foreground, start_feishu_remote,
+    start_wechat_bridge, stop_feishu_remote, stop_wechat_bridge, terminate_profile,
+    unbind_wechat_bridge, update_auth_backup, update_profile_metadata, update_profile_model,
+    ApplyAuthBackupInput, ApplyModelRouteInput, CheckModelRouteProxyInput, CleanupAuthBackupsInput,
+    ConfigureFeishuRemoteInput, CopyProfileInput, CreateAuthBackupInput, CreateAuthBackupsInput,
+    CreateProfileInput, DeleteAuthBackupInput, DoctorReport, ExportAuthBackupInput,
+    FeishuRemotePage, ImportAuthBackupPackageInput, ImportAuthInput,
     InstallWechatBridgeServiceInput, ListProfileSessionsInput, ModelRoutePreset,
     PreviewAuthBackupPackageInput, PreviewModelRouteInput, ProfileContext, ProfileLauncherKind,
     ProfileMetadataInput, ReadFeishuRemoteLogInput, ReadProfileSessionDetailInput,
@@ -121,6 +122,16 @@ pub enum Commands {
         #[arg(long)]
         note: Option<String>,
     },
+    /// Hide a stopped custom profile from active lists while keeping all data.
+    Archive {
+        #[arg(long)]
+        name: String,
+    },
+    /// Return an archived profile to active lists.
+    Restore {
+        #[arg(long)]
+        name: String,
+    },
     /// Remove a custom launcher and optionally archive its data.
     Delete {
         #[arg(long)]
@@ -155,6 +166,13 @@ pub enum Commands {
         #[arg(long)]
         name: String,
     },
+    /// Sign in one profile with ChatGPT. Use --device-auth on headless hosts.
+    Login {
+        #[arg(long)]
+        name: String,
+        #[arg(long)]
+        device_auth: bool,
+    },
     /// Import trusted auth material into a stopped custom profile.
     #[command(name = "import-auth")]
     ImportAuth {
@@ -164,14 +182,6 @@ pub enum Commands {
         source: String,
         #[arg(long)]
         confirm_sensitive: bool,
-    },
-    /// Enable Responses WebSocket flags and optionally sync system proxy settings.
-    #[command(name = "repair-network")]
-    RepairNetwork {
-        #[arg(long)]
-        name: String,
-        #[arg(long)]
-        skip_launchctl: bool,
     },
     /// Manage local auth backups and application history.
     Auth {
@@ -602,19 +612,6 @@ fn app_info(desktop_available: bool) -> AppInfo {
 }
 
 fn capability_manifest(desktop_available: bool) -> CapabilityManifest {
-    let repair_network_description = if desktop_available {
-        "Enable Codex Responses WebSocket feature flags for a profile and sync the active macOS system proxy into launchctl."
-    } else {
-        "Enable Codex Responses WebSocket feature flags for a profile. Headless nodes do not manage launchctl; use --skip-launchctl."
-    };
-    let repair_network_examples = if desktop_available {
-        vec![
-            "rcodexmanager repair-network --name codex-f --json",
-            "rcodexmanager repair-network --name codex-f --skip-launchctl --json",
-        ]
-    } else {
-        vec!["rcodexmanager repair-network --name codex-f --skip-launchctl --json"]
-    };
     let model_route_description = if desktop_available {
         "Inspect, preview, test, apply, or restore Codex model routing config for stopped non-default profiles; inspect the desktop-owned proxy."
     } else {
@@ -720,6 +717,22 @@ fn capability_manifest(desktop_available: bool) -> CapabilityManifest {
                 ],
             },
             CapabilityInfo {
+                command: "archive",
+                description: "Hide a stopped custom profile from active lists without changing its launcher, authentication, sessions, configuration, or data directories.",
+                json_supported: true,
+                reads_files: true,
+                writes_files: true,
+                examples: vec!["rcodexmanager archive --name codex-f --json"],
+            },
+            CapabilityInfo {
+                command: "restore",
+                description: "Return an archived profile to active lists without rebuilding or moving its data.",
+                json_supported: true,
+                reads_files: true,
+                writes_files: true,
+                examples: vec!["rcodexmanager restore --name codex-f --json"],
+            },
+            CapabilityInfo {
                 command: "model set",
                 description: "Back up config.toml and update only the model and reasoning effort for a stopped custom profile, preserving auth, sessions, provider routing, and user data.",
                 json_supported: true,
@@ -772,6 +785,17 @@ fn capability_manifest(desktop_available: bool) -> CapabilityManifest {
                 examples: vec!["rcodexmanager quota --name codex-f --json"],
             },
             CapabilityInfo {
+                command: "login",
+                description: "Run the official Codex ChatGPT login flow for one profile. Use --device-auth on a remote or headless host.",
+                json_supported: false,
+                reads_files: true,
+                writes_files: true,
+                examples: vec![
+                    "rcodexmanager login --name codex-f",
+                    "rcodexmanager login --name codex-f --device-auth",
+                ],
+            },
+            CapabilityInfo {
                 command: "import-auth",
                 description: "Import a trusted auth.json or ChatGPT session JSON into one stopped profile, backing up the previous auth.json first.",
                 json_supported: true,
@@ -780,14 +804,6 @@ fn capability_manifest(desktop_available: bool) -> CapabilityManifest {
                 examples: vec![
                     "rcodexmanager import-auth --name codex-f --source /path/to/auth.json --confirm-sensitive --json",
                 ],
-            },
-            CapabilityInfo {
-                command: "repair-network",
-                description: repair_network_description,
-                json_supported: true,
-                reads_files: true,
-                writes_files: true,
-                examples: repair_network_examples,
             },
             CapabilityInfo {
                 command: "auth",
@@ -1078,6 +1094,26 @@ pub fn run_from_env_with_desktop(desktop_available: bool) -> CliOutcome {
             }
             Err(message) => emit_action_error(cli.json, &message),
         },
+        Some(Commands::Archive { name }) => match archive_profile(&context, &name) {
+            Ok(report) => {
+                emit_success(cli.json, "archive", &report);
+                if !cli.json {
+                    println!("{}", report.message);
+                }
+                CliOutcome::Exit(0)
+            }
+            Err(message) => emit_action_error(cli.json, &message),
+        },
+        Some(Commands::Restore { name }) => match restore_archived_profile(&context, &name) {
+            Ok(report) => {
+                emit_success(cli.json, "restore", &report);
+                if !cli.json {
+                    println!("{}", report.message);
+                }
+                CliOutcome::Exit(0)
+            }
+            Err(message) => emit_action_error(cli.json, &message),
+        },
         Some(Commands::Delete { name, archive_data }) => {
             match delete_profile(&context, &name, archive_data) {
                 Ok(report) => {
@@ -1170,6 +1206,24 @@ pub fn run_from_env_with_desktop(desktop_available: bool) -> CliOutcome {
             }
             Err(message) => emit_action_error(cli.json, &message),
         },
+        Some(Commands::Login { name, device_auth }) => {
+            if cli.json {
+                emit_error(
+                    true,
+                    "streaming_command",
+                    "login is an interactive streaming command and does not support --json",
+                    2,
+                )
+            } else {
+                match run_profile_login_foreground(&context, &name, device_auth) {
+                    Ok(()) => {
+                        println!("authentication completed for {name}");
+                        CliOutcome::Exit(0)
+                    }
+                    Err(message) => emit_action_error(false, &message),
+                }
+            }
+        }
         Some(Commands::ImportAuth {
             name,
             source,
@@ -1184,19 +1238,6 @@ pub fn run_from_env_with_desktop(desktop_available: bool) -> CliOutcome {
         ) {
             Ok(report) => {
                 emit_success(cli.json, "import-auth", &report);
-                if !cli.json {
-                    println!("{}", report.message);
-                }
-                CliOutcome::Exit(0)
-            }
-            Err(message) => emit_action_error(cli.json, &message),
-        },
-        Some(Commands::RepairNetwork {
-            name,
-            skip_launchctl,
-        }) => match repair_profile_network(&context, &name, !skip_launchctl) {
-            Ok(report) => {
-                emit_success(cli.json, "repair-network", &report);
                 if !cli.json {
                     println!("{}", report.message);
                 }

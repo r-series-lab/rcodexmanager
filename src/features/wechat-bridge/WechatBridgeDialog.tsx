@@ -39,6 +39,7 @@ import type {
   WechatBridgeEntry,
   WechatBridgeReport,
 } from "../../lib/types";
+import { useI18n } from "../../i18n";
 import "../manager-dialogs.css";
 
 type RemoteChannel = "wechat" | "feishu";
@@ -61,14 +62,14 @@ function feishuPresentation(report: FeishuRemoteReport | null): { label: string;
   return { label: "未配置", tone: "neutral" };
 }
 
-function accountLabel(bridge: WechatBridgeEntry): string {
-  return bridge.account?.email || bridge.account?.name || bridge.account?.accountId || "未登录";
+function accountLabel(bridge: WechatBridgeEntry, signedOutLabel = "未登录"): string {
+  return bridge.account?.email || bridge.account?.name || bridge.account?.accountId || signedOutLabel;
 }
 
-function formatTime(value: string | null): string {
-  if (!value) return "暂无";
+function formatTime(value: string | null, locale: string, emptyLabel: string): string {
+  if (!value) return emptyLabel;
   const date = new Date(value);
-  return Number.isNaN(date.getTime()) ? value : date.toLocaleString("zh-CN", { hour12: false });
+  return Number.isNaN(date.getTime()) ? value : date.toLocaleString(locale, { hour12: false });
 }
 
 export function WechatBridgeDialog({
@@ -128,6 +129,7 @@ export function WechatBridgeDialog({
   onOpenFeishuPage: (page: FeishuRemotePage) => Promise<void> | void;
   onReveal: (path: string) => void;
 }) {
+  const { language, t } = useI18n();
   const [channel, setChannel] = useState<RemoteChannel>("wechat");
   const [query, setQuery] = useState("");
   const [wechatTab, setWechatTab] = useState("overview");
@@ -140,8 +142,8 @@ export function WechatBridgeDialog({
   const filtered = useMemo(() => {
     const value = query.trim().toLowerCase();
     if (!value) return bridges;
-    return bridges.filter((bridge) => [bridge.profileName, bridge.profileLabel, bridge.profileCategory, bridge.instance, accountLabel(bridge)].join(" ").toLowerCase().includes(value));
-  }, [bridges, query]);
+    return bridges.filter((bridge) => [bridge.profileName, bridge.profileLabel, bridge.profileCategory, bridge.instance, accountLabel(bridge, t("未登录"))].join(" ").toLowerCase().includes(value));
+  }, [bridges, query, t]);
 
   useEffect(() => {
     if (!open) {
@@ -176,7 +178,7 @@ export function WechatBridgeDialog({
               <QrCodeScannerRoundedIcon className="feature-list-leading-icon" />
               <Box sx={{ minWidth: 0, flex: 1 }}>
                 <Typography className="feature-list-title">{bridge.profileLabel}</Typography>
-                <Typography className="feature-list-meta">{bridge.profileName}{bridge.profileName === activeProfileName ? " · 当前" : ""}</Typography>
+                <Typography className="feature-list-meta">{bridge.profileName}{bridge.profileName === activeProfileName ? ` · ${t("当前")}` : ""}</Typography>
                 <Stack direction="row" spacing={0.5} sx={{ mt: 0.5 }}>
                   <StatusBadge label={status.label} tone={status.tone} />
                   <StatusBadge label={bridge.profileCategory || "未分类"} />
@@ -200,28 +202,28 @@ export function WechatBridgeDialog({
       <Box className="feature-detail-header">
         <Box sx={{ minWidth: 0 }}>
           <Typography className="feature-detail-title">{selected.profileLabel}</Typography>
-          <Typography className="feature-detail-subtitle">实例 {selected.instance} · {accountLabel(selected)}{selectedIsExternal ? " · 外部服务" : ""}</Typography>
+          <Typography className="feature-detail-subtitle">{t("实例 {instance}", { instance: selected.instance })} · {accountLabel(selected, t("未登录"))}{selectedIsExternal ? ` · ${t("外部服务")}` : ""}</Typography>
         </Box>
         {selectedStatus ? <StatusBadge label={selectedStatus.label} tone={selectedStatus.tone} /> : null}
       </Box>
       <DialogTabs value={wechatTab} onChange={setWechatTab} label="微信桥接详情" tabs={[{ value: "overview", label: "概览" }, { value: "logs", label: "扫码与日志" }]} />
       <Box className="feature-detail-body">
         {wechatTab === "overview" ? (
-          <Stack spacing={1.5}>
+          <Stack spacing={1}>
             {selected.lastError ? <Alert severity="error">{selected.lastError}</Alert> : null}
-            {selectedIsExternal ? <Alert severity="info">检测到现有微信实例。rCodexManager 仅展示状态，不会停止、重启或解绑这个外部服务。</Alert> : null}
-            {!selected.authExists ? <Alert severity="warning">该 profile 没有 auth.json，先在认证库应用认证后才能启动桥接。</Alert> : null}
+            {selectedIsExternal ? <Alert severity="info">{t("检测到现有微信实例。rCodexManager 仅展示状态，不会停止、重启或解绑这个外部服务。")}</Alert> : null}
+            {!selected.authExists ? <Alert severity="warning">{t("该 profile 没有 auth.json，先在认证库应用认证后才能启动桥接。")}</Alert> : null}
             <Box className="feature-grid">
               <SourceCard label="Profile" value={selected.profileName} />
               <SourceCard label="实例" value={selected.instance} />
-              <SourceCard label="管理方式" value={selectedIsExternal ? "外部服务 · 只读" : "rCodexManager 管理"} />
-              <SourceCard label="绑定状态" value={selected.tokenExists ? "已绑定" : "未绑定"} />
-              <SourceCard label="运行状态" value={selected.running ? `运行中 · PID ${selected.runningPids.join(", ")}` : "已停止"} />
-              <SourceCard label="最近启动" value={formatTime(selected.lastStartedAt)} />
-              <SourceCard label="最近停止" value={formatTime(selected.lastStoppedAt)} />
+              <SourceCard label="管理方式" value={selectedIsExternal ? t("外部服务 · 只读") : t("rCodexManager 管理")} />
+              <SourceCard label="绑定状态" value={selected.tokenExists ? t("已绑定") : t("未绑定")} />
+              <SourceCard label="运行状态" value={selected.running ? t("运行中 · PID {pid}", { pid: selected.runningPids.join(", ") }) : t("已停止")} />
+              <SourceCard label="最近启动" value={formatTime(selected.lastStartedAt, language, t("暂无"))} />
+              <SourceCard label="最近停止" value={formatTime(selected.lastStoppedAt, language, t("暂无"))} />
             </Box>
             <Box className="feature-fieldset">
-              <Typography className="feature-fieldset-title">本地路径</Typography>
+              <Typography className="feature-fieldset-title">{t("本地路径")}</Typography>
               <Stack spacing={0.75}>
                 <PathRow label="实例数据" value={selected.storageDir} onOpen={() => onReveal(selected.storageDir)} />
                 <PathRow label="收件箱" value={selected.inboxDir} onOpen={() => onReveal(selected.inboxDir)} />
@@ -230,11 +232,11 @@ export function WechatBridgeDialog({
             </Box>
           </Stack>
         ) : (
-          <Stack spacing={1.25}>
-            {selected.connectionState === "awaiting-scan" ? <Alert severity="info">桥接正在等待扫码。完成绑定后状态会自动更新。</Alert> : null}
+          <Stack spacing={1}>
+            {selected.connectionState === "awaiting-scan" ? <Alert severity="info">{t("桥接正在等待扫码。完成绑定后状态会自动更新。")}</Alert> : null}
             <Stack direction="row" spacing={0.75} sx={{ justifyContent: "flex-end" }}>
-              <Button size="small" onClick={() => onRefreshLog(selected.profileName)}>刷新日志</Button>
-              <Button size="small" startIcon={<FolderOpenRoundedIcon />} onClick={() => onReveal(selected.appLogPath || selected.defaultLogPath)}>定位</Button>
+              <Button size="small" onClick={() => onRefreshLog(selected.profileName)}>{t("刷新日志")}</Button>
+              <Button size="small" startIcon={<FolderOpenRoundedIcon />} onClick={() => onReveal(selected.appLogPath || selected.defaultLogPath)}>{t("定位")}</Button>
             </Stack>
             {selected.logTail.length > 0 ? <pre className="feature-code-block wechat-log-v2">{selected.logTail.join("\n")}</pre> : <EmptyState icon={<TerminalRoundedIcon />} title="还没有日志" description="启动扫码后，这里会显示脱敏后的桥接输出。" />}
           </Stack>
@@ -256,8 +258,8 @@ export function WechatBridgeDialog({
         <Stack direction="row" spacing={1} sx={{ alignItems: "flex-start" }}>
           <ForumRoundedIcon className="feature-list-leading-icon" />
           <Box sx={{ minWidth: 0, flex: 1 }}>
-            <Typography className="feature-list-title">飞书 Bot</Typography>
-            <Typography className="feature-list-meta">{feishuReport?.profileLabel || "等待绑定 profile"}</Typography>
+            <Typography className="feature-list-title">{t("飞书 Bot")}</Typography>
+            <Typography className="feature-list-meta">{feishuReport?.profileLabel || t("等待绑定 profile")}</Typography>
             <Stack direction="row" spacing={0.5} sx={{ mt: 0.5, flexWrap: "wrap" }}>
               <StatusBadge label={feishuStatus.label} tone={feishuStatus.tone} />
               {feishuReport?.version ? <StatusBadge label={feishuReport.version.replace("codex-remote ", "v")} /> : null}
@@ -272,54 +274,54 @@ export function WechatBridgeDialog({
     <Box className="feature-detail">
       <Box className="feature-detail-header">
         <Box sx={{ minWidth: 0 }}>
-          <Typography className="feature-detail-title">飞书远程渠道</Typography>
-          <Typography className="feature-detail-subtitle">codex-remote · 独立本地运行时</Typography>
+          <Typography className="feature-detail-title">{t("飞书远程渠道")}</Typography>
+          <Typography className="feature-detail-subtitle">{t("codex-remote · 独立本地运行时")}</Typography>
         </Box>
         <StatusBadge label={feishuStatus.label} tone={feishuStatus.tone} />
       </Box>
       <DialogTabs value={feishuTab} onChange={setFeishuTab} label="飞书渠道详情" tabs={[{ value: "overview", label: "概览" }, { value: "config", label: "配置" }, { value: "diagnostics", label: "诊断" }]} />
       <Box className="feature-detail-body">
         {feishuTab === "overview" ? (
-          <Stack spacing={1.5}>
+          <Stack spacing={1}>
             {feishuReport?.lastError ? <Alert severity="error">{feishuReport.lastError}</Alert> : null}
-            {!feishuReport?.installed ? <Alert severity="info">飞书渠道依赖用户安装的 codex-remote。rCodexManager 只负责绑定 profile 和管理运行状态。</Alert> : null}
-            {feishuReport?.running && !feishuReport.configured ? <Alert severity="warning">服务已启动，但还没有可用的飞书 Bot。打开 WebSetup 完成企业自建应用配置。</Alert> : null}
+            {!feishuReport?.installed ? <Alert severity="info">{t("飞书渠道依赖用户安装的 codex-remote。rCodexManager 只负责绑定 profile 和管理运行状态。")}</Alert> : null}
+            {feishuReport?.running && !feishuReport.configured ? <Alert severity="warning">{t("服务已启动，但还没有可用的飞书 Bot。打开 WebSetup 完成企业自建应用配置。")}</Alert> : null}
             <Box className="feature-grid">
-              <SourceCard label="运行时" value={feishuReport?.installed ? feishuReport.version || "已安装" : "未安装"} />
-              <SourceCard label="绑定 Profile" value={feishuReport?.profileLabel || "未绑定"} />
-              <SourceCard label="进程状态" value={feishuReport?.running ? `运行中 · PID ${feishuReport.pid ?? "-"}` : "已停止"} />
-              <SourceCard label="服务健康" value={feishuReport?.healthy ? "正常" : "未就绪"} />
+              <SourceCard label="运行时" value={feishuReport?.installed ? feishuReport.version || t("已安装") : t("未安装")} />
+              <SourceCard label="绑定 Profile" value={feishuReport?.profileLabel || t("未绑定")} />
+              <SourceCard label="进程状态" value={feishuReport?.running ? t("运行中 · PID {pid}", { pid: feishuReport.pid ?? "-" }) : t("已停止")} />
+              <SourceCard label="服务健康" value={feishuReport?.healthy ? t("正常") : t("未就绪")} />
               <SourceCard label="Bot 连接" value={`${feishuReport?.connectedGatewayCount ?? 0}/${feishuReport?.gatewayCount ?? 0}`} />
               <SourceCard label="管理端口" value={String(feishuReport?.adminPort ?? "-")} />
             </Box>
             <Box className="feature-fieldset">
-              <Typography className="feature-fieldset-title">运行说明</Typography>
-              <Typography className="feature-help-text">一个飞书应用只由这个受管实例维持长连接；密钥保存在 codex-remote 的本地配置中，不进入 rCodexManager 元数据。</Typography>
+              <Typography className="feature-fieldset-title">{t("运行说明")}</Typography>
+              <Typography className="feature-help-text">{t("一个飞书应用只由这个受管实例维持长连接；密钥保存在 codex-remote 的本地配置中，不进入 rCodexManager 元数据。")}</Typography>
             </Box>
           </Stack>
         ) : null}
 
         {feishuTab === "config" ? (
-          <Stack spacing={1.25} className="feishu-config-panel">
-            <TextField select size="small" label="绑定 profile" value={feishuProfileName} onChange={(event) => onFeishuProfileChange(event.target.value)}>
-              {profiles.map((profile) => <MenuItem key={profile.name} value={profile.name}>{profile.label}{profile.authExists ? "" : " · 未认证"}</MenuItem>)}
+          <Stack spacing={1} className="feishu-config-panel">
+            <TextField select size="small" label={t("绑定 profile")} value={feishuProfileName} onChange={(event) => onFeishuProfileChange(event.target.value)}>
+              {profiles.map((profile) => <MenuItem key={profile.name} value={profile.name}>{profile.label}{profile.authExists ? "" : ` · ${t("未认证")}`}</MenuItem>)}
             </TextField>
-            <TextField size="small" label="codex-remote 可执行文件" value={binaryPath} onChange={(event) => setBinaryPath(event.target.value)} placeholder="自动检测，或填写绝对路径" helperText="支持 PATH、~/.local/bin、Homebrew；不会自动下载或替换外部程序。" />
+            <TextField size="small" label={t("codex-remote 可执行文件")} value={binaryPath} onChange={(event) => setBinaryPath(event.target.value)} placeholder={t("自动检测，或填写绝对路径")} helperText={t("支持 PATH、~/.local/bin、Homebrew；不会自动下载或替换外部程序。")} />
             <Stack direction="row" spacing={0.75} sx={{ flexWrap: "wrap" }}>
-              <Button size="small" startIcon={<SaveRoundedIcon />} disabled={busy || !feishuProfileName} onClick={() => onConfigureFeishu(feishuProfileName, binaryPath)}>保存绑定</Button>
-              <Button size="small" variant="contained" startIcon={<PlayArrowRoundedIcon />} disabled={busy || !feishuProfileName} onClick={async () => { await onStartFeishu(feishuProfileName, binaryPath); setFeishuTab("overview"); }}>启动服务</Button>
-              <Button size="small" startIcon={<OpenInNewRoundedIcon />} disabled={!feishuReport?.running} onClick={() => onOpenFeishuPage("setup")}>打开 WebSetup</Button>
+              <Button size="small" startIcon={<SaveRoundedIcon />} disabled={busy || !feishuProfileName} onClick={() => onConfigureFeishu(feishuProfileName, binaryPath)}>{t("保存绑定")}</Button>
+              <Button size="small" variant="contained" startIcon={<PlayArrowRoundedIcon />} disabled={busy || !feishuProfileName} onClick={async () => { await onStartFeishu(feishuProfileName, binaryPath); setFeishuTab("overview"); }}>{t("启动服务")}</Button>
+              <Button size="small" startIcon={<OpenInNewRoundedIcon />} disabled={!feishuReport?.running} onClick={() => onOpenFeishuPage("setup")}>{t("打开 WebSetup")}</Button>
             </Stack>
-            <Alert severity="info">App ID 和 App Secret 请在 WebSetup 中填写。rCodexManager 不读取、不展示也不持久化这些凭据。</Alert>
+            <Alert severity="info">{t("App ID 和 App Secret 请在 WebSetup 中填写。rCodexManager 不读取、不展示也不持久化这些凭据。")}</Alert>
           </Stack>
         ) : null}
 
         {feishuTab === "diagnostics" ? (
-          <Stack spacing={1.25}>
+          <Stack spacing={1}>
             <Stack direction="row" spacing={0.75} sx={{ justifyContent: "flex-end", flexWrap: "wrap" }}>
-              <Button size="small" onClick={onRefreshFeishuLog}>刷新日志</Button>
-              <Button size="small" startIcon={<OpenInNewRoundedIcon />} disabled={!feishuReport?.running} onClick={() => onOpenFeishuPage("admin")}>管理后台</Button>
-              <Button size="small" startIcon={<FolderOpenRoundedIcon />} disabled={!feishuReport?.logPath} onClick={() => feishuReport?.logPath && onReveal(feishuReport.logPath)}>定位</Button>
+              <Button size="small" onClick={onRefreshFeishuLog}>{t("刷新日志")}</Button>
+              <Button size="small" startIcon={<OpenInNewRoundedIcon />} disabled={!feishuReport?.running} onClick={() => onOpenFeishuPage("admin")}>{t("管理后台")}</Button>
+              <Button size="small" startIcon={<FolderOpenRoundedIcon />} disabled={!feishuReport?.logPath} onClick={() => feishuReport?.logPath && onReveal(feishuReport.logPath)}>{t("定位")}</Button>
             </Stack>
             {feishuReport?.logTail.length ? <pre className="feature-code-block wechat-log-v2">{feishuReport.logTail.join("\n")}</pre> : <EmptyState icon={<TerminalRoundedIcon />} title="还没有运行日志" description="启动飞书渠道后，这里会显示脱敏后的最近日志。" />}
           </Stack>
@@ -332,19 +334,19 @@ export function WechatBridgeDialog({
     <StatusBadge label="外部服务 · 只读" tone="info" />
   ) : channel === "wechat" && selected ? (
     <>
-      <Button size="small" color="error" startIcon={<LinkOffRoundedIcon />} disabled={busy || (!selected.tokenExists && !selected.running)} onClick={() => setConfirmUnbind(true)}>解除绑定</Button>
+      <Button size="small" color="error" startIcon={<LinkOffRoundedIcon />} disabled={busy || (!selected.tokenExists && !selected.running)} onClick={() => setConfirmUnbind(true)}>{t("解除绑定")}</Button>
       <Stack direction="row" spacing={0.75}>
-        {selected.running ? <Button size="small" startIcon={<StopCircleRoundedIcon />} disabled={busy} onClick={() => onStop(selected.profileName)}>停止</Button> : null}
-        {selected.tokenExists ? <Button size="small" startIcon={<RestartAltRoundedIcon />} disabled={busy || !selected.authExists} onClick={async () => { await onRestart(selected.profileName); setWechatTab("logs"); }}>重启桥接</Button> : null}
-        {!selected.running ? <Button size="small" variant="contained" startIcon={<PlayArrowRoundedIcon />} disabled={busy || !selected.authExists} onClick={async () => { setWechatTab("logs"); await onStart(selected.profileName); }}>启动扫码</Button> : null}
+        {selected.running ? <Button size="small" startIcon={<StopCircleRoundedIcon />} disabled={busy} onClick={() => onStop(selected.profileName)}>{t("停止")}</Button> : null}
+        {selected.tokenExists ? <Button size="small" startIcon={<RestartAltRoundedIcon />} disabled={busy || !selected.authExists} onClick={async () => { await onRestart(selected.profileName); setWechatTab("logs"); }}>{t("重启桥接")}</Button> : null}
+        {!selected.running ? <Button size="small" variant="contained" startIcon={<PlayArrowRoundedIcon />} disabled={busy || !selected.authExists} onClick={async () => { setWechatTab("logs"); await onStart(selected.profileName); }}>{t("启动扫码")}</Button> : null}
       </Stack>
     </>
   ) : channel === "feishu" ? (
     <>
-      {!feishuReport?.installed ? <Button size="small" startIcon={<OpenInNewRoundedIcon />} onClick={() => onOpenFeishuPage("project")}>安装说明</Button> : null}
-      {feishuReport?.running ? <Button size="small" startIcon={<StopCircleRoundedIcon />} disabled={busy} onClick={onStopFeishu}>停止</Button> : null}
-      {feishuReport?.running ? <Button size="small" startIcon={<RestartAltRoundedIcon />} disabled={busy} onClick={onRestartFeishu}>重启</Button> : null}
-      {feishuReport?.installed && !feishuReport.running ? <Button size="small" variant="contained" startIcon={<PlayArrowRoundedIcon />} disabled={busy || !feishuProfileName} onClick={() => onStartFeishu(feishuProfileName, binaryPath)}>启动</Button> : null}
+      {!feishuReport?.installed ? <Button size="small" startIcon={<OpenInNewRoundedIcon />} onClick={() => onOpenFeishuPage("project")}>{t("安装说明")}</Button> : null}
+      {feishuReport?.running ? <Button size="small" startIcon={<StopCircleRoundedIcon />} disabled={busy} onClick={onStopFeishu}>{t("停止")}</Button> : null}
+      {feishuReport?.running ? <Button size="small" startIcon={<RestartAltRoundedIcon />} disabled={busy} onClick={onRestartFeishu}>{t("重启")}</Button> : null}
+      {feishuReport?.installed && !feishuReport.running ? <Button size="small" variant="contained" startIcon={<PlayArrowRoundedIcon />} disabled={busy || !feishuProfileName} onClick={() => onStartFeishu(feishuProfileName, binaryPath)}>{t("启动")}</Button> : null}
     </>
   ) : undefined;
 
@@ -356,7 +358,7 @@ export function WechatBridgeDialog({
       <ManagerDialogShell
         open={open}
         title="远程渠道"
-        subtitle={`${runningCount} 运行中 · ${configuredCount} 已配置`}
+        subtitle={t("{running} 运行中 · {configured} 已配置", { running: runningCount, configured: configuredCount })}
         icon={<HubRoundedIcon />}
         status={<StatusBadge label={loading || feishuLoading ? "刷新中" : channel === "wechat" ? "微信" : "飞书"} tone={loading || feishuLoading ? "info" : "neutral"} />}
         refreshing={loading || feishuLoading}
@@ -371,8 +373,8 @@ export function WechatBridgeDialog({
         {channel === "wechat" ? (
           <>
             <DialogToolbar>
-              <TextField size="small" value={query} onChange={(event) => setQuery(event.target.value)} placeholder="搜索 profile、实例或账号" sx={{ flex: 1 }} slotProps={{ input: { startAdornment: <InputAdornment position="start"><SearchRoundedIcon fontSize="small" /></InputAdornment> } }} />
-              <StatusBadge label={`${bridges.length} 个实例`} />
+              <TextField size="small" value={query} onChange={(event) => setQuery(event.target.value)} placeholder={t("搜索 profile、实例或账号")} sx={{ flex: 1 }} slotProps={{ input: { startAdornment: <InputAdornment position="start"><SearchRoundedIcon fontSize="small" /></InputAdornment> } }} />
+              <StatusBadge label={t("{count} 个实例", { count: bridges.length })} />
             </DialogToolbar>
             <MasterDetailLayout list={wechatList} detail={wechatDetail} detailOpen={Boolean(selected)} onBack={() => onProfileChange("")} />
           </>
@@ -382,8 +384,8 @@ export function WechatBridgeDialog({
       </ManagerDialogShell>
       <SensitiveActionConfirmDialog
         open={confirmUnbind}
-        title="解除微信绑定"
-        description={`将先停止 ${selected?.profileLabel ?? "当前实例"} 的桥接，再把 token 移入带时间戳的本地备份目录。之后可以重新扫码绑定。`}
+        title={t("解除微信绑定")}
+        description={t("将先停止 {profile} 的桥接，再把 token 移入带时间戳的本地备份目录。之后可以重新扫码绑定。", { profile: selected?.profileLabel ?? t("当前实例") })}
         confirmLabel="解除绑定"
         tone="warning"
         busy={busy}
@@ -395,15 +397,17 @@ export function WechatBridgeDialog({
 }
 
 function SourceCard({ label, value }: { label: string; value: string }) {
-  return <Box className="feature-source-row"><Typography variant="caption">{label}</Typography><Typography>{value}</Typography></Box>;
+  const { t } = useI18n();
+  return <Box className="feature-source-row"><Typography variant="caption">{t(label)}</Typography><Typography>{value}</Typography></Box>;
 }
 
 function PathRow({ label, value, onOpen }: { label: string; value: string; onOpen: () => void }) {
+  const { t } = useI18n();
   return (
     <Stack direction="row" spacing={1} sx={{ alignItems: "center" }}>
-      <Typography variant="caption" sx={{ width: 58, color: "var(--muted)" }}>{label}</Typography>
+      <Typography variant="caption" sx={{ width: 58, color: "var(--muted)" }}>{t(label)}</Typography>
       <Typography className="mono" sx={{ minWidth: 0, flex: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", fontSize: 11.5 }}>{value}</Typography>
-      <Button size="small" onClick={onOpen}>打开</Button>
+      <Button size="small" onClick={onOpen}>{t("打开")}</Button>
     </Stack>
   );
 }

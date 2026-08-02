@@ -59,6 +59,7 @@ export function serverNodeOperationLabel(operation: ServerNodeOperation): string
     case "list-sessions": return "读取服务器会话";
     case "read-session": return "读取会话详情";
     case "auth-status": return "读取服务器认证库";
+    case "check-profile-auth": return "验证 Profile 认证";
     case "create-auth-backup": return "创建认证备份";
     case "apply-auth-backup": return "应用认证备份";
     case "wechat-status": return "读取微信桥接";

@@ -75,6 +75,7 @@ for (const dialogName of dialogs) {
         top: rect.top,
         right: rect.right,
         bottom: rect.bottom,
+        height: rect.height,
         scrollWidth: node.scrollWidth,
         clientWidth: node.clientWidth,
       };
@@ -85,6 +86,8 @@ for (const dialogName of dialogs) {
     expect(layout.top).toBeGreaterThanOrEqual(0);
     expect(layout.right).toBeLessThanOrEqual(viewport!.width + 1);
     expect(layout.bottom).toBeLessThanOrEqual(viewport!.height + 1);
+    expect(layout.height).toBeGreaterThanOrEqual(viewport!.height * 0.79);
+    expect(layout.height).toBeLessThanOrEqual(viewport!.height * 0.81);
     expect(layout.scrollWidth).toBeLessThanOrEqual(layout.clientWidth + 1);
 
     const masterPanel = dialog.locator(".manager-master-panel");

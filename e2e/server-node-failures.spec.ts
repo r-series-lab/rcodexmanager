@@ -56,3 +56,15 @@ test("server-node failure: failed write is not replayed automatically", async ({
   await expect(recovery.getByRole("button", { name: "重试" })).toHaveCount(0);
   await expect(recovery.getByRole("button", { name: "重新检查" })).toBeVisible();
 });
+
+test("server-node auth: network errors do not mark credentials invalid", async ({ page }) => {
+  const dialog = await openServerNodes(page, "auth-network");
+  await dialog.getByRole("tab", { name: /Profiles/ }).click();
+  const profileRow = dialog.locator(".server-profile-row").filter({ hasText: /服务器默认\s*codex/ });
+  await profileRow.click();
+  await dialog.locator(".server-profile-inspector").getByRole("button", { name: "验证认证" }).click();
+
+  await expect(profileRow).toContainText("未过期");
+  await expect(dialog.getByText("服务器暂时无法连接 ChatGPT 验证服务；当前认证未判定为失效。请检查节点代理后重试。")).toBeVisible();
+  await expect(profileRow).not.toContainText("已失效");
+});

@@ -13,9 +13,9 @@ export default defineConfig({
   },
   projects: [
     { name: "desktop-light", use: { viewport: { width: 1440, height: 900 }, colorScheme: "light" } },
-    { name: "default-light", use: { viewport: { width: 900, height: 640 }, colorScheme: "light" } },
-    { name: "default-dark", use: { viewport: { width: 900, height: 640 }, colorScheme: "dark" } },
-    { name: "compact-system", use: { viewport: { width: 900, height: 520 }, colorScheme: "light" } },
+    { name: "default-light", use: { viewport: { width: 1000, height: 800 }, colorScheme: "light" } },
+    { name: "default-dark", use: { viewport: { width: 1000, height: 800 }, colorScheme: "dark" } },
+    { name: "minimum-system", use: { viewport: { width: 1000, height: 800 }, colorScheme: "light" } },
   ],
   webServer: {
     command: "npm run web:dev -- --host 127.0.0.1",

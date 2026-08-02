@@ -42,6 +42,7 @@ import type {
   ProfileModelRouteState,
   RestoreModelRouteInput,
 } from "../../lib/types";
+import { useI18n } from "../../i18n";
 import "../manager-dialogs.css";
 
 function routeTone(profile: ProfileModelRouteState): StatusTone {
@@ -98,6 +99,7 @@ export function ModelRouteDialog({
   onCheckProxy: (profileName: string) => Promise<ModelRouteProxyCheckResult>;
   onReveal: (path: string) => void;
 }) {
+  const { t } = useI18n();
   const profiles = report?.profiles ?? [];
   const presets = report?.presets ?? [];
   const selected = selectedProfileName ? profiles.find((profile) => profile.profileName === selectedProfileName) ?? null : null;
@@ -226,7 +228,7 @@ export function ModelRouteDialog({
     try {
       setLiveCheck(await onCheckProxy(input.profileName));
     } catch (checkError) {
-      setLocalError(`配置已应用，但自动自检失败：${checkError instanceof Error ? checkError.message : String(checkError)}`);
+      setLocalError(t("配置已应用，但自动自检失败：{error}", { error: checkError instanceof Error ? checkError.message : String(checkError) }));
     }
   }
 
@@ -264,7 +266,7 @@ export function ModelRouteDialog({
             <AltRouteRoundedIcon className="feature-list-leading-icon" />
             <Box sx={{ minWidth: 0, flex: 1 }}>
               <Typography className="feature-list-title">{profile.profileLabel}</Typography>
-              <Typography className="feature-list-meta">{profile.model || "默认模型"}{profile.profileName === activeProfileName ? " · 当前" : ""}</Typography>
+              <Typography className="feature-list-meta">{profile.model || t("默认模型")}{profile.profileName === activeProfileName ? ` · ${t("当前")}` : ""}</Typography>
               <Stack direction="row" spacing={0.5} sx={{ mt: 0.5 }}><StatusBadge label={profile.routeStatusLabel} tone={routeTone(profile)} /></Stack>
             </Box>
           </Stack>
@@ -278,7 +280,7 @@ export function ModelRouteDialog({
       <Box className="feature-detail-header">
         <Box sx={{ minWidth: 0 }}>
           <Typography className="feature-detail-title">{selected.profileLabel}</Typography>
-          <Typography className="feature-detail-subtitle">{selected.profileName} · {selected.model || "未配置模型"}</Typography>
+          <Typography className="feature-detail-subtitle">{selected.profileName} · {selected.model || t("未配置模型")}</Typography>
         </Box>
         <StatusBadge label={selected.routeStatusLabel} tone={routeTone(selected)} />
       </Box>
@@ -286,71 +288,71 @@ export function ModelRouteDialog({
       <Box className="feature-detail-body">
         {localError ? <Alert severity="error" onClose={() => setLocalError(null)} sx={{ mb: 1.5 }}>{localError}</Alert> : null}
         {tab === "overview" ? (
-          <Stack spacing={1.5}>
+          <Stack spacing={1}>
             {selected.readOnlyReason ? <Alert severity="warning">{selected.readOnlyReason}</Alert> : null}
             <Box className="feature-grid">
-              <SourceCard label="当前模型" value={selected.model || "官方默认"} />
-              <SourceCard label="Provider" value={selected.modelProvider || "OpenAI 官方"} />
-              <SourceCard label="Wire API" value={selected.wireApi || "默认"} />
-              <SourceCard label="写入状态" value={selected.canApply ? "可修改" : "只读"} warning={!selected.canApply} />
-              <SourceCard label="Base URL" value={selected.baseUrl || "官方默认"} mono />
-              <SourceCard label="API Key" value={selected.hasApiKey ? "已配置" : "未配置"} />
+              <SourceCard label="当前模型" value={selected.model || t("官方默认")} />
+              <SourceCard label="Provider" value={selected.modelProvider || t("OpenAI 官方")} />
+              <SourceCard label="Wire API" value={selected.wireApi || t("默认")} />
+              <SourceCard label="写入状态" value={selected.canApply ? t("可修改") : t("只读")} warning={!selected.canApply} />
+              <SourceCard label="Base URL" value={selected.baseUrl || t("官方默认")} mono />
+              <SourceCard label="API Key" value={selected.hasApiKey ? t("已配置") : t("未配置")} />
             </Box>
             <Box className="feature-fieldset">
               <Stack direction="row" spacing={1} sx={{ alignItems: "center", justifyContent: "space-between" }}>
                 <Box>
-                  <Typography className="feature-fieldset-title" sx={{ mb: "2px !important" }}>全局转换代理</Typography>
-                  <Typography variant="caption" color="text.secondary">{report?.proxy.message || "未读取代理状态"}</Typography>
+                  <Typography className="feature-fieldset-title" sx={{ mb: "2px !important" }}>{t("全局转换代理")}</Typography>
+                  <Typography variant="caption" color="text.secondary">{report?.proxy.message || t("未读取代理状态")}</Typography>
                 </Box>
                 <StatusBadge label={report?.proxy.statusLabel || "未知"} tone={proxyTone(report?.proxy.status || "")} />
               </Stack>
               <Box className="feature-inline-actions" sx={{ mt: 1.25 }}>
-                {report?.proxy.canStart ? <Button size="small" variant="contained" startIcon={<PlayArrowRoundedIcon />} disabled={busy} onClick={onStartProxy}>启动内置代理</Button> : null}
-                {report?.proxy.canStop ? <Button size="small" startIcon={<StopCircleRoundedIcon />} disabled={busy} onClick={onStopProxy}>停止代理</Button> : null}
-                <Button size="small" onClick={onOpenCcSwitch}>打开 cc-switch</Button>
+                {report?.proxy.canStart ? <Button size="small" variant="contained" startIcon={<PlayArrowRoundedIcon />} disabled={busy} onClick={onStartProxy}>{t("启动内置代理")}</Button> : null}
+                {report?.proxy.canStop ? <Button size="small" startIcon={<StopCircleRoundedIcon />} disabled={busy} onClick={onStopProxy}>{t("停止代理")}</Button> : null}
+                <Button size="small" onClick={onOpenCcSwitch}>{t("打开 cc-switch")}</Button>
               </Box>
             </Box>
           </Stack>
         ) : tab === "config" ? (
-          <Stack spacing={1.4}>
-            <TextField select size="small" label="cc-switch / Provider 模板" value={templateId} onChange={(event) => applyTemplate(event.target.value)}>
-              <MenuItem value="">自定义配置</MenuItem>
+          <Stack spacing={1}>
+            <TextField select size="small" label={t("cc-switch / Provider 模板")} value={templateId} onChange={(event) => applyTemplate(event.target.value)}>
+              <MenuItem value="">{t("自定义配置")}</MenuItem>
               {MODEL_ROUTE_PROVIDER_TEMPLATES.map((template) => <MenuItem key={template.id} value={template.id}>{template.label}</MenuItem>)}
             </TextField>
             <Box className="feature-grid">
-              <TextField select size="small" label="Provider 预设" value={preset} onChange={(event) => { setPreset(event.target.value as ModelRoutePreset); invalidatePreview(); }}>
+              <TextField select size="small" label={t("Provider 预设")} value={preset} onChange={(event) => { setPreset(event.target.value as ModelRoutePreset); invalidatePreview(); }}>
                 {presets.map((item) => <MenuItem key={item.id} value={item.id}>{item.label}</MenuItem>)}
               </TextField>
-              <TextField size="small" label="模型" value={model} onChange={(event) => { setModel(event.target.value); invalidatePreview(); }} />
+              <TextField size="small" label={t("模型")} value={model} onChange={(event) => { setModel(event.target.value); invalidatePreview(); }} />
             </Box>
-            <TextField size="small" label={selectedPreset?.chatOnly ? "上游 Chat Base URL" : "Responses Base URL"} value={upstreamBaseUrl} onChange={(event) => { setUpstreamBaseUrl(event.target.value); invalidatePreview(); }} placeholder="https://.../v1" />
-            {selectedPreset?.chatOnly ? <TextField size="small" label="Responses 代理 URL" value={proxyBaseUrl} onChange={(event) => { setProxyBaseUrl(event.target.value); invalidatePreview(); }} placeholder="http://127.0.0.1:15721/v1" /> : null}
-            <TextField size="small" label="API key 环境变量" value={apiKeyEnv} onChange={(event) => { setApiKeyEnv(event.target.value); invalidatePreview(); }} placeholder="例如 ZAI_API_KEY" />
-            <TextField size="small" type="password" label="API key（仅本次弹窗）" value={apiKey} onChange={(event) => { setApiKey(event.target.value); invalidatePreview(); }} autoComplete="off" helperText="关闭弹窗或应用后立即清空，不进入 localStorage 与应用元数据。" />
-            <Button size="small" endIcon={<ExpandMoreRoundedIcon />} sx={{ alignSelf: "flex-start" }} onClick={() => setAdvanced((value) => !value)}>高级字段</Button>
+            <TextField size="small" label={t(selectedPreset?.chatOnly ? "上游 Chat Base URL" : "Responses Base URL")} value={upstreamBaseUrl} onChange={(event) => { setUpstreamBaseUrl(event.target.value); invalidatePreview(); }} placeholder="https://.../v1" />
+            {selectedPreset?.chatOnly ? <TextField size="small" label={t("Responses 代理 URL")} value={proxyBaseUrl} onChange={(event) => { setProxyBaseUrl(event.target.value); invalidatePreview(); }} placeholder="http://127.0.0.1:15721/v1" /> : null}
+            <TextField size="small" label={t("API key 环境变量")} value={apiKeyEnv} onChange={(event) => { setApiKeyEnv(event.target.value); invalidatePreview(); }} placeholder={t("例如 ZAI_API_KEY")} />
+            <TextField size="small" type="password" label={t("API key（仅本次弹窗）")} value={apiKey} onChange={(event) => { setApiKey(event.target.value); invalidatePreview(); }} autoComplete="off" helperText={t("关闭弹窗或应用后立即清空，不进入 localStorage 与应用元数据。")} />
+            <Button size="small" endIcon={<ExpandMoreRoundedIcon />} sx={{ alignSelf: "flex-start" }} onClick={() => setAdvanced((value) => !value)}>{t("高级字段")}</Button>
             <Collapse in={advanced}>
-              <TextField fullWidth size="small" label="推理强度" value={reasoningEffort} onChange={(event) => { setReasoningEffort(event.target.value); invalidatePreview(); }} />
+              <TextField fullWidth size="small" label={t("推理强度")} value={reasoningEffort} onChange={(event) => { setReasoningEffort(event.target.value); invalidatePreview(); }} />
             </Collapse>
             <Box className="feature-inline-actions">
-              <Button size="small" startIcon={<CheckCircleOutlineRoundedIcon />} disabled={busy || localAction !== null || !model.trim()} onClick={() => void runDraftCheck()}>{localAction === "draft" ? "测试中…" : "测试草稿配置"}</Button>
-              <Button size="small" variant="contained" startIcon={<TuneRoundedIcon />} disabled={busy || localAction !== null || !model.trim()} onClick={() => void runPreview()}>{localAction === "preview" ? "生成中…" : "预览配置"}</Button>
+              <Button size="small" startIcon={<CheckCircleOutlineRoundedIcon />} disabled={busy || localAction !== null || !model.trim()} onClick={() => void runDraftCheck()}>{t(localAction === "draft" ? "测试中…" : "测试草稿配置")}</Button>
+              <Button size="small" variant="contained" startIcon={<TuneRoundedIcon />} disabled={busy || localAction !== null || !model.trim()} onClick={() => void runPreview()}>{t(localAction === "preview" ? "生成中…" : "预览配置")}</Button>
             </Box>
             {draftCheck ? <Alert severity={draftCheck.ok ? "success" : "error"}>{draftCheck.statusLabel} · {draftCheck.message}（{draftCheck.latencyMs} ms）</Alert> : null}
-            {preview ? <><Alert severity="info">预览已生成。修改任一字段后需重新预览。</Alert><pre className="feature-code-block">{preview.configPreview}</pre>{preview.warnings.length ? <Alert severity="warning">{preview.warnings.join(" ")}</Alert> : null}</> : <EmptyState icon={<TuneRoundedIcon />} title="尚未生成配置预览" description="预览不会写入 config.toml。" />}
+            {preview ? <><Alert severity="info">{t("预览已生成。修改任一字段后需重新预览。")}</Alert><pre className="feature-code-block">{preview.configPreview}</pre>{preview.warnings.length ? <Alert severity="warning">{preview.warnings.join(" ")}</Alert> : null}</> : <EmptyState icon={<TuneRoundedIcon />} title="尚未生成配置预览" description="预览不会写入 config.toml。" />}
           </Stack>
         ) : (
-          <Stack spacing={1.5}>
+          <Stack spacing={1}>
             <Box className="feature-fieldset">
               <Stack direction="row" spacing={1} sx={{ alignItems: "center", justifyContent: "space-between" }}>
-                <Box><Typography className="feature-fieldset-title" sx={{ mb: "2px !important" }}>当前配置自检</Typography><Typography variant="caption" color="text.secondary">使用 profile 已写入的配置发起最小请求。</Typography></Box>
-                <Button size="small" variant="contained" disabled={busy || localAction !== null || !selected.routed} onClick={() => void runLiveCheck()}>{localAction === "live" ? "自检中…" : "开始自检"}</Button>
+                <Box><Typography className="feature-fieldset-title" sx={{ mb: "2px !important" }}>{t("当前配置自检")}</Typography><Typography variant="caption" color="text.secondary">{t("使用 profile 已写入的配置发起最小请求。")}</Typography></Box>
+                <Button size="small" variant="contained" disabled={busy || localAction !== null || !selected.routed} onClick={() => void runLiveCheck()}>{t(localAction === "live" ? "自检中…" : "开始自检")}</Button>
               </Stack>
               {liveCheck ? <Alert severity={liveCheck.ok ? "success" : "error"} sx={{ mt: 1.25 }}>{liveCheck.statusLabel} · {liveCheck.message}（{liveCheck.latencyMs} ms）</Alert> : null}
             </Box>
             {report?.proxy.diagnostics.length ? <Stack spacing={1}>{report.proxy.diagnostics.map((item) => <Alert key={`${item.generatedAt}-${item.code}`} severity={item.level === "error" ? "error" : item.level === "warning" ? "warning" : "info"}>{item.label} · {item.message}</Alert>)}</Stack> : null}
             <Box className="feature-fieldset">
-              <Typography className="feature-fieldset-title">最近请求</Typography>
-              {report?.proxy.recentLogs.length ? <Stack spacing={0.75}>{report.proxy.recentLogs.map((entry, index) => <Box key={`${entry.generatedAt}-${index}`} className="model-route-log-row"><StatusBadge label={entry.statusLabel} tone={entry.ok ? "success" : "error"} /><Typography variant="caption">{entry.profileName || "代理"} · {entry.model || "未知模型"} · {entry.latencyMs} ms</Typography></Box>)}</Stack> : <Typography variant="body2" color="text.secondary">还没有请求记录。</Typography>}
+              <Typography className="feature-fieldset-title">{t("最近请求")}</Typography>
+              {report?.proxy.recentLogs.length ? <Stack spacing={0.75}>{report.proxy.recentLogs.map((entry, index) => <Box key={`${entry.generatedAt}-${index}`} className="model-route-log-row"><StatusBadge label={entry.statusLabel} tone={entry.ok ? "success" : "error"} /><Typography variant="caption">{entry.profileName || t("代理")} · {entry.model || t("未知模型")} · {entry.latencyMs} ms</Typography></Box>)}</Stack> : <Typography variant="body2" color="text.secondary">{t("还没有请求记录。")}</Typography>}
             </Box>
           </Stack>
         )}
@@ -365,7 +367,7 @@ export function ModelRouteDialog({
       <ManagerDialogShell
         open={open}
         title="模型路由"
-        subtitle={`${report?.routedCount ?? 0} 已路由 · ${report?.needsAttentionCount ?? 0} 需处理`}
+        subtitle={t("{routed} 已路由 · {attention} 需处理", { routed: report?.routedCount ?? 0, attention: report?.needsAttentionCount ?? 0 })}
         icon={<AltRouteRoundedIcon />}
         status={<StatusBadge label={report?.proxy.statusLabel || (loading ? "刷新中" : "代理未知")} tone={loading ? "info" : proxyTone(report?.proxy.status || "")} />}
         refreshing={loading}
@@ -374,26 +376,27 @@ export function ModelRouteDialog({
         className="model-route-v2"
         actions={selected ? (
           <>
-            <Button size="small" startIcon={<FolderOpenRoundedIcon />} onClick={() => onReveal(selected.configPath)}>定位 config</Button>
+            <Button size="small" startIcon={<FolderOpenRoundedIcon />} onClick={() => onReveal(selected.configPath)}>{t("定位 config")}</Button>
             <Stack direction="row" spacing={0.75}>
-              <Button size="small" startIcon={<RestartAltRoundedIcon />} disabled={busy || !selected.canRestore} onClick={() => setConfirmAction("restore")}>恢复官方配置</Button>
-              <Button size="small" variant="contained" disabled={busy || !selected.canApply || !preview} onClick={() => setConfirmAction("apply")}>应用预览</Button>
+              <Button size="small" startIcon={<RestartAltRoundedIcon />} disabled={busy || !selected.canRestore} onClick={() => setConfirmAction("restore")}>{t("恢复官方配置")}</Button>
+              <Button size="small" variant="contained" disabled={busy || !selected.canApply || !preview} onClick={() => setConfirmAction("apply")}>{t("应用预览")}</Button>
             </Stack>
           </>
         ) : undefined}
       >
         <DialogToolbar>
-          <TextField size="small" value={query} onChange={(event) => setQuery(event.target.value)} placeholder="搜索 profile、模型或路由状态" sx={{ flex: 1 }} slotProps={{ input: { startAdornment: <InputAdornment position="start"><SearchRoundedIcon fontSize="small" /></InputAdornment> } }} />
-          <StatusBadge label={`${profiles.length} 个 profile`} />
+          <TextField size="small" value={query} onChange={(event) => setQuery(event.target.value)} placeholder={t("搜索 profile、模型或路由状态")} sx={{ flex: 1 }} slotProps={{ input: { startAdornment: <InputAdornment position="start"><SearchRoundedIcon fontSize="small" /></InputAdornment> } }} />
+          <StatusBadge label={t("{count} 个 profile", { count: profiles.length })} />
         </DialogToolbar>
         <MasterDetailLayout list={list} detail={detail} detailOpen={Boolean(selected)} onBack={() => onProfileChange("")} />
       </ManagerDialogShell>
-      <SensitiveActionConfirmDialog open={confirmAction === "apply"} title="应用模型路由" description={`将先备份 ${selected?.profileName ?? "目标 profile"} 的 config.toml，再写入当前预览。应用后会自动执行一次自检。`} confirmLabel="确认应用" busy={busy} onCancel={() => setConfirmAction(null)} onConfirm={() => void applyConfirmed()} />
-      <SensitiveActionConfirmDialog open={confirmAction === "restore"} title="恢复官方配置" description={`移除 ${selected?.profileName ?? "目标 profile"} 的模型路由字段，保留基础模型、推理强度和 WebSocket feature 配置。`} confirmLabel="确认恢复" busy={busy} onCancel={() => setConfirmAction(null)} onConfirm={() => void restoreConfirmed()} />
+      <SensitiveActionConfirmDialog open={confirmAction === "apply"} title={t("应用模型路由")} description={t("将先备份 {profile} 的 config.toml，再写入当前预览。应用后会自动执行一次自检。", { profile: selected?.profileName ?? t("目标 profile") })} confirmLabel={t("确认应用")} busy={busy} onCancel={() => setConfirmAction(null)} onConfirm={() => void applyConfirmed()} />
+      <SensitiveActionConfirmDialog open={confirmAction === "restore"} title={t("恢复官方配置")} description={t("移除 {profile} 的模型路由字段，保留基础模型、推理强度和其他配置。", { profile: selected?.profileName ?? t("目标 profile") })} confirmLabel={t("确认恢复")} busy={busy} onCancel={() => setConfirmAction(null)} onConfirm={() => void restoreConfirmed()} />
     </>
   );
 }
 
 function SourceCard({ label, value, mono = false, warning = false }: { label: string; value: string; mono?: boolean; warning?: boolean }) {
-  return <Box className="feature-source-row"><Typography variant="caption">{label}</Typography><Typography className={`${mono ? "mono" : ""} ${warning ? "feature-warning-text" : ""}`.trim()}>{value}</Typography></Box>;
+  const { t } = useI18n();
+  return <Box className="feature-source-row"><Typography variant="caption">{t(label)}</Typography><Typography className={`${mono ? "mono" : ""} ${warning ? "feature-warning-text" : ""}`.trim()}>{value}</Typography></Box>;
 }

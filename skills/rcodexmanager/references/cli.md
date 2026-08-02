@@ -112,16 +112,16 @@ rcodexmanager --json sessions detail --profile codex-g --session-id <id> --updat
 
 Command names in JSON: `sessions-list`, `sessions-detail`.
 
-## Quota, Auth Import, And Network
+## Quota And Auth Import
 
 ```bash
+rcodexmanager login --name codex-g
+rcodexmanager login --name codex-g --device-auth
 rcodexmanager --json quota --name codex-g
 rcodexmanager --json import-auth --name codex-g --source /path/to/auth.json --confirm-sensitive
-rcodexmanager --json repair-network --name codex-g
-rcodexmanager --json repair-network --name codex-g --skip-launchctl
 ```
 
-`quota` is read-only. Auth import backs up the target. Network repair enables Responses WebSocket flags and optionally syncs the macOS proxy into launchctl.
+`login` runs the official Codex interactive flow and intentionally rejects `--json`. Keep it attached until completion; use `--device-auth` on a headless host and never persist the OAuth URL or one-time code. `quota` is read-only. Auth import backs up the target.
 
 ## Auth Vault
 

@@ -12,17 +12,52 @@ export interface ProfileInfo {
   homeExists: boolean;
   userDataExists: boolean;
   configExists: boolean;
-  websocketFeaturesEnabled: boolean;
   managedByApp: boolean;
   isDefault: boolean;
+  isArchived?: boolean;
+  archivedAt?: string | null;
   launcherKind: "desktop" | "server" | string;
   zshrcLine: number;
   isRunning: boolean;
   runningPids: number[];
   runningProcessCount: number;
   account: CodexAccountInfo | null;
+  authState?: ProfileAuthState;
   latestSession: CodexSessionSummary | null;
   recentSessions: CodexSessionSummary[];
+}
+
+export type ProfileAuthStatus =
+  | "missing"
+  | "valid"
+  | "refresh-required"
+  | "expired"
+  | "api-key"
+  | "unknown"
+  | "invalid";
+
+export interface ProfileAuthState {
+  status: ProfileAuthStatus;
+  expiresAt: number | null;
+  refreshAvailable: boolean;
+}
+
+export type AuthLoginTargetKind = "local-profile" | "server-profile";
+export type AuthLoginMode = "browser-oauth" | "device-code";
+export type AuthLoginStatus = "waiting" | "completed" | "failed" | "cancelled" | "expired";
+
+export interface AuthLoginSessionReport {
+  sessionId: string;
+  targetKind: AuthLoginTargetKind;
+  targetId: string | null;
+  profileName: string;
+  mode: AuthLoginMode;
+  status: AuthLoginStatus;
+  verificationUrl: string | null;
+  userCode: string | null;
+  startedAt: string;
+  expiresAt: string;
+  message: string;
 }
 
 export interface CodexSessionSummary {
@@ -66,27 +101,6 @@ export interface ProfileQuotaReport {
   capturedAt: number;
   endpoint: string;
   windows: QuotaWindowInfo[];
-}
-
-export interface ProxyEnvSettings {
-  httpProxy: string | null;
-  httpsProxy: string | null;
-  allProxy: string | null;
-  wsProxy: string | null;
-  wssProxy: string | null;
-  noProxy: string;
-}
-
-export interface CodexNetworkRepairReport {
-  generatedAt: string;
-  profileName: string;
-  configPath: string;
-  configUpdated: boolean;
-  featureFlags: string[];
-  proxy: ProxyEnvSettings | null;
-  launchEnvUpdated: boolean;
-  launchEnvError: string | null;
-  message: string;
 }
 
 export type DoctorCheckStatus = "ok" | "warning" | "error";
@@ -177,6 +191,7 @@ export type ServerNodeOperation =
   | { kind: "list-sessions"; input: ListProfileSessionsInput }
   | { kind: "read-session"; input: ReadProfileSessionDetailInput }
   | { kind: "auth-status" }
+  | { kind: "check-profile-auth"; profileName: string }
   | { kind: "wechat-status"; profileName: string | null }
   | { kind: "feishu-status" }
   | { kind: "feishu-start"; profileName: string }
@@ -253,7 +268,9 @@ export interface ProfileReport {
   metadataPath: string;
   homeDir: string;
   profileCount: number;
+  archivedCount?: number;
   profiles: ProfileInfo[];
+  archivedProfiles?: ProfileInfo[];
 }
 
 export interface ProfileSessionReport {

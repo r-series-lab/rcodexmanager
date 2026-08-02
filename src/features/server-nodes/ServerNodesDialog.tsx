@@ -15,6 +15,7 @@ import HistoryRoundedIcon from "@mui/icons-material/HistoryRounded";
 import HubRoundedIcon from "@mui/icons-material/HubRounded";
 import KeyboardArrowLeftRoundedIcon from "@mui/icons-material/KeyboardArrowLeftRounded";
 import KeyboardArrowRightRoundedIcon from "@mui/icons-material/KeyboardArrowRightRounded";
+import LoginRoundedIcon from "@mui/icons-material/LoginRounded";
 import PlayArrowRoundedIcon from "@mui/icons-material/PlayArrowRounded";
 import ReplayRoundedIcon from "@mui/icons-material/ReplayRounded";
 import SearchRoundedIcon from "@mui/icons-material/SearchRounded";
@@ -81,6 +82,7 @@ import type {
   ModelRouteProxyCheckResult,
   ModelRouteReport,
   ProfileInfo,
+  ProfileQuotaReport,
   ProfileReport,
   ProfileSessionReport,
   ProfileSessionSummary,
@@ -118,11 +120,21 @@ import {
   sortProfiles,
   type ProfileSortMode,
 } from "../../lib/profileSorting";
+import {
+  AuthLoginDialog,
+  type AuthLoginTarget,
+} from "../auth-login/AuthLoginDialog";
+import { useI18n, type Translate } from "../../i18n";
 import "../manager-dialogs.css";
 
 type Feedback = { severity: "success" | "warning" | "error"; text: string };
 type ServerResource = "profiles" | "sessions" | "auth" | "routes" | "channels" | "doctor";
 type CachedChannels = { wechat: WechatBridgeReport; feishu: FeishuRemoteReport };
+type RemoteAuthCheck = {
+  status: "valid" | "refresh-required" | "invalid" | "error";
+  message: string;
+  checkedAt: string;
+};
 
 const EMPTY_NODE_DRAFT: UpsertServerNodeInput = {
   id: null,
@@ -218,13 +230,13 @@ function actionLabel(action: string): string {
 
 function shortOperationId(operationId: string): string {
   const compact = operationId.replace(/^node-op-/, "");
-  return `任务 ${compact.length > 11 ? `…${compact.slice(-11)}` : compact}`;
+  return compact.length > 11 ? `…${compact.slice(-11)}` : compact;
 }
 
-function taskTime(value: string): string {
+function taskTime(value: string, locale: string, unknownLabel: string): string {
   const date = new Date(value);
-  if (Number.isNaN(date.getTime())) return "时间未知";
-  return date.toLocaleTimeString("zh-CN", {
+  if (Number.isNaN(date.getTime())) return unknownLabel;
+  return date.toLocaleTimeString(locale, {
     hour: "2-digit",
     minute: "2-digit",
     second: "2-digit",
@@ -249,11 +261,11 @@ function remoteSessionKey(item: ProfileSessionSummary): string {
   return sessionDetailVariant(item);
 }
 
-function formatRemoteTime(value: string | null | undefined): string {
-  if (!value) return "时间未知";
+function formatRemoteTime(value: string | null | undefined, locale: string, unknownLabel: string): string {
+  if (!value) return unknownLabel;
   const date = new Date(value);
   if (Number.isNaN(date.getTime())) return value;
-  return new Intl.DateTimeFormat("zh-CN", {
+  return new Intl.DateTimeFormat(locale, {
     month: "2-digit",
     day: "2-digit",
     hour: "2-digit",
@@ -273,6 +285,66 @@ function accountPlan(profile: ProfileInfo | null): string {
     .join(" · ") || profile.account.authMode || "-";
 }
 
+function profileAuthPresentation(
+  profile: ProfileInfo,
+  remoteCheck?: RemoteAuthCheck,
+): { label: string; tone: StatusTone; description: string } {
+  if (remoteCheck?.status === "valid") {
+    return { label: "已验证", tone: "success", description: remoteCheck.message };
+  }
+  if (remoteCheck?.status === "invalid") {
+    return { label: "已失效", tone: "error", description: remoteCheck.message };
+  }
+  if (remoteCheck?.status === "refresh-required") {
+    return { label: "待刷新", tone: "warning", description: remoteCheck.message };
+  }
+
+  switch (profile.authState?.status) {
+    case "valid":
+      return { label: "未过期", tone: "success", description: "本地 access token 尚未到期；可进一步执行在线验证。" };
+    case "refresh-required":
+      return { label: "待刷新", tone: "warning", description: "access token 已过期，但存在 refresh token；打开 Codex 后通常可自动刷新。" };
+    case "expired":
+      return { label: "已失效", tone: "error", description: "access token 已过期，且没有可用的 refresh token。" };
+    case "api-key":
+      return { label: "API Key", tone: "info", description: "检测到 API Key；需在线验证才能确认服务端是否接受。" };
+    case "invalid":
+      return { label: "认证异常", tone: "error", description: "auth.json 存在，但内容不完整或无法解析。" };
+    case "missing":
+      return { label: "未登录", tone: "neutral", description: "没有检测到可用的 auth.json。" };
+    case "unknown":
+      return { label: "待验证", tone: "warning", description: "检测到认证信息，但 token 没有可读取的过期时间。" };
+    default:
+      return profile.account
+        ? { label: "已登录 · 未验证", tone: "neutral", description: "服务器节点 CLI 版本未返回认证有效期状态。" }
+        : { label: "未登录", tone: "neutral", description: "没有检测到认证账户。" };
+  }
+}
+
+function formatAuthExpiry(expiresAt: number | null | undefined, locale: string): string {
+  if (!expiresAt) return "-";
+  return new Intl.DateTimeFormat(locale, {
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+  }).format(new Date(expiresAt * 1000));
+}
+
+function isCredentialFailure(message: string): boolean {
+  return /access token.*expired|token.*missing|(?:^|\D)401(?:\D|$)|unauthorized|authentication failed|认证.*(失效|过期)/i.test(message);
+}
+
+function authVerificationErrorMessage(message: string, t: Translate): string {
+  if (/could not reach|error sending request|request failed|timed? ?out|dns|connect|network|tls|certificate|proxy/i.test(message)) {
+    return t("服务器暂时无法连接 ChatGPT 验证服务；当前认证未判定为失效。请检查节点代理后重试。");
+  }
+  if (/(?:^|\D)403(?:\D|$)|browser verification/i.test(message)) {
+    return t("ChatGPT 暂时拒绝在线校验，可能需要浏览器验证或调整网络；当前认证未判定为失效。");
+  }
+  return t("未能完成在线验证：{error}", { error: message });
+}
+
 export function ServerNodesDialog({
   open,
   onClose,
@@ -282,10 +354,12 @@ export function ServerNodesDialog({
   onClose: () => void;
   onFeedback?: (feedback: Feedback) => void;
 }) {
+  const { language, t } = useI18n();
   const [report, setReport] = useState<ServerNodeReport | null>(null);
   const [selectedNodeId, setSelectedNodeId] = useState(storedServerNodeId);
   const [probe, setProbe] = useState<ServerNodeProbeReport | null>(null);
   const [profiles, setProfiles] = useState<ProfileInfo[]>([]);
+  const [profileAuthChecks, setProfileAuthChecks] = useState<Record<string, RemoteAuthCheck>>({});
   const [selectedProfileName, setSelectedProfileName] = useState("");
   const [profileSort, setProfileSort] = useState<ProfileSortMode>(storedServerProfileSort);
   const [sessions, setSessions] = useState<ProfileSessionReport | null>(null);
@@ -330,6 +404,7 @@ export function ServerNodesDialog({
   const [profileModelDialogOpen, setProfileModelDialogOpen] = useState(false);
   const [profileModelDraft, setProfileModelDraft] = useState({ model: "", reasoningEffort: "xhigh" });
   const [profileSyncDialogOpen, setProfileSyncDialogOpen] = useState(false);
+  const [authLoginTarget, setAuthLoginTarget] = useState<AuthLoginTarget | null>(null);
   const [localProfiles, setLocalProfiles] = useState<ProfileInfo[]>([]);
   const [syncSourceProfileName, setSyncSourceProfileName] = useState("");
   const [syncTargetProfileName, setSyncTargetProfileName] = useState("");
@@ -345,6 +420,9 @@ export function ServerNodesDialog({
   const selectedNode = nodes.find((node) => node.id === selectedNodeId) ?? null;
   const sortedProfiles = useMemo(() => sortProfiles(profiles, profileSort), [profileSort, profiles]);
   const selectedProfile = profiles.find((profile) => profile.name === selectedProfileName) ?? null;
+  const selectedProfileAuth = selectedProfile
+    ? profileAuthPresentation(selectedProfile, profileAuthChecks[selectedProfile.name])
+    : null;
   const selectedBackup = auth?.backups.find((backup) => backup.id === selectedBackupId) ?? null;
   const selectedRoute = routes?.profiles.find((profile) => profile.profileName === selectedProfileName) ?? null;
   const selectedWechat = wechat?.bridges.find((bridge) => bridge.profileName === selectedProfileName) ?? null;
@@ -426,6 +504,7 @@ export function ServerNodesDialog({
     setSelectedSessionKey("");
     setSessionDetail(null);
     setSessionDetailError(null);
+    setProfileAuthChecks({});
     setSessionLoading(false);
     setSessionDetailLoading(false);
     sessionListRequestRef.current += 1;
@@ -460,7 +539,7 @@ export function ServerNodesDialog({
         if (feishu) rememberResource(selectedNodeId, "channels", { wechat: result.data, feishu });
         const bridge = result.data.bridges.find((item) => item.profileName === selectedProfileName);
         if (bridge?.connectionState === "running" || bridge?.tokenExists) {
-          onFeedback?.({ severity: "success", text: `${selectedProfileName} 微信绑定成功` });
+          onFeedback?.({ severity: "success", text: t("{profile} 微信绑定成功", { profile: selectedProfileName }) });
         }
       } catch {
         // Keep the existing channel state; the next manual refresh can surface transport errors.
@@ -508,7 +587,7 @@ export function ServerNodesDialog({
     operation: ServerNodeOperation,
     nodeId = selectedNodeId,
   ): Promise<ServerNodeOperationReport<T>> {
-    if (!nodeId) throw new Error("请先选择服务器节点");
+    if (!nodeId) throw new Error(t("请先选择服务器节点"));
     const startedAt = new Date().toISOString();
     const started = performance.now();
     try {
@@ -519,7 +598,7 @@ export function ServerNodesDialog({
       ));
       return result;
     } catch (remoteError) {
-      const message = messageOf(remoteError, "远程任务执行失败");
+      const message = messageOf(remoteError, t("远程任务执行失败"));
       setTaskHistory((current) => appendServerNodeTask(
         current,
         failedServerNodeTask(nodeId, operation, message, startedAt, Math.round(performance.now() - started)),
@@ -531,16 +610,16 @@ export function ServerNodesDialog({
   async function copyTaskDiagnostic(task: ServerNodeTaskEntry | null = latestTask) {
     if (!selectedNode) return;
     try {
-      if (!navigator.clipboard?.writeText) throw new Error("当前环境不支持写入剪贴板");
+      if (!navigator.clipboard?.writeText) throw new Error(t("当前环境不支持写入剪贴板"));
       await navigator.clipboard.writeText(formatServerNodeDiagnostic(
         selectedNode.name,
         selectedNode.sshTarget,
         task,
         error,
       ));
-      onFeedback?.({ severity: "success", text: "服务器诊断信息已复制" });
+      onFeedback?.({ severity: "success", text: t("服务器诊断信息已复制") });
     } catch (copyError) {
-      onFeedback?.({ severity: "error", text: messageOf(copyError, "复制诊断信息失败") });
+      onFeedback?.({ severity: "error", text: messageOf(copyError, t("复制诊断信息失败")) });
     }
   }
 
@@ -553,7 +632,7 @@ export function ServerNodesDialog({
     try {
       const result = await executeRemote<unknown>(operation, nodeId);
       if (!result.ok || result.data == null) {
-        throw new Error(result.error?.message || `${serverNodeOperationLabel(operation)}失败`);
+        throw new Error(result.error?.message || t("{operation}失败", { operation: t(serverNodeOperationLabel(operation)) }));
       }
       switch (operation.kind) {
         case "doctor":
@@ -564,6 +643,7 @@ export function ServerNodesDialog({
         case "list-profiles": {
           const next = result.data as ProfileReport;
           setProfiles(next.profiles);
+          setProfileAuthChecks({});
           rememberResource(nodeId, "profiles", next);
           setSelectedProfileName((current) => (
             next.profiles.some((profile) => profile.name === current)
@@ -608,9 +688,9 @@ export function ServerNodesDialog({
         case "read-session":
           break;
       }
-      onFeedback?.({ severity: "success", text: `${serverNodeOperationLabel(operation)}已完成` });
+      onFeedback?.({ severity: "success", text: t("{operation}已完成", { operation: t(serverNodeOperationLabel(operation)) }) });
     } catch (retryError) {
-      setError(messageOf(retryError, `${serverNodeOperationLabel(operation)}失败`));
+      setError(messageOf(retryError, t("{operation}失败", { operation: t(serverNodeOperationLabel(operation)) })));
     } finally {
       setAction(null);
     }
@@ -619,7 +699,7 @@ export function ServerNodesDialog({
   async function remoteData<T>(operation: ServerNodeOperation, nodeId = selectedNodeId): Promise<T> {
     const result = await executeRemote<T>(operation, nodeId);
     if (!result.ok || result.data == null) {
-      throw new Error(result.error?.message || `远程命令 ${result.command} 执行失败`);
+      throw new Error(result.error?.message || t("远程命令 {command} 执行失败", { command: result.command }));
     }
     return result.data;
   }
@@ -708,7 +788,7 @@ export function ServerNodesDialog({
       rememberResource(nodeId, "sessions", next, variant);
     } catch (loadError) {
       if (requestId !== sessionListRequestRef.current || nodeId !== selectedNodeIdRef.current) return;
-      setError(messageOf(loadError, "读取服务器会话失败"));
+      setError(messageOf(loadError, t("读取服务器会话失败")));
     } finally {
       if (requestId === sessionListRequestRef.current) setSessionLoading(false);
     }
@@ -747,7 +827,7 @@ export function ServerNodesDialog({
       setSessionDetail(next);
     } catch (detailError) {
       if (requestId !== sessionDetailRequestRef.current || nodeId !== selectedNodeIdRef.current) return;
-      setSessionDetailError(messageOf(detailError, "读取服务器会话详情失败"));
+      setSessionDetailError(messageOf(detailError, t("读取服务器会话详情失败")));
     } finally {
       if (requestId === sessionDetailRequestRef.current) setSessionDetailLoading(false);
     }
@@ -767,7 +847,7 @@ export function ServerNodesDialog({
         next.backups.some((backup) => backup.id === current) ? current : next.backups[0]?.id ?? "",
       );
     } catch (loadError) {
-      setError(messageOf(loadError, "读取服务器认证库失败"));
+      setError(messageOf(loadError, t("读取服务器认证库失败")));
     } finally {
       setAction(null);
     }
@@ -787,7 +867,7 @@ export function ServerNodesDialog({
       setRoutes(next);
       rememberResource(nodeId, "routes", next);
     } catch (loadError) {
-      setError(messageOf(loadError, "读取服务器模型路由失败"));
+      setError(messageOf(loadError, t("读取服务器模型路由失败")));
     } finally {
       setAction(null);
     }
@@ -809,7 +889,7 @@ export function ServerNodesDialog({
       setFeishu(nextFeishu);
       rememberResource(nodeId, "channels", { wechat: nextWechat, feishu: nextFeishu });
     } catch (loadError) {
-      setError(messageOf(loadError, "读取服务器远程渠道失败"));
+      setError(messageOf(loadError, t("读取服务器远程渠道失败")));
     } finally {
       setAction(null);
     }
@@ -858,7 +938,7 @@ export function ServerNodesDialog({
         next.nodes.some((node) => node.id === current) ? current : next.nodes[0]?.id ?? "",
       );
     } catch (loadError) {
-      setError(messageOf(loadError, "读取服务器节点失败"));
+      setError(messageOf(loadError, t("读取服务器节点失败")));
     } finally {
       setLoading(false);
     }
@@ -871,7 +951,7 @@ export function ServerNodesDialog({
     try {
       setSshHostReport(await listSshHosts());
     } catch (loadError) {
-      setSshHostsError(messageOf(loadError, "读取 SSH 主机配置失败"));
+      setSshHostsError(messageOf(loadError, t("读取 SSH 主机配置失败")));
     } finally {
       setSshHostsLoading(false);
     }
@@ -896,16 +976,17 @@ export function ServerNodesDialog({
       setProbe(nextProbe);
       writeServerNodeCache(serverNodeCacheKey(nodeId, "probe"), nextProbe);
       if (!nextProbe.status.reachable) {
-        setError(nextProbe.status.error || "无法通过 SSH 连接服务器节点");
+        setError(nextProbe.status.error || t("无法通过 SSH 连接服务器节点"));
         return;
       }
       if (nextProbe.status.reachable && nextProbe.status.cliInstalled) {
         const result = await executeRemote<ProfileReport>({ kind: "list-profiles" }, nodeId);
         if (!result.ok || !result.data) {
-          throw new Error(result.error?.message || "远程 profile 列表读取失败");
+          throw new Error(result.error?.message || t("远程 profile 列表读取失败"));
         }
         if (nodeId !== selectedNodeIdRef.current) return;
         setProfiles(result.data.profiles);
+        setProfileAuthChecks({});
         rememberResource(nodeId, "profiles", result.data);
         setSelectedProfileName((current) =>
           result.data?.profiles.some((profile) => profile.name === current)
@@ -914,7 +995,7 @@ export function ServerNodesDialog({
         );
       }
     } catch (refreshError) {
-      setError(messageOf(refreshError, "服务器连接检查失败"));
+      setError(messageOf(refreshError, t("服务器连接检查失败")));
     } finally {
       setAction(null);
     }
@@ -927,12 +1008,12 @@ export function ServerNodesDialog({
     setError(null);
     try {
       const result = await executeRemote<DoctorReport>({ kind: "doctor" }, nodeId);
-      if (!result.ok || !result.data) throw new Error(result.error?.message || "远程诊断失败");
+      if (!result.ok || !result.data) throw new Error(result.error?.message || t("远程诊断失败"));
       if (nodeId !== selectedNodeIdRef.current) return;
       setDoctor(result.data);
       rememberResource(nodeId, "doctor", result.data);
     } catch (doctorError) {
-      setError(messageOf(doctorError, "远程诊断失败"));
+      setError(messageOf(doctorError, t("远程诊断失败")));
     } finally {
       setAction(null);
     }
@@ -949,9 +1030,9 @@ export function ServerNodesDialog({
         : next.nodes.find((node) => node.sshTarget === nodeDraft.sshTarget.trim());
       setSelectedNodeId(selected?.id ?? next.nodes[0]?.id ?? "");
       setNodeDialogOpen(false);
-      onFeedback?.({ severity: "success", text: "服务器节点已保存" });
+      onFeedback?.({ severity: "success", text: t("服务器节点已保存") });
     } catch (saveError) {
-      setError(messageOf(saveError, "保存服务器节点失败"));
+      setError(messageOf(saveError, t("保存服务器节点失败")));
     } finally {
       setAction(null);
     }
@@ -968,10 +1049,11 @@ export function ServerNodesDialog({
       setSelectedNodeId(next.nodes[0]?.id ?? "");
       setProbe(null);
       setProfiles([]);
+      setProfileAuthChecks({});
       setConfirmAction(null);
-      onFeedback?.({ severity: "success", text: "服务器节点配置已移除，服务器数据未改动" });
+      onFeedback?.({ severity: "success", text: t("服务器节点配置已移除，服务器数据未改动") });
     } catch (deleteError) {
-      setError(messageOf(deleteError, "移除服务器节点失败"));
+      setError(messageOf(deleteError, t("移除服务器节点失败")));
     } finally {
       setAction(null);
     }
@@ -982,12 +1064,60 @@ export function ServerNodesDialog({
     setAction(`${kind}:${profileName}`);
     try {
       const result = await executeRemote({ kind, profileName });
-      if (!result.ok) throw new Error(result.error?.message || "远程操作失败");
+      if (!result.ok) throw new Error(result.error?.message || t("远程操作失败"));
       setConfirmAction(null);
       await refreshSelectedNode(selectedNodeId);
-      onFeedback?.({ severity: "success", text: kind === "launch-profile" ? `${profileName} 已启动` : `${profileName} 已停止` });
+      onFeedback?.({ severity: "success", text: t(kind === "launch-profile" ? "{profile} 已启动" : "{profile} 已停止", { profile: profileName }) });
     } catch (profileError) {
-      setError(messageOf(profileError, "远程 profile 操作失败"));
+      setError(messageOf(profileError, t("远程 profile 操作失败")));
+    } finally {
+      setAction(null);
+    }
+  }
+
+  async function checkSelectedProfileAuth() {
+    if (!selectedNodeId || !selectedProfile) return;
+    const profileName = selectedProfile.name;
+    setAction(`check-profile-auth:${profileName}`);
+    setError(null);
+    try {
+      const result = await executeRemote<ProfileQuotaReport>({
+        kind: "check-profile-auth",
+        profileName,
+      });
+      if (!result.ok || !result.data) {
+        throw new Error(result.error?.message || t("认证验证失败"));
+      }
+      setProfileAuthChecks((current) => ({
+        ...current,
+        [profileName]: {
+          status: "valid",
+          message: t("服务端已接受当前凭证，usage 接口可访问。"),
+          checkedAt: result.generatedAt,
+        },
+      }));
+      onFeedback?.({ severity: "success", text: t("{profile} 认证有效", { profile: profileName }) });
+    } catch (checkError) {
+      const message = messageOf(checkError, t("认证验证失败"));
+      const invalid = isCredentialFailure(message);
+      const refreshRequired = invalid && selectedProfile.authState?.status === "refresh-required";
+      setProfileAuthChecks((current) => ({
+        ...current,
+        [profileName]: {
+          status: refreshRequired ? "refresh-required" : invalid ? "invalid" : "error",
+          message: refreshRequired
+            ? t("access token 已过期，但存在 refresh token；启动一次该 Profile 以刷新认证。")
+            : invalid
+              ? t("服务端拒绝当前凭证，请重新登录或从认证库应用有效认证。")
+              : authVerificationErrorMessage(message, t),
+          checkedAt: new Date().toISOString(),
+        },
+      }));
+      if (refreshRequired) {
+        onFeedback?.({ severity: "warning", text: t("{profile} 认证需要刷新", { profile: profileName }) });
+      } else if (invalid) {
+        onFeedback?.({ severity: "warning", text: t("{profile} 认证已失效或不完整", { profile: profileName }) });
+      }
     } finally {
       setAction(null);
     }
@@ -998,12 +1128,12 @@ export function ServerNodesDialog({
     setAction("create-profile");
     try {
       const result = await executeRemote({ kind: "create-profile", input: profileDraft });
-      if (!result.ok) throw new Error(result.error?.message || "创建服务器 profile 失败");
+      if (!result.ok) throw new Error(result.error?.message || t("创建服务器 profile 失败"));
       setProfileDialogOpen(false);
       await refreshSelectedNode(selectedNodeId);
-      onFeedback?.({ severity: "success", text: `${profileDraft.name} 已在服务器创建` });
+      onFeedback?.({ severity: "success", text: t("{profile} 已在服务器创建", { profile: profileDraft.name }) });
     } catch (createError) {
-      setError(messageOf(createError, "创建服务器 profile 失败"));
+      setError(messageOf(createError, t("创建服务器 profile 失败")));
     } finally {
       setAction(null);
     }
@@ -1031,18 +1161,18 @@ export function ServerNodesDialog({
           reasoningEffort: profileModelDraft.reasoningEffort.trim() || null,
         },
       });
-      if (!result.ok) throw new Error(result.error?.message || "更新服务器模型失败");
+      if (!result.ok) throw new Error(result.error?.message || t("更新服务器模型失败"));
       setConfirmAction(null);
       setProfileModelDialogOpen(false);
       clearServerNodeCacheForNode(selectedNodeId);
       await refreshSelectedNode(selectedNodeId);
       onFeedback?.({
         severity: "success",
-        text: `${selectedProfile.name} 已切换为 ${profileModelDraft.model.trim()}`,
+        text: t("{profile} 已切换为 {model}", { profile: selectedProfile.name, model: profileModelDraft.model.trim() }),
       });
     } catch (updateError) {
       setConfirmAction(null);
-      setError(messageOf(updateError, "更新服务器模型失败"));
+      setError(messageOf(updateError, t("更新服务器模型失败")));
     } finally {
       setAction(null);
     }
@@ -1063,7 +1193,7 @@ export function ServerNodesDialog({
       setSyncAuth(Boolean(preferred?.account));
       setProfileSyncDialogOpen(true);
     } catch (loadError) {
-      setError(messageOf(loadError, "读取本机 Profiles 失败"));
+      setError(messageOf(loadError, t("读取本机 Profiles 失败")));
     } finally {
       setAction(null);
     }
@@ -1089,11 +1219,11 @@ export function ServerNodesDialog({
       setTab("profiles");
       onFeedback?.({
         severity: "success",
-        text: `${result.targetProfileName} 已同步到服务器${result.authSynced ? "并完成认证" : ""}`,
+        text: t(result.authSynced ? "{profile} 已同步到服务器并完成认证" : "{profile} 已同步到服务器", { profile: result.targetProfileName }),
       });
     } catch (syncError) {
       setConfirmAction(null);
-      setError(messageOf(syncError, "同步服务器 Profile 失败"));
+      setError(messageOf(syncError, t("同步服务器 Profile 失败")));
     } finally {
       setAction(null);
     }
@@ -1107,14 +1237,14 @@ export function ServerNodesDialog({
       const next = await remoteData<AuthVaultReport>({
         kind: "create-auth-backup",
         profileName: selectedProfile.name,
-        label: `${selectedProfile.alias || selectedProfile.name} 服务器备份`,
+        label: t("{profile} 服务器备份", { profile: selectedProfile.alias || selectedProfile.name }),
       });
       setAuth(next);
       rememberResource(selectedNodeId, "auth", next);
       setSelectedBackupId(next.backups[0]?.id ?? "");
-      onFeedback?.({ severity: "success", text: `${selectedProfile.name} 认证备份已创建` });
+      onFeedback?.({ severity: "success", text: t("{profile} 认证备份已创建", { profile: selectedProfile.name }) });
     } catch (backupError) {
-      setError(messageOf(backupError, "创建服务器认证备份失败"));
+      setError(messageOf(backupError, t("创建服务器认证备份失败")));
     } finally {
       setAction(null);
     }
@@ -1134,9 +1264,9 @@ export function ServerNodesDialog({
       setConfirmAction(null);
       await refreshSelectedNode(selectedNodeId);
       await loadAuth();
-      onFeedback?.({ severity: "success", text: `认证备份已应用到 ${selectedProfile.name}` });
+      onFeedback?.({ severity: "success", text: t("认证备份已应用到 {profile}", { profile: selectedProfile.name }) });
     } catch (applyError) {
-      setError(messageOf(applyError, "应用服务器认证备份失败"));
+      setError(messageOf(applyError, t("应用服务器认证备份失败")));
     } finally {
       setAction(null);
     }
@@ -1164,7 +1294,7 @@ export function ServerNodesDialog({
     try {
       setRoutePreview(await remoteData<ModelRoutePreview>({ kind: "model-route-preview", input }));
     } catch (previewError) {
-      setError(messageOf(previewError, "预览服务器模型路由失败"));
+      setError(messageOf(previewError, t("预览服务器模型路由失败")));
     } finally {
       setAction(null);
     }
@@ -1182,9 +1312,9 @@ export function ServerNodesDialog({
       await loadRoutes();
       await refreshSelectedNode(selectedNodeId);
       await checkRemoteRoute();
-      onFeedback?.({ severity: "success", text: `${input.profileName} 模型路由已应用` });
+      onFeedback?.({ severity: "success", text: t("{profile} 模型路由已应用", { profile: input.profileName }) });
     } catch (applyError) {
-      setError(messageOf(applyError, "应用服务器模型路由失败"));
+      setError(messageOf(applyError, t("应用服务器模型路由失败")));
     } finally {
       setAction(null);
     }
@@ -1204,9 +1334,9 @@ export function ServerNodesDialog({
       setRoutePreview(null);
       await loadRoutes();
       await refreshSelectedNode(selectedNodeId);
-      onFeedback?.({ severity: "success", text: `${selectedProfile.name} 已恢复官方模型配置` });
+      onFeedback?.({ severity: "success", text: t("{profile} 已恢复官方模型配置", { profile: selectedProfile.name }) });
     } catch (restoreError) {
-      setError(messageOf(restoreError, "恢复服务器模型路由失败"));
+      setError(messageOf(restoreError, t("恢复服务器模型路由失败")));
     } finally {
       setAction(null);
     }
@@ -1222,7 +1352,7 @@ export function ServerNodesDialog({
         profileName: selectedProfile.name,
       }));
     } catch (checkError) {
-      setError(messageOf(checkError, "服务器模型路由自检失败"));
+      setError(messageOf(checkError, t("服务器模型路由自检失败")));
     } finally {
       setAction(null);
     }
@@ -1238,11 +1368,11 @@ export function ServerNodesDialog({
       if (feishu) rememberResource(selectedNodeId, "channels", { wechat: next, feishu });
       const bridge = next.bridges.find((item) => item.profileName === selectedProfile.name);
       const text = bridge?.connectionState === "awaiting-scan"
-        ? `${selectedProfile.name} 已启动，请扫描二维码`
-        : `服务器微信桥接已${kind === "wechat-stop" ? "停止" : kind === "wechat-start" ? "启动" : "重启"}`;
+        ? t("{profile} 已启动，请扫描二维码", { profile: selectedProfile.name })
+        : t("服务器微信桥接已{status}", { status: t(kind === "wechat-stop" ? "停止" : kind === "wechat-start" ? "启动" : "重启") });
       onFeedback?.({ severity: "success", text });
     } catch (channelError) {
-      setError(messageOf(channelError, "服务器微信桥接操作失败"));
+      setError(messageOf(channelError, t("服务器微信桥接操作失败")));
     } finally {
       setAction(null);
     }
@@ -1259,9 +1389,9 @@ export function ServerNodesDialog({
       const next = await remoteData<FeishuRemoteReport>(operation);
       setFeishu(next);
       if (wechat) rememberResource(selectedNodeId, "channels", { wechat, feishu: next });
-      onFeedback?.({ severity: "success", text: "服务器飞书渠道状态已更新" });
+      onFeedback?.({ severity: "success", text: t("服务器飞书渠道状态已更新") });
     } catch (channelError) {
-      setError(messageOf(channelError, "服务器飞书渠道操作失败"));
+      setError(messageOf(channelError, t("服务器飞书渠道操作失败")));
     } finally {
       setAction(null);
     }
@@ -1289,7 +1419,7 @@ export function ServerNodesDialog({
               <strong>{node.name}</strong>
               <small>{node.sshTarget}</small>
               <span className={`server-node-inline-status ${statusTone(currentProbe)}`}>
-                {statusLabel(currentProbe)}
+                {t(statusLabel(currentProbe))}
               </span>
             </span>
           </button>
@@ -1307,7 +1437,7 @@ export function ServerNodesDialog({
           <Typography component="h3" variant="h6">{selectedNode.name}</Typography>
           <Typography variant="body2" color="text.secondary">{selectedNode.sshTarget}</Typography>
         </Box>
-        <StatusBadge label={statusLabel(probe)} tone={statusTone(probe)} />
+        <StatusBadge label={t(statusLabel(probe))} tone={statusTone(probe)} />
       </Box>
       <DialogTabs
         value={tab}
@@ -1326,10 +1456,10 @@ export function ServerNodesDialog({
       {activeResource && activeResourceUpdatedAt ? (
         <Box className="server-node-resource-state">
           <Typography variant="caption">
-            内存缓存 · 更新于 {taskTime(new Date(activeResourceUpdatedAt).toISOString())}
+            {t("内存缓存 · 更新于 {time}", { time: taskTime(new Date(activeResourceUpdatedAt).toISOString(), language, t("时间未知")) })}
           </Typography>
           <Typography variant="caption">
-            {Date.now() - activeResourceUpdatedAt < SERVER_NODE_CACHE_TTL_MS ? "30 秒内有效" : "可刷新"}
+            {t(Date.now() - activeResourceUpdatedAt < SERVER_NODE_CACHE_TTL_MS ? "30 秒内有效" : "可刷新")}
           </Typography>
         </Box>
       ) : null}
@@ -1341,10 +1471,10 @@ export function ServerNodesDialog({
             size="small"
             value={profileSort}
             onChange={(event) => setProfileSort(event.target.value as ProfileSortMode)}
-            slotProps={{ htmlInput: { "aria-label": "服务器 Profile 排序" } }}
+            slotProps={{ htmlInput: { "aria-label": t("服务器 Profile 排序") } }}
           >
             {PROFILE_SORT_OPTIONS.map((option) => (
-              <MenuItem key={option.value} value={option.value}>{option.label}</MenuItem>
+              <MenuItem key={option.value} value={option.value}>{t(option.label)}</MenuItem>
             ))}
           </TextField>
           <Button
@@ -1355,7 +1485,7 @@ export function ServerNodesDialog({
               setProfileDialogOpen(true);
             }}
           >
-            新增服务器 Profile
+            {t("新增服务器 Profile")}
           </Button>
           <Button
             size="small"
@@ -1363,7 +1493,7 @@ export function ServerNodesDialog({
             onClick={() => void openProfileSyncDialog()}
             disabled={Boolean(action)}
           >
-            从本机同步
+            {t("从本机同步")}
           </Button>
         </Box>
       ) : null}
@@ -1371,8 +1501,8 @@ export function ServerNodesDialog({
         <Box className={`server-node-recovery ${errorGuide.code}`}>
           <WarningAmberRoundedIcon />
           <Box className="server-node-recovery-copy">
-            <Typography variant="subtitle2">{errorGuide.title}</Typography>
-            <Typography variant="caption">{errorGuide.description}</Typography>
+            <Typography variant="subtitle2">{t(errorGuide.title)}</Typography>
+            <Typography variant="caption">{t(errorGuide.description)}</Typography>
             <Typography component="code" variant="caption">{error}</Typography>
           </Box>
           <Stack className="server-node-recovery-actions" direction="row" spacing={0.5}>
@@ -1382,18 +1512,18 @@ export function ServerNodesDialog({
                 startIcon={<ReplayRoundedIcon />}
                 onClick={() => void retryRemoteTask(latestTask)}
                 disabled={Boolean(action)}
-              >重试</Button>
+              >{t("重试")}</Button>
             ) : null}
             <Button
               size="small"
               startIcon={<RestartAltRoundedIcon />}
               onClick={() => void refreshSelectedNode()}
               disabled={Boolean(action)}
-            >重新检查</Button>
-            <Tooltip title="复制诊断信息">
+            >{t("重新检查")}</Button>
+            <Tooltip title={t("复制诊断信息")}>
               <IconButton
                 size="small"
-                aria-label="复制服务器诊断信息"
+                aria-label={t("复制服务器诊断信息")}
                 onClick={() => void copyTaskDiagnostic()}
               ><ContentCopyRoundedIcon /></IconButton>
             </Tooltip>
@@ -1403,7 +1533,7 @@ export function ServerNodesDialog({
       {action ? (
         <Box className="server-node-task-strip running">
           <CircularProgress size={16} />
-          <Typography variant="caption">{actionLabel(action)}</Typography>
+          <Typography variant="caption">{t(actionLabel(action))}</Typography>
           {selectedTasks.length ? (
             <Button
               className="server-node-history-toggle"
@@ -1421,16 +1551,16 @@ export function ServerNodesDialog({
         >
           {latestTask.status === "success" ? <CheckCircleOutlineRoundedIcon /> : <WarningAmberRoundedIcon />}
           <Typography variant="caption">
-            {latestTask.label} · {latestTask.durationMs} ms
+            {t(latestTask.label)} · {latestTask.durationMs} ms
           </Typography>
           <Typography component="code" variant="caption">
-            {shortOperationId(latestTask.operationId)}
+            {t("任务 {id}", { id: shortOperationId(latestTask.operationId) })}
           </Typography>
-          <Tooltip title="最近任务">
+          <Tooltip title={t("最近任务")}>
             <IconButton
               className="server-node-history-toggle"
               size="small"
-              aria-label="查看最近任务"
+              aria-label={t("查看最近任务")}
               onClick={() => setTaskHistoryOpen((value) => !value)}
             >
               {taskHistoryOpen ? <ExpandLessRoundedIcon /> : <HistoryRoundedIcon />}
@@ -1441,34 +1571,34 @@ export function ServerNodesDialog({
       <Collapse in={taskHistoryOpen && selectedTasks.length > 0}>
         <Box className="server-node-task-history">
           <Box className="server-node-task-history-heading">
-            <Typography variant="subtitle2">最近任务</Typography>
-            <Typography variant="caption">当前窗口 · 最多 10 条</Typography>
+            <Typography variant="subtitle2">{t("最近任务")}</Typography>
+            <Typography variant="caption">{t("当前窗口 · 最多 10 条")}</Typography>
           </Box>
           {selectedTasks.map((task) => (
             <Box key={task.operationId} className={`server-node-task-row ${task.status}`}>
               {task.status === "success" ? <CheckCircleOutlineRoundedIcon /> : <WarningAmberRoundedIcon />}
               <Box className="server-node-task-copy">
-                <Typography variant="body2">{task.label}</Typography>
+                <Typography variant="body2">{t(task.label)}</Typography>
                 <Typography variant="caption">
-                  {taskTime(task.generatedAt)} · {task.durationMs} ms · {shortOperationId(task.operationId)}
+                  {taskTime(task.generatedAt, language, t("时间未知"))} · {task.durationMs} ms · {t("任务 {id}", { id: shortOperationId(task.operationId) })}
                 </Typography>
                 {task.error ? <Typography component="code" variant="caption">{task.error}</Typography> : null}
               </Box>
               <Box className="server-node-task-actions">
                 {task.retryOperation ? (
-                  <Tooltip title="重试只读任务">
+                  <Tooltip title={t("重试只读任务")}>
                     <IconButton
                       size="small"
-                      aria-label={`重试 ${task.label}`}
+                      aria-label={t("重试 {task}", { task: t(task.label) })}
                       onClick={() => void retryRemoteTask(task)}
                       disabled={Boolean(action)}
                     ><ReplayRoundedIcon /></IconButton>
                   </Tooltip>
                 ) : null}
-                <Tooltip title="复制诊断信息">
+                <Tooltip title={t("复制诊断信息")}>
                   <IconButton
                     size="small"
-                    aria-label={`复制 ${task.label} 诊断信息`}
+                    aria-label={t("复制 {task} 诊断信息", { task: t(task.label) })}
                     onClick={() => void copyTaskDiagnostic(task)}
                   ><ContentCopyRoundedIcon /></IconButton>
                 </Tooltip>
@@ -1487,25 +1617,25 @@ export function ServerNodesDialog({
           </Box>
           {probe ? (
             <Box className="server-node-facts">
-              <Fact label="主机" value={probe.status.hostname || "未知"} />
-              <Fact label="系统" value={[probe.status.os, probe.status.arch].filter(Boolean).join(" · ") || "未知"} />
-              <Fact label="用户" value={probe.status.user || "未知"} />
-              <Fact label="Shell" value={probe.status.shell || "自动识别"} />
-              <Fact label="节点版本" value={probe.status.cliVersion || "未安装"} />
+              <Fact label="主机" value={probe.status.hostname || t("未知")} />
+              <Fact label="系统" value={[probe.status.os, probe.status.arch].filter(Boolean).join(" · ") || t("未知")} />
+              <Fact label="用户" value={probe.status.user || t("未知")} />
+              <Fact label="Shell" value={probe.status.shell || t("自动识别")} />
+              <Fact label="节点版本" value={probe.status.cliVersion || t("未安装")} />
               <Fact label="延迟" value={`${probe.status.latencyMs} ms`} />
             </Box>
           ) : (
             <Stack spacing={1}>{Array.from({ length: 3 }).map((_, index) => <Skeleton key={index} height={44} />)}</Stack>
           )}
           {probe?.status.reachable && !probe.status.cliInstalled ? (
-            <Alert severity="warning">SSH 已连接，但服务器尚未安装 rCodexManager 节点 CLI。</Alert>
+            <Alert severity="warning">{t("SSH 已连接，但服务器尚未安装 rCodexManager 节点 CLI。")}</Alert>
           ) : null}
           {probe?.status.reachable && !probe.status.codexInstalled ? (
-            <Alert severity="warning">服务器尚未安装 Codex CLI；节点诊断可用，但 Profile 无法启动。</Alert>
+            <Alert severity="warning">{t("服务器尚未安装 Codex CLI；节点诊断可用，但 Profile 无法启动。")}</Alert>
           ) : null}
           {probe?.status.cliInstalled && !supportsProfileModelUpdate ? (
             <Alert severity="info">
-              服务器节点版本为 {probe.status.cliVersion || "未知"}；升级到 {MIN_PROFILE_MODEL_UPDATE_VERSION} 后可直接反显并选择 Profile 模型。
+              {t("服务器节点版本为 {version}；升级到 {required} 后可直接反显并选择 Profile 模型。", { version: probe.status.cliVersion || t("未知"), required: MIN_PROFILE_MODEL_UPDATE_VERSION })}
             </Alert>
           ) : null}
         </Box>
@@ -1527,40 +1657,87 @@ export function ServerNodesDialog({
         ) : (
           <Box className="server-profile-layout">
             <Box className="server-profile-list">
-              {sortedProfiles.map((profile) => (
-                <button
-                  type="button"
-                  key={profile.name}
-                  className={`server-profile-row ${selectedProfileName === profile.name ? "selected" : ""}`}
-                  onClick={() => setSelectedProfileName(profile.name)}
-                >
-                  <span><strong>{profile.alias || profile.name}</strong><small>{profile.name} · {profile.model || "未配置模型"}</small></span>
-                  <StatusBadge label={profile.isRunning ? "运行中" : profile.account ? "已登录" : "未登录"} tone={profile.isRunning ? "success" : "neutral"} />
-                </button>
-              ))}
+              {sortedProfiles.map((profile) => {
+                const authPresentation = profileAuthPresentation(profile, profileAuthChecks[profile.name]);
+                return (
+                  <button
+                    type="button"
+                    key={profile.name}
+                    className={`server-profile-row ${selectedProfileName === profile.name ? "selected" : ""}`}
+                    onClick={() => setSelectedProfileName(profile.name)}
+                  >
+                    <span><strong>{profile.alias || profile.name}</strong><small>{profile.name} · {profile.model || t("跟随 Codex 默认")}</small></span>
+                    <StatusBadge
+                      label={profile.isRunning ? "运行中" : authPresentation.label}
+                      tone={profile.isRunning ? "success" : authPresentation.tone}
+                    />
+                  </button>
+                );
+              })}
             </Box>
             {selectedProfile ? (
               <Box className="server-profile-inspector">
                 <Typography variant="subtitle1">{selectedProfile.alias || selectedProfile.name}</Typography>
                 <Typography variant="caption" color="text.secondary">{selectedProfile.codexHome}</Typography>
                 <Box className="server-profile-meta">
-                  <Fact label="模型" value={selectedProfile.model || "未配置"} />
-                  <Fact label="Provider" value={selectedProfile.modelProvider || "OpenAI 官方 / 默认"} />
-                  <Fact label="推理等级" value={selectedProfile.reasoningEffort || "默认"} />
-                  <Fact label="认证账户" value={accountIdentity(selectedProfile)} />
+                  <Fact label="模型" value={selectedProfile.model || t("跟随 Codex 默认")} />
+                  <Fact label="Provider" value={selectedProfile.modelProvider || t("OpenAI 官方 / 默认")} />
+                  <Fact label="推理等级" value={selectedProfile.reasoningEffort || t("默认")} />
+                  <Fact label="认证账户" value={t(accountIdentity(selectedProfile))} />
                   <Fact label="账户套餐" value={accountPlan(selectedProfile)} />
                   <Fact label="认证方式" value={selectedProfile.account?.authMode || "-"} />
-                  <Fact label="运行状态" value={selectedProfile.isRunning ? "运行中" : "已停止"} />
+                  <Fact label="认证状态" value={t(selectedProfileAuth?.label || "状态未知")} />
+                  <Fact label="凭证到期" value={formatAuthExpiry(selectedProfile.authState?.expiresAt, language)} />
+                  <Fact
+                    label="刷新能力"
+                    value={t(selectedProfile.authState ? (selectedProfile.authState.refreshAvailable ? "可刷新" : "不可刷新") : "节点待升级")}
+                  />
+                  <Fact label="运行状态" value={t(selectedProfile.isRunning ? "运行中" : "已停止")} />
                 </Box>
-                <Stack direction="row" spacing={1}>
-                  <Tooltip title={!supportsProfileModelUpdate ? `服务器节点需升级到 ${MIN_PROFILE_MODEL_UPDATE_VERSION}` : selectedProfile.isDefault ? "默认 Profile 受保护" : selectedProfile.isRunning ? "请先停止 Profile" : "配置模型与推理等级"}>
+                {selectedProfileAuth && selectedProfileAuth.tone !== "success" ? (
+                  <Alert severity={selectedProfileAuth.tone === "error" ? "error" : selectedProfileAuth.tone === "warning" ? "warning" : "info"}>
+                    {t(selectedProfileAuth.description)}
+                  </Alert>
+                ) : null}
+                {profileAuthChecks[selectedProfile.name]?.status === "error" ? (
+                  <Alert severity="warning">{profileAuthChecks[selectedProfile.name].message}</Alert>
+                ) : null}
+                <Stack direction="row" spacing={1} useFlexGap sx={{ flexWrap: "wrap" }}>
+                  <Button
+                    variant="outlined"
+                    startIcon={<LoginRoundedIcon />}
+                    onClick={() => setAuthLoginTarget({
+                      kind: "server-profile",
+                      profileName: selectedProfile.name,
+                      profileLabel: selectedProfile.alias || selectedProfile.name,
+                      nodeId: selectedNodeId,
+                      nodeLabel: selectedNode?.name,
+                      hasAccount: Boolean(selectedProfile.account),
+                    })}
+                    disabled={Boolean(action)}
+                  >
+                    {t(selectedProfile.account ? "刷新认证" : "登录")}
+                  </Button>
+                  <Button
+                    variant="outlined"
+                    startIcon={action === `check-profile-auth:${selectedProfile.name}` ? <CircularProgress size={15} /> : <FactCheckRoundedIcon />}
+                    onClick={() => void checkSelectedProfileAuth()}
+                    disabled={
+                      Boolean(action)
+                      || selectedProfile.authState?.status === "missing"
+                      || (!selectedProfile.authState && !selectedProfile.account)
+                    }
+                  >
+                    {t("验证认证")}
+                  </Button>
+                  <Tooltip title={!supportsProfileModelUpdate ? t("服务器节点需升级到 {version}", { version: MIN_PROFILE_MODEL_UPDATE_VERSION }) : t(selectedProfile.isDefault ? "默认 Profile 受保护" : selectedProfile.isRunning ? "请先停止 Profile" : "配置模型与推理等级")}>
                     <span>
                       <Button
                         variant="outlined"
                         startIcon={<TuneRoundedIcon />}
                         onClick={openProfileModelDialog}
                         disabled={!supportsProfileModelUpdate || selectedProfile.isDefault || selectedProfile.isRunning}
-                      >配置模型</Button>
+                      >{t("配置模型")}</Button>
                     </span>
                   </Tooltip>
                   {selectedProfile.isRunning ? (
@@ -1570,14 +1747,14 @@ export function ServerNodesDialog({
                       startIcon={<StopCircleRoundedIcon />}
                       onClick={() => setConfirmAction("terminate-profile")}
                       disabled={action === `terminate-profile:${selectedProfile.name}` || selectedProfile.isDefault}
-                    >停止</Button>
+                    >{t("停止")}</Button>
                   ) : (
                     <Button
                       variant="contained"
                       startIcon={<PlayArrowRoundedIcon />}
                       onClick={() => void runProfileAction("launch-profile", selectedProfile.name)}
                       disabled={action === `launch-profile:${selectedProfile.name}`}
-                    >启动</Button>
+                    >{t("启动")}</Button>
                   )}
                 </Stack>
               </Box>
@@ -1593,17 +1770,17 @@ export function ServerNodesDialog({
               size="small"
               value={sessionQuery}
               onChange={(event) => { setSessionQuery(event.target.value); setSessionPage(1); }}
-              placeholder="搜索会话标题或摘要"
+              placeholder={t("搜索会话标题或摘要")}
               slotProps={{ input: { startAdornment: <InputAdornment position="start"><SearchRoundedIcon fontSize="small" /></InputAdornment> } }}
             />
             <TextField
               select
               size="small"
-              aria-label="筛选服务器会话 Profile"
+              aria-label={t("筛选服务器会话 Profile")}
               value={sessionProfileName}
               onChange={(event) => { setSessionProfileName(event.target.value); setSessionPage(1); }}
             >
-              <MenuItem value="">全部 Profile</MenuItem>
+              <MenuItem value="">{t("全部 Profile")}</MenuItem>
               {sortedProfiles.map((profile) => (
                 <MenuItem key={profile.name} value={profile.name}>{profile.alias || profile.name}</MenuItem>
               ))}
@@ -1611,11 +1788,11 @@ export function ServerNodesDialog({
             <TextField
               select
               size="small"
-              aria-label="服务器会话每页数量"
+              aria-label={t("服务器会话每页数量")}
               value={sessionPageSize}
               onChange={(event) => { setSessionPageSize(Number(event.target.value)); setSessionPage(1); }}
             >
-              {[10, 20, 50].map((size) => <MenuItem key={size} value={size}>{size} / 页</MenuItem>)}
+              {[10, 20, 50].map((size) => <MenuItem key={size} value={size}>{t("{count} / 页", { count: size })}</MenuItem>)}
             </TextField>
           </Box>
           <Box className="server-session-layout">
@@ -1637,9 +1814,9 @@ export function ServerNodesDialog({
                       >
                         <TerminalRoundedIcon />
                         <span>
-                          <strong>{item.session.renamedTitle || item.session.title || "未命名会话"}</strong>
-                          <small>{item.profileAlias || item.profileName} · {formatRemoteTime(item.session.updatedAt)}</small>
-                          <em>{item.session.summary || "暂无摘要"}</em>
+                          <strong>{item.session.renamedTitle || item.session.title || t("未命名会话")}</strong>
+                          <small>{item.profileAlias || item.profileName} · {formatRemoteTime(item.session.updatedAt, language, t("时间未知"))}</small>
+                          <em>{item.session.summary || t("暂无摘要")}</em>
                         </span>
                       </button>
                     );
@@ -1649,11 +1826,11 @@ export function ServerNodesDialog({
                 <EmptyState icon={<ChatBubbleOutlineRoundedIcon />} title="没有匹配的服务器会话" description="调整搜索或 Profile 筛选后再试。" />
               )}
               <Box className="server-session-pagination">
-                <Tooltip title="上一页"><span><IconButton size="small" onClick={() => setSessionPage((page) => page - 1)} disabled={sessionLoading || sessionPage <= 1}><KeyboardArrowLeftRoundedIcon /></IconButton></span></Tooltip>
+                <Tooltip title={t("上一页")}><span><IconButton size="small" onClick={() => setSessionPage((page) => page - 1)} disabled={sessionLoading || sessionPage <= 1}><KeyboardArrowLeftRoundedIcon /></IconButton></span></Tooltip>
                 <Typography variant="caption">
-                  {sessions?.sessions.length ? `${sessions.offset + 1}-${sessions.offset + sessions.sessions.length}` : "0 条"} · 第 {sessionPage} 页
+                  {t("{range} · 第 {page} 页", { range: sessions?.sessions.length ? `${sessions.offset + 1}-${sessions.offset + sessions.sessions.length}` : t("0 条"), page: sessionPage })}
                 </Typography>
-                <Tooltip title="下一页"><span><IconButton size="small" onClick={() => setSessionPage((page) => page + 1)} disabled={sessionLoading || !sessions?.hasMore}><KeyboardArrowRightRoundedIcon /></IconButton></span></Tooltip>
+                <Tooltip title={t("下一页")}><span><IconButton size="small" onClick={() => setSessionPage((page) => page + 1)} disabled={sessionLoading || !sessions?.hasMore}><KeyboardArrowRightRoundedIcon /></IconButton></span></Tooltip>
               </Box>
             </Box>
             <Box className="server-session-detail">
@@ -1666,19 +1843,19 @@ export function ServerNodesDialog({
               ) : (
                 <Box className="server-session-detail-content">
                   <Box>
-                    <Typography variant="subtitle1">{sessionDetail?.title || selectedSession.session.title || "未命名会话"}</Typography>
-                    <Typography variant="caption">{selectedSession.profileAlias || selectedSession.profileName} · {formatRemoteTime(sessionDetail?.updatedAt || selectedSession.session.updatedAt)}</Typography>
+                    <Typography variant="subtitle1">{sessionDetail?.title || selectedSession.session.title || t("未命名会话")}</Typography>
+                    <Typography variant="caption">{selectedSession.profileAlias || selectedSession.profileName} · {formatRemoteTime(sessionDetail?.updatedAt || selectedSession.session.updatedAt, language, t("时间未知"))}</Typography>
                   </Box>
                   <section>
-                    <Typography variant="caption">会话摘要</Typography>
-                    <Typography variant="body2">{sessionDetail?.summary || selectedSession.session.summary || "这条会话还没有可用摘要。"}</Typography>
+                    <Typography variant="caption">{t("会话摘要")}</Typography>
+                    <Typography variant="body2">{sessionDetail?.summary || selectedSession.session.summary || t("这条会话还没有可用摘要。")}</Typography>
                   </section>
                   <section>
-                    <Typography variant="caption">工作目录</Typography>
-                    <Typography component="code" variant="body2">{sessionDetail?.cwd || selectedSession.session.cwd || "未知"}</Typography>
+                    <Typography variant="caption">{t("工作目录")}</Typography>
+                    <Typography component="code" variant="body2">{sessionDetail?.cwd || selectedSession.session.cwd || t("未知")}</Typography>
                   </section>
                   <section>
-                    <Typography variant="caption">会话 ID</Typography>
+                    <Typography variant="caption">{t("会话 ID")}</Typography>
                     <Typography component="code" variant="body2">{selectedSession.session.id}</Typography>
                   </section>
                 </Box>
@@ -1690,19 +1867,19 @@ export function ServerNodesDialog({
 
       {tab === "auth" && probe?.status.cliInstalled ? (
         action === "auth" && !auth ? (
-          <Box className="server-node-loading"><CircularProgress size={24} /><Typography variant="body2">正在读取服务器认证库…</Typography></Box>
+          <Box className="server-node-loading"><CircularProgress size={24} /><Typography variant="body2">{t("正在读取服务器认证库…")}</Typography></Box>
         ) : auth ? (
           <Box className="server-resource-panel">
             <Box className="server-resource-heading">
-              <Box><Typography variant="subtitle2">服务器认证备份</Typography><Typography variant="caption">认证材料始终留在服务器，Mac 只接收状态元数据。</Typography></Box>
-              <Button size="small" startIcon={<VpnKeyRoundedIcon />} onClick={() => void createRemoteAuthBackup()} disabled={!selectedProfile || action === "auth-backup"}>备份当前</Button>
+              <Box><Typography variant="subtitle2">{t("服务器认证备份")}</Typography><Typography variant="caption">{t("认证材料始终留在服务器，Mac 只接收状态元数据。")}</Typography></Box>
+              <Button size="small" startIcon={<VpnKeyRoundedIcon />} onClick={() => void createRemoteAuthBackup()} disabled={!selectedProfile || action === "auth-backup"}>{t("备份当前")}</Button>
             </Box>
-            <TextField select label="目标 Profile" size="small" value={selectedProfileName} onChange={(event) => setSelectedProfileName(event.target.value)}>
-              {sortedProfiles.map((profile) => <MenuItem key={profile.name} value={profile.name}>{profile.alias || profile.name} · {profile.isRunning ? "运行中" : profile.isDefault ? "默认保护" : "已停止"}</MenuItem>)}
+            <TextField select label={t("目标 Profile")} size="small" value={selectedProfileName} onChange={(event) => setSelectedProfileName(event.target.value)}>
+              {sortedProfiles.map((profile) => <MenuItem key={profile.name} value={profile.name}>{profile.alias || profile.name} · {t(profile.isRunning ? "运行中" : profile.isDefault ? "默认保护" : "已停止")}</MenuItem>)}
             </TextField>
             {selectedProfile ? (
               <Box className="server-profile-meta">
-                <Fact label="当前认证账户" value={accountIdentity(selectedProfile)} />
+                <Fact label="当前认证账户" value={t(accountIdentity(selectedProfile))} />
                 <Fact label="账户套餐" value={accountPlan(selectedProfile)} />
               </Box>
             ) : null}
@@ -1710,7 +1887,7 @@ export function ServerNodesDialog({
               <Box className="server-backup-list">
                 {auth.backups.map((backup) => (
                   <button type="button" key={backup.id} className={`server-backup-row ${selectedBackupId === backup.id ? "selected" : ""}`} onClick={() => setSelectedBackupId(backup.id)}>
-                    <span><strong>{backup.label}</strong><small>{backup.account?.email || backup.sourceProfileName || "未知来源"}</small></span>
+                    <span><strong>{backup.label}</strong><small>{backup.account?.email || backup.sourceProfileName || t("未知来源")}</small></span>
                     <StatusBadge label={backup.valid ? "有效" : "不可用"} tone={backup.valid ? "success" : "error"} />
                   </button>
                 ))}
@@ -1721,7 +1898,7 @@ export function ServerNodesDialog({
                 variant="contained"
                 onClick={() => setConfirmAction("apply-auth")}
                 disabled={!selectedBackup?.valid || !selectedProfile || selectedProfile.isDefault || selectedProfile.isRunning}
-              >应用到当前 Profile</Button>
+              >{t("应用到当前 Profile")}</Button>
             </Box>
           </Box>
         ) : null
@@ -1729,32 +1906,32 @@ export function ServerNodesDialog({
 
       {tab === "routes" && probe?.status.cliInstalled ? (
         action === "routes" && !routes ? (
-          <Box className="server-node-loading"><CircularProgress size={24} /><Typography variant="body2">正在读取服务器模型路由…</Typography></Box>
+          <Box className="server-node-loading"><CircularProgress size={24} /><Typography variant="body2">{t("正在读取服务器模型路由…")}</Typography></Box>
         ) : routes && selectedProfile ? (
           <Box className="server-resource-panel server-route-panel">
             <Box className="server-resource-heading">
-              <Box><Typography variant="subtitle2">{selectedProfile.alias || selectedProfile.name}</Typography><Typography variant="caption">{selectedRoute?.routeStatusLabel || "未读取路由状态"}</Typography></Box>
+              <Box><Typography variant="subtitle2">{selectedProfile.alias || selectedProfile.name}</Typography><Typography variant="caption">{selectedRoute?.routeStatusLabel || t("未读取路由状态")}</Typography></Box>
               <StatusBadge label={selectedRoute?.routeStatusLabel || "未知"} tone={selectedRoute?.routed ? "success" : selectedRoute?.needsAttention ? "warning" : "neutral"} />
             </Box>
             <Box className="server-route-form">
-              <TextField select label="Provider 预设" size="small" value={routePreset} onChange={(event) => { setRoutePreset(event.target.value as ModelRoutePreset); setRoutePreview(null); }}>
-                <MenuItem value="aliyun-qwen">阿里百炼 / Qwen</MenuItem>
-                <MenuItem value="glm">智谱 / GLM</MenuItem>
-                <MenuItem value="local-openai">本地 OpenAI-compatible</MenuItem>
-                <MenuItem value="custom-responses">自定义 Responses</MenuItem>
+              <TextField select label={t("Provider 预设")} size="small" value={routePreset} onChange={(event) => { setRoutePreset(event.target.value as ModelRoutePreset); setRoutePreview(null); }}>
+                <MenuItem value="aliyun-qwen">{t("阿里百炼 / Qwen")}</MenuItem>
+                <MenuItem value="glm">{t("智谱 / GLM")}</MenuItem>
+                <MenuItem value="local-openai">{t("本地 OpenAI-compatible")}</MenuItem>
+                <MenuItem value="custom-responses">{t("自定义 Responses")}</MenuItem>
               </TextField>
-              <TextField label="模型" size="small" value={routeModel} onChange={(event) => { setRouteModel(event.target.value); setRoutePreview(null); }} />
-              <TextField label="代理 URL" size="small" value={routeProxyUrl} onChange={(event) => { setRouteProxyUrl(event.target.value); setRoutePreview(null); }} />
-              <TextField label="上游 URL" size="small" value={routeUpstreamUrl} onChange={(event) => { setRouteUpstreamUrl(event.target.value); setRoutePreview(null); }} />
-              <TextField label="API Key 环境变量" size="small" value={routeApiKeyEnv} onChange={(event) => { setRouteApiKeyEnv(event.target.value); setRoutePreview(null); }} helperText="只传环境变量名，不从 Mac 发送明文密钥" />
+              <TextField label={t("模型")} size="small" value={routeModel} onChange={(event) => { setRouteModel(event.target.value); setRoutePreview(null); }} />
+              <TextField label={t("代理 URL")} size="small" value={routeProxyUrl} onChange={(event) => { setRouteProxyUrl(event.target.value); setRoutePreview(null); }} />
+              <TextField label={t("上游 URL")} size="small" value={routeUpstreamUrl} onChange={(event) => { setRouteUpstreamUrl(event.target.value); setRoutePreview(null); }} />
+              <TextField label={t("API Key 环境变量")} size="small" value={routeApiKeyEnv} onChange={(event) => { setRouteApiKeyEnv(event.target.value); setRoutePreview(null); }} helperText={t("只传环境变量名，不从 Mac 发送明文密钥")} />
             </Box>
             {routePreview ? <Box component="pre" className="server-route-preview">{routePreview.configPreview}</Box> : null}
             {routeCheck ? <Alert severity={routeCheck.ok ? "success" : "warning"}>{routeCheck.message}</Alert> : null}
             <Box className="server-resource-actions">
-              <Button startIcon={<AltRouteRoundedIcon />} onClick={() => void previewRemoteRoute()} disabled={!routeModel.trim() || selectedProfile.isDefault || selectedProfile.isRunning}>预览</Button>
-              <Button variant="contained" onClick={() => setConfirmAction("apply-route")} disabled={!routePreview || selectedProfile.isDefault || selectedProfile.isRunning}>应用路由</Button>
-              <Button onClick={() => void checkRemoteRoute()} disabled={!selectedRoute?.routed}>自检</Button>
-              <Button color="warning" onClick={() => setConfirmAction("restore-route")} disabled={!selectedRoute?.canRestore}>恢复官方</Button>
+              <Button startIcon={<AltRouteRoundedIcon />} onClick={() => void previewRemoteRoute()} disabled={!routeModel.trim() || selectedProfile.isDefault || selectedProfile.isRunning}>{t("预览")}</Button>
+              <Button variant="contained" onClick={() => setConfirmAction("apply-route")} disabled={!routePreview || selectedProfile.isDefault || selectedProfile.isRunning}>{t("应用路由")}</Button>
+              <Button onClick={() => void checkRemoteRoute()} disabled={!selectedRoute?.routed}>{t("自检")}</Button>
+              <Button color="warning" onClick={() => setConfirmAction("restore-route")} disabled={!selectedRoute?.canRestore}>{t("恢复官方")}</Button>
             </Box>
           </Box>
         ) : (
@@ -1764,50 +1941,50 @@ export function ServerNodesDialog({
 
       {tab === "channels" && probe?.status.cliInstalled ? (
         action === "channels" && !wechat && !feishu ? (
-          <Box className="server-node-loading"><CircularProgress size={24} /><Typography variant="body2">正在读取服务器远程渠道…</Typography></Box>
+          <Box className="server-node-loading"><CircularProgress size={24} /><Typography variant="body2">{t("正在读取服务器远程渠道…")}</Typography></Box>
         ) : (
           <Box className="server-resource-panel server-channel-panel">
             <Box className="server-channel-block">
-              <Box className="server-resource-heading"><Box><Typography variant="subtitle2">微信桥接</Typography><Typography variant="caption">{selectedWechat ? `实例 ${selectedWechat.instance}${selectedWechatIsExternal ? " · 外部服务" : ""}` : "未配置"}</Typography></Box><StatusBadge label={selectedWechatState.label} tone={selectedWechatState.tone} /></Box>
-              {selectedWechatIsExternal ? <Alert severity="info">检测到服务器已有微信服务，当前仅监控状态，不会从 Mac 停止、重启或解绑。</Alert> : null}
+              <Box className="server-resource-heading"><Box><Typography variant="subtitle2">{t("微信桥接")}</Typography><Typography variant="caption">{selectedWechat ? `${t("实例 {instance}", { instance: selectedWechat.instance })}${selectedWechatIsExternal ? ` · ${t("外部服务")}` : ""}` : t("未配置")}</Typography></Box><StatusBadge label={selectedWechatState.label} tone={selectedWechatState.tone} /></Box>
+              {selectedWechatIsExternal ? <Alert severity="info">{t("检测到服务器已有微信服务，当前仅监控状态，不会从 Mac 停止、重启或解绑。")}</Alert> : null}
               {selectedWechat?.lastError ? <Alert severity="error">{selectedWechat.lastError}</Alert> : null}
               {selectedWechat?.connectionState === "awaiting-scan" && selectedWechatLog ? (
                 <Box className="server-wechat-scan">
                   <Box>
-                    <Typography variant="subtitle2">微信扫码绑定</Typography>
-                    <Typography variant="caption">使用微信扫描下方二维码；二维码过期会自动刷新，绑定状态也会自动更新。</Typography>
+                    <Typography variant="subtitle2">{t("微信扫码绑定")}</Typography>
+                    <Typography variant="caption">{t("使用微信扫描下方二维码；二维码过期会自动刷新，绑定状态也会自动更新。")}</Typography>
                   </Box>
                   <Box component="pre" className="feature-code-block server-wechat-qr-log">{selectedWechatLog}</Box>
                 </Box>
               ) : null}
               <Stack direction="row" spacing={1}>
-                <Button startIcon={<PlayArrowRoundedIcon />} onClick={() => void runWechatAction("wechat-start")} disabled={!selectedProfile || Boolean(selectedWechat?.running) || selectedWechatIsExternal}>启动</Button>
-                <Button startIcon={<StopCircleRoundedIcon />} onClick={() => void runWechatAction("wechat-stop")} disabled={!selectedWechat?.running || selectedWechatIsExternal}>停止</Button>
-                <Button startIcon={<RestartAltRoundedIcon />} onClick={() => void runWechatAction("wechat-restart")} disabled={!selectedProfile || selectedWechatIsExternal}>重启</Button>
-                {selectedWechat?.connectionState === "awaiting-scan" ? <Button startIcon={<ReplayRoundedIcon />} onClick={() => void loadChannels()} disabled={Boolean(action)}>刷新扫码状态</Button> : null}
+                <Button startIcon={<PlayArrowRoundedIcon />} onClick={() => void runWechatAction("wechat-start")} disabled={!selectedProfile || Boolean(selectedWechat?.running) || selectedWechatIsExternal}>{t("启动")}</Button>
+                <Button startIcon={<StopCircleRoundedIcon />} onClick={() => void runWechatAction("wechat-stop")} disabled={!selectedWechat?.running || selectedWechatIsExternal}>{t("停止")}</Button>
+                <Button startIcon={<RestartAltRoundedIcon />} onClick={() => void runWechatAction("wechat-restart")} disabled={!selectedProfile || selectedWechatIsExternal}>{t("重启")}</Button>
+                {selectedWechat?.connectionState === "awaiting-scan" ? <Button startIcon={<ReplayRoundedIcon />} onClick={() => void loadChannels()} disabled={Boolean(action)}>{t("刷新扫码状态")}</Button> : null}
               </Stack>
             </Box>
             <Box className="server-channel-block">
-              <Box className="server-resource-heading"><Box><Typography variant="subtitle2">飞书 Bot</Typography><Typography variant="caption">{feishu?.connectionState || "未配置"}</Typography></Box><StatusBadge label={feishu?.running ? "运行中" : feishu?.configured ? "已配置" : "未配置"} tone={feishu?.running ? "success" : "neutral"} /></Box>
+              <Box className="server-resource-heading"><Box><Typography variant="subtitle2">{t("飞书 Bot")}</Typography><Typography variant="caption">{feishu?.connectionState || t("未配置")}</Typography></Box><StatusBadge label={feishu?.running ? "运行中" : feishu?.configured ? "已配置" : "未配置"} tone={feishu?.running ? "success" : "neutral"} /></Box>
               <Stack direction="row" spacing={1}>
-                <Button startIcon={<PlayArrowRoundedIcon />} onClick={() => void runFeishuAction("feishu-start")} disabled={!selectedProfile || Boolean(feishu?.running)}>启动</Button>
-                <Button startIcon={<StopCircleRoundedIcon />} onClick={() => void runFeishuAction("feishu-stop")} disabled={!feishu?.running}>停止</Button>
-                <Button startIcon={<RestartAltRoundedIcon />} onClick={() => void runFeishuAction("feishu-restart")} disabled={!feishu?.configured}>重启</Button>
+                <Button startIcon={<PlayArrowRoundedIcon />} onClick={() => void runFeishuAction("feishu-start")} disabled={!selectedProfile || Boolean(feishu?.running)}>{t("启动")}</Button>
+                <Button startIcon={<StopCircleRoundedIcon />} onClick={() => void runFeishuAction("feishu-stop")} disabled={!feishu?.running}>{t("停止")}</Button>
+                <Button startIcon={<RestartAltRoundedIcon />} onClick={() => void runFeishuAction("feishu-restart")} disabled={!feishu?.configured}>{t("重启")}</Button>
               </Stack>
             </Box>
-            <Alert severity="info" icon={<HubRoundedIcon />}>渠道凭据仍由服务器端运行时保存，Mac 不读取微信 token 或飞书 App Secret。</Alert>
+            <Alert severity="info" icon={<HubRoundedIcon />}>{t("渠道凭据仍由服务器端运行时保存，Mac 不读取微信 token 或飞书 App Secret。")}</Alert>
           </Box>
         )
       ) : null}
 
       {tab === "doctor" && probe?.status.cliInstalled ? (
         action === "doctor" && !doctor ? (
-          <Box className="server-node-loading"><CircularProgress size={24} /><Typography variant="body2">正在读取服务器诊断…</Typography></Box>
+          <Box className="server-node-loading"><CircularProgress size={24} /><Typography variant="body2">{t("正在读取服务器诊断…")}</Typography></Box>
         ) : doctor ? (
           <Box className="server-doctor-report">
             <Box className={`doctor-summary ${doctor.ready ? "ready" : "error"}`}>
               <FactCheckRoundedIcon />
-              <Box><Typography variant="subtitle2">{doctor.ready ? "服务器核心功能可用" : "服务器存在需要处理的问题"}</Typography><Typography variant="caption">{doctor.summary.okCount} 正常 · {doctor.summary.warningCount} 提醒 · {doctor.summary.errorCount} 错误</Typography></Box>
+              <Box><Typography variant="subtitle2">{t(doctor.ready ? "服务器核心功能可用" : "服务器存在需要处理的问题")}</Typography><Typography variant="caption">{t("{ok} 正常 · {warnings} 提醒 · {errors} 错误", { ok: doctor.summary.okCount, warnings: doctor.summary.warningCount, errors: doctor.summary.errorCount })}</Typography></Box>
             </Box>
             <Box className="doctor-check-list">
               {doctor.checks.map((check) => (
@@ -1830,17 +2007,17 @@ export function ServerNodesDialog({
       <ManagerDialogShell
         open={open}
         title="服务器节点"
-        subtitle={nodes.length ? `${nodes.length} 个节点 · SSH 安全连接` : "Mac 管理 Linux Codex"}
+        subtitle={nodes.length ? t("{count} 个节点 · SSH 安全连接", { count: nodes.length }) : t("Mac 管理 Linux Codex")}
         icon={<StorageRoundedIcon />}
         refreshing={Boolean(action) || sessionLoading || sessionDetailLoading}
         onRefresh={refreshActiveResource}
         onClose={onClose}
-        status={probe ? <StatusBadge label={statusLabel(probe)} tone={statusTone(probe)} /> : undefined}
+        status={probe ? <StatusBadge label={t(statusLabel(probe))} tone={statusTone(probe)} /> : undefined}
         className="server-nodes-dialog"
         actions={selectedNode ? (
           <>
-            <Button startIcon={<EditRoundedIcon />} onClick={() => { setNodeDraft({ id: selectedNode.id, name: selectedNode.name, sshTarget: selectedNode.sshTarget, remoteBinary: selectedNode.remoteBinary }); setNodeAdvancedOpen(selectedNode.remoteBinary !== "rcodexmanager"); setNodeDialogOpen(true); }}>编辑节点</Button>
-            <Button color="error" startIcon={<DeleteOutlineRoundedIcon />} onClick={() => setConfirmAction("delete-node")}>移除</Button>
+            <Button startIcon={<EditRoundedIcon />} onClick={() => { setNodeDraft({ id: selectedNode.id, name: selectedNode.name, sshTarget: selectedNode.sshTarget, remoteBinary: selectedNode.remoteBinary }); setNodeAdvancedOpen(selectedNode.remoteBinary !== "rcodexmanager"); setNodeDialogOpen(true); }}>{t("编辑节点")}</Button>
+            <Button color="error" startIcon={<DeleteOutlineRoundedIcon />} onClick={() => setConfirmAction("delete-node")}>{t("移除")}</Button>
           </>
         ) : undefined}
       >
@@ -1848,19 +2025,19 @@ export function ServerNodesDialog({
           <TextField
             value={query}
             onChange={(event) => setQuery(event.target.value)}
-            placeholder="搜索服务器节点"
+            placeholder={t("搜索服务器节点")}
             fullWidth
             slotProps={{ input: { startAdornment: <InputAdornment position="start"><SearchRoundedIcon /></InputAdornment> } }}
           />
-          <Tooltip title="新增服务器节点"><IconButton aria-label="新增服务器节点" onClick={() => { setNodeDraft({ ...EMPTY_NODE_DRAFT }); setNodeAdvancedOpen(false); setNodeDialogOpen(true); }}><AddRoundedIcon /></IconButton></Tooltip>
+          <Tooltip title={t("新增服务器节点")}><IconButton aria-label={t("新增服务器节点")} onClick={() => { setNodeDraft({ ...EMPTY_NODE_DRAFT }); setNodeAdvancedOpen(false); setNodeDialogOpen(true); }}><AddRoundedIcon /></IconButton></Tooltip>
         </DialogToolbar>
         <MasterDetailLayout list={list} detail={detail} detailOpen={Boolean(selectedNode)} onBack={() => setSelectedNodeId("")} />
       </ManagerDialogShell>
 
       <Dialog open={nodeDialogOpen} onClose={() => setNodeDialogOpen(false)} fullWidth maxWidth="xs" className="app-task-dialog">
-        <DialogTitle>{nodeDraft.id ? "编辑服务器节点" : "新增服务器节点"}</DialogTitle>
+        <DialogTitle>{t(nodeDraft.id ? "编辑服务器节点" : "新增服务器节点")}</DialogTitle>
         <DialogContent className="server-node-form">
-          <TextField label="名称" value={nodeDraft.name} onChange={(event) => setNodeDraft((current) => ({ ...current, name: event.target.value }))} fullWidth />
+          <TextField label={t("名称")} value={nodeDraft.name} onChange={(event) => setNodeDraft((current) => ({ ...current, name: event.target.value }))} fullWidth />
           <Autocomplete<SshHostOption, false, false, true>
             freeSolo
             options={sshHostReport?.hosts ?? []}
@@ -1880,13 +2057,13 @@ export function ServerNodesDialog({
             isOptionEqualToValue={(option, value) => typeof value !== "string" && option.alias === value.alias}
             onChange={(_event, value) => selectSshHost(value)}
             onInputChange={(_event, value) => setNodeDraft((current) => ({ ...current, sshTarget: value }))}
-            loadingText="正在读取 SSH 配置..."
-            noOptionsText="没有匹配的主机，可直接输入"
+            loadingText={t("正在读取 SSH 配置...")}
+            noOptionsText={t("没有匹配的主机，可直接输入")}
             renderOption={(props, option) => {
               const { key, ...optionProps } = props;
               const endpoint = [
                 option.user && option.hostname ? `${option.user}@${option.hostname}` : option.hostname,
-                option.port ? `端口 ${option.port}` : null,
+                option.port ? t("端口 {port}", { port: option.port }) : null,
               ].filter(Boolean).join(" · ");
               return (
                 <Box component="li" key={key} {...optionProps} className="ssh-host-option">
@@ -1901,24 +2078,24 @@ export function ServerNodesDialog({
             renderInput={(params) => (
               <TextField
                 {...params}
-                label="SSH 主机"
+                label={t("SSH 主机")}
                 helperText={sshHostsError
-                  ? "SSH 配置读取失败，仍可直接输入主机别名或 user@host"
+                  ? t("SSH 配置读取失败，仍可直接输入主机别名或 user@host")
                   : sshHostReport?.configExists === false
-                    ? `未找到 ${sshHostReport.configPath}，仍可直接输入`
+                    ? t("未找到 {path}，仍可直接输入", { path: sshHostReport.configPath })
                     : sshHostReport
-                      ? `来自 ${sshHostReport.configPath} · ${sshHostReport.hosts.length} 个可用主机`
-                      : "读取 ~/.ssh/config，也可直接输入主机别名或 user@host"}
+                      ? t("来自 {path} · {count} 个可用主机", { path: sshHostReport.configPath, count: sshHostReport.hosts.length })
+                      : t("读取 ~/.ssh/config，也可直接输入主机别名或 user@host")}
                 slotProps={{
                   ...params.slotProps,
                   input: {
                     ...params.slotProps.input,
                     endAdornment: (
                       <>
-                        <Tooltip title="重新读取 SSH 配置">
+                        <Tooltip title={t("重新读取 SSH 配置")}>
                           <span>
                             <IconButton
-                              aria-label="重新读取 SSH 配置"
+                              aria-label={t("重新读取 SSH 配置")}
                               size="small"
                               disabled={sshHostsLoading}
                               onMouseDown={(event) => event.preventDefault()}
@@ -1941,31 +2118,31 @@ export function ServerNodesDialog({
             onClick={() => setNodeAdvancedOpen((current) => !current)}
             endIcon={nodeAdvancedOpen ? <ExpandLessRoundedIcon /> : <ExpandMoreRoundedIcon />}
           >
-            高级设置
+            {t("高级设置")}
           </Button>
           <Collapse in={nodeAdvancedOpen} unmountOnExit>
-            <TextField label="远端 CLI" value={nodeDraft.remoteBinary || ""} onChange={(event) => setNodeDraft((current) => ({ ...current, remoteBinary: event.target.value }))} helperText="默认使用 rcodexmanager，也可填写绝对路径；不会保存 SSH 密钥" fullWidth />
+            <TextField label={t("远端 CLI")} value={nodeDraft.remoteBinary || ""} onChange={(event) => setNodeDraft((current) => ({ ...current, remoteBinary: event.target.value }))} helperText={t("默认使用 rcodexmanager，也可填写绝对路径；不会保存 SSH 密钥")} fullWidth />
           </Collapse>
         </DialogContent>
-        <DialogActions><Button onClick={() => setNodeDialogOpen(false)}>取消</Button><Button variant="contained" onClick={() => void saveNode()} disabled={!nodeDraft.name.trim() || !nodeDraft.sshTarget.trim() || action === "save-node"}>{action === "save-node" ? <CircularProgress size={18} /> : "保存并检查"}</Button></DialogActions>
+        <DialogActions><Button onClick={() => setNodeDialogOpen(false)}>{t("取消")}</Button><Button variant="contained" onClick={() => void saveNode()} disabled={!nodeDraft.name.trim() || !nodeDraft.sshTarget.trim() || action === "save-node"}>{action === "save-node" ? <CircularProgress size={18} /> : t("保存并检查")}</Button></DialogActions>
       </Dialog>
 
       <Dialog open={profileDialogOpen} onClose={() => setProfileDialogOpen(false)} fullWidth maxWidth="xs" className="app-task-dialog">
-        <DialogTitle>新增服务器 Profile</DialogTitle>
+        <DialogTitle>{t("新增服务器 Profile")}</DialogTitle>
         <DialogContent className="server-node-form">
-          <TextField label="名称" value={profileDraft.name} onChange={(event) => setProfileDraft((current) => ({ ...current, name: event.target.value }))} helperText="必须以 codex- 开头" fullWidth />
-          <TextField label="别名" value={profileDraft.alias || ""} onChange={(event) => setProfileDraft((current) => ({ ...current, alias: event.target.value }))} fullWidth />
-          <TextField label="模型" value={profileDraft.model || ""} onChange={(event) => setProfileDraft((current) => ({ ...current, model: event.target.value }))} fullWidth />
+          <TextField label={t("名称")} value={profileDraft.name} onChange={(event) => setProfileDraft((current) => ({ ...current, name: event.target.value }))} helperText={t("必须以 codex- 开头")} fullWidth />
+          <TextField label={t("别名")} value={profileDraft.alias || ""} onChange={(event) => setProfileDraft((current) => ({ ...current, alias: event.target.value }))} fullWidth />
+          <TextField label={t("模型")} value={profileDraft.model || ""} onChange={(event) => setProfileDraft((current) => ({ ...current, model: event.target.value }))} fullWidth />
         </DialogContent>
-        <DialogActions><Button onClick={() => setProfileDialogOpen(false)}>取消</Button><Button variant="contained" onClick={() => void createServerProfile()} disabled={!/^codex-[a-z0-9-]+$/.test(profileDraft.name) || action === "create-profile"}>创建</Button></DialogActions>
+        <DialogActions><Button onClick={() => setProfileDialogOpen(false)}>{t("取消")}</Button><Button variant="contained" onClick={() => void createServerProfile()} disabled={!/^codex-[a-z0-9-]+$/.test(profileDraft.name) || action === "create-profile"}>{t("创建")}</Button></DialogActions>
       </Dialog>
 
       <Dialog open={profileModelDialogOpen} onClose={() => setProfileModelDialogOpen(false)} fullWidth maxWidth="xs" className="app-task-dialog">
-        <DialogTitle>配置服务器模型</DialogTitle>
+        <DialogTitle>{t("配置服务器模型")}</DialogTitle>
         <DialogContent className="server-node-form">
           <Box className="server-profile-meta">
             <Fact label="Profile" value={selectedProfile?.alias || selectedProfile?.name || "-"} />
-            <Fact label="当前 Provider" value={selectedProfile?.modelProvider || "OpenAI 官方 / 默认"} />
+            <Fact label="当前 Provider" value={selectedProfile?.modelProvider || t("OpenAI 官方 / 默认")} />
           </Box>
           <Autocomplete
             freeSolo
@@ -1976,8 +2153,8 @@ export function ServerNodesDialog({
             renderInput={(params) => (
               <TextField
                 {...params}
-                label="模型"
-                helperText="候选来自服务器已发现配置，也可以输入自定义模型名"
+                label={t("模型")}
+                helperText={t("候选来自服务器已发现配置，也可以输入自定义模型名")}
               />
             )}
           />
@@ -1987,31 +2164,31 @@ export function ServerNodesDialog({
             value={profileModelDraft.reasoningEffort}
             onChange={(_event, value) => setProfileModelDraft((current) => ({ ...current, reasoningEffort: value || "" }))}
             onInputChange={(_event, value) => setProfileModelDraft((current) => ({ ...current, reasoningEffort: value }))}
-            renderInput={(params) => <TextField {...params} label="推理等级" />}
+            renderInput={(params) => <TextField {...params} label={t("推理等级")} />}
           />
           <Alert severity={selectedProfile?.modelProvider ? "info" : "success"}>
             {selectedProfile?.modelProvider
-              ? `将保留现有 Provider“${selectedProfile.modelProvider}”及路由配置，只更新模型和推理等级。`
-              : "将保留认证、会话和 User Data，只更新模型和推理等级。"}
+              ? t("将保留现有 Provider“{provider}”及路由配置，只更新模型和推理等级。", { provider: selectedProfile.modelProvider })
+              : t("将保留认证、会话和 User Data，只更新模型和推理等级。")}
           </Alert>
         </DialogContent>
         <DialogActions>
-          <Button onClick={() => setProfileModelDialogOpen(false)}>取消</Button>
+          <Button onClick={() => setProfileModelDialogOpen(false)}>{t("取消")}</Button>
           <Button
             variant="contained"
             startIcon={<TuneRoundedIcon />}
             onClick={() => setConfirmAction("update-model")}
             disabled={!profileModelDraft.model.trim() || !profileModelDraft.reasoningEffort.trim() || action === "update-model"}
-          >应用模型</Button>
+          >{t("应用模型")}</Button>
         </DialogActions>
       </Dialog>
 
       <Dialog open={profileSyncDialogOpen} onClose={() => setProfileSyncDialogOpen(false)} fullWidth maxWidth="sm" className="app-task-dialog">
-        <DialogTitle>从本机同步 Profile</DialogTitle>
+        <DialogTitle>{t("从本机同步 Profile")}</DialogTitle>
         <DialogContent className="server-node-form">
           <TextField
             select
-            label="本机 Profile"
+            label={t("本机 Profile")}
             value={syncSourceProfileName}
             onChange={(event) => {
               const name = event.target.value;
@@ -2024,23 +2201,23 @@ export function ServerNodesDialog({
           >
             {localProfiles.filter((profile) => profile.name.startsWith("codex-")).map((profile) => (
               <MenuItem key={profile.name} value={profile.name}>
-                {profile.alias || profile.name} · {profile.account?.email || "未登录"}
+                {profile.alias || profile.name} · {profile.account?.email || t("未登录")}
               </MenuItem>
             ))}
           </TextField>
           <TextField
-            label="服务器 Profile 名称"
+            label={t("服务器 Profile 名称")}
             value={syncTargetProfileName}
             onChange={(event) => setSyncTargetProfileName(event.target.value.trim().toLowerCase())}
             error={syncTargetExists}
-            helperText={syncTargetExists ? "服务器上已经存在同名 Profile" : "必须以 codex- 开头"}
+            helperText={t(syncTargetExists ? "服务器上已经存在同名 Profile" : "必须以 codex- 开头")}
             fullWidth
           />
           {syncSourceProfile ? (
             <Box className="server-profile-meta">
-              <Fact label="模型" value={syncSourceProfile.model || "默认"} />
-              <Fact label="推理等级" value={syncSourceProfile.reasoningEffort || "默认"} />
-              <Fact label="认证账户" value={accountIdentity(syncSourceProfile)} />
+              <Fact label="模型" value={syncSourceProfile.model || t("默认")} />
+              <Fact label="推理等级" value={syncSourceProfile.reasoningEffort || t("默认")} />
+              <Fact label="认证账户" value={t(accountIdentity(syncSourceProfile))} />
               <Fact label="账户套餐" value={accountPlan(syncSourceProfile)} />
             </Box>
           ) : null}
@@ -2052,16 +2229,16 @@ export function ServerNodesDialog({
                 disabled={!syncSourceProfile?.account}
               />
             )}
-            label="同步认证信息"
+            label={t("同步认证信息")}
           />
           <Alert severity={syncAuth ? "warning" : "info"}>
             {syncAuth
-              ? "认证仅通过 SSH 标准输入传输，服务器导入后立即清理临时文件，不保存到 Mac 应用元数据或任务日志。"
-              : "只同步模型、推理等级、别名和分类，不复制本机会话与 User Data。"}
+              ? t("认证仅通过 SSH 标准输入传输，服务器导入后立即清理临时文件，不保存到 Mac 应用元数据或任务日志。")
+              : t("只同步模型、推理等级、别名和分类，不复制本机会话与 User Data。")}
           </Alert>
         </DialogContent>
         <DialogActions>
-          <Button onClick={() => setProfileSyncDialogOpen(false)}>取消</Button>
+          <Button onClick={() => setProfileSyncDialogOpen(false)}>{t("取消")}</Button>
           <Button
             variant="contained"
             startIcon={<SyncAltRoundedIcon />}
@@ -2072,33 +2249,46 @@ export function ServerNodesDialog({
               || syncTargetExists
               || action === "sync-profile"
             }
-          >同步到服务器</Button>
+          >{t("同步到服务器")}</Button>
         </DialogActions>
       </Dialog>
 
+      <AuthLoginDialog
+        open={Boolean(authLoginTarget)}
+        target={authLoginTarget}
+        onClose={() => setAuthLoginTarget(null)}
+        onCompleted={async (target) => {
+          await refreshSelectedNode(target.nodeId || selectedNodeId);
+          onFeedback?.({
+            severity: "success",
+            text: t("{profile} 的服务器认证已更新", { profile: target.profileLabel }),
+          });
+        }}
+      />
+
       <SensitiveActionConfirmDialog
         open={confirmAction === "update-model"}
-        title={`更新 ${selectedProfile?.name || "服务器 Profile"} 的模型？`}
-        description={`将把模型切换为 ${profileModelDraft.model || "未填写"}，推理等级为 ${profileModelDraft.reasoningEffort || "默认"}。写入前会备份 config.toml，不修改认证、会话和 User Data。`}
-        confirmLabel="更新模型"
+        title={t("更新 {profile} 的模型？", { profile: selectedProfile?.name || t("服务器 Profile") })}
+        description={t("将把模型切换为 {model}，推理等级为 {effort}。写入前会备份 config.toml，不修改认证、会话和 User Data。", { model: profileModelDraft.model || t("未填写"), effort: profileModelDraft.reasoningEffort || t("默认") })}
+        confirmLabel={t("更新模型")}
         busy={action === "update-model"}
         onCancel={() => setConfirmAction(null)}
         onConfirm={() => void updateSelectedProfileModel()}
       />
       <SensitiveActionConfirmDialog
         open={confirmAction === "sync-profile"}
-        title={`同步 ${syncSourceProfile?.name || "本机 Profile"} 的认证？`}
-        description={`将通过 SSH 加密连接把认证应用到服务器新 Profile ${syncTargetProfileName}。源文件不会修改，敏感内容不会进入任务日志。`}
-        confirmLabel="创建并同步"
+        title={t("同步 {profile} 的认证？", { profile: syncSourceProfile?.name || t("本机 Profile") })}
+        description={t("将通过 SSH 加密连接把认证应用到服务器新 Profile {profile}。源文件不会修改，敏感内容不会进入任务日志。", { profile: syncTargetProfileName })}
+        confirmLabel={t("创建并同步")}
         busy={action === "sync-profile"}
         onCancel={() => setConfirmAction(null)}
         onConfirm={() => void syncSelectedProfile()}
       />
       <SensitiveActionConfirmDialog
         open={confirmAction === "delete-node"}
-        title="移除服务器节点？"
-        description="只移除 Mac 上保存的 SSH 节点配置，不删除服务器上的 Codex 数据。"
-        confirmLabel="移除"
+        title={t("移除服务器节点？")}
+        description={t("只移除 Mac 上保存的 SSH 节点配置，不删除服务器上的 Codex 数据。")}
+        confirmLabel={t("移除")}
         tone="error"
         busy={action === "delete-node"}
         onCancel={() => setConfirmAction(null)}
@@ -2106,36 +2296,36 @@ export function ServerNodesDialog({
       />
       <SensitiveActionConfirmDialog
         open={confirmAction === "terminate-profile"}
-        title={`停止 ${selectedProfile?.name || "服务器 profile"}？`}
-        description="将终止服务器上识别到的 Codex 进程，不会删除 profile 数据。"
-        confirmLabel="停止"
+        title={t("停止 {profile}？", { profile: selectedProfile?.name || t("服务器 profile") })}
+        description={t("将终止服务器上识别到的 Codex 进程，不会删除 profile 数据。")}
+        confirmLabel={t("停止")}
         busy={Boolean(selectedProfile && action === `terminate-profile:${selectedProfile.name}`)}
         onCancel={() => setConfirmAction(null)}
         onConfirm={() => selectedProfile && void runProfileAction("terminate-profile", selectedProfile.name)}
       />
       <SensitiveActionConfirmDialog
         open={confirmAction === "apply-auth"}
-        title={`应用认证到 ${selectedProfile?.name || "服务器 profile"}？`}
-        description={`将使用服务器备份“${selectedBackup?.label || "未选择"}”替换目标认证，写入前会自动备份目标 auth.json。`}
-        confirmLabel="应用认证"
+        title={t("应用认证到 {profile}？", { profile: selectedProfile?.name || t("服务器 profile") })}
+        description={t("将使用服务器备份“{backup}”替换目标认证，写入前会自动备份目标 auth.json。", { backup: selectedBackup?.label || t("未选择") })}
+        confirmLabel={t("应用认证")}
         busy={action === "auth-apply"}
         onCancel={() => setConfirmAction(null)}
         onConfirm={() => void applyRemoteAuth()}
       />
       <SensitiveActionConfirmDialog
         open={confirmAction === "apply-route"}
-        title={`应用模型路由到 ${selectedProfile?.name || "服务器 profile"}？`}
-        description="服务器会先备份 config.toml，再写入刚刚预览的路由配置。Mac 不会发送明文 API key。"
-        confirmLabel="应用路由"
+        title={t("应用模型路由到 {profile}？", { profile: selectedProfile?.name || t("服务器 profile") })}
+        description={t("服务器会先备份 config.toml，再写入刚刚预览的路由配置。Mac 不会发送明文 API key。")}
+        confirmLabel={t("应用路由")}
         busy={action === "route-apply"}
         onCancel={() => setConfirmAction(null)}
         onConfirm={() => void applyRemoteRoute()}
       />
       <SensitiveActionConfirmDialog
         open={confirmAction === "restore-route"}
-        title={`恢复 ${selectedProfile?.name || "服务器 profile"} 的官方路由？`}
-        description="将移除第三方路由字段，并保留基础模型、推理等级与 WebSocket 配置。"
-        confirmLabel="恢复官方"
+        title={t("恢复 {profile} 的官方路由？", { profile: selectedProfile?.name || t("服务器 profile") })}
+        description={t("将移除第三方路由字段，并保留基础模型、推理等级与其他配置。")}
+        confirmLabel={t("恢复官方")}
         busy={action === "route-restore"}
         onCancel={() => setConfirmAction(null)}
         onConfirm={() => void restoreRemoteRoute()}
@@ -2145,9 +2335,11 @@ export function ServerNodesDialog({
 }
 
 function StatusItem({ label, ok, pending }: { label: string; ok: boolean; pending: boolean }) {
-  return <Box className={`server-health-item ${pending ? "pending" : ok ? "ok" : "error"}`}>{pending ? <CircularProgress size={17} /> : ok ? <CheckCircleOutlineRoundedIcon /> : <CloudOffRoundedIcon />}<span>{label}</span></Box>;
+  const { t } = useI18n();
+  return <Box className={`server-health-item ${pending ? "pending" : ok ? "ok" : "error"}`}>{pending ? <CircularProgress size={17} /> : ok ? <CheckCircleOutlineRoundedIcon /> : <CloudOffRoundedIcon />}<span>{t(label)}</span></Box>;
 }
 
 function Fact({ label, value }: { label: string; value: string }) {
-  return <Box className="server-node-fact"><Typography variant="caption">{label}</Typography><Typography variant="body2" title={value}>{value}</Typography></Box>;
+  const { t } = useI18n();
+  return <Box className="server-node-fact"><Typography variant="caption">{t(label)}</Typography><Typography variant="body2" title={value}>{value}</Typography></Box>;
 }

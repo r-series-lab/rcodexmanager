@@ -82,6 +82,9 @@ export function createMockServerNodeOperation(
       isRunning: index === 2,
       runningPids: index === 2 ? [18420] : [],
       runningProcessCount: index === 2 ? 1 : 0,
+      authState: index === 1
+        ? { status: "refresh-required", expiresAt: Math.floor(Date.now() / 1000) - 3600, refreshAvailable: true }
+        : { status: "valid", expiresAt: Math.floor(Date.now() / 1000) + 3600, refreshAvailable: true },
     }));
     data = { ...local, homeDir: "/home/demo", zshrcPath: "/home/demo/.bashrc", profiles, profileCount: profiles.length };
   } else if (operation.kind === "list-sessions") {
@@ -93,6 +96,26 @@ export function createMockServerNodeOperation(
   } else if (operation.kind === "auth-status" || operation.kind === "create-auth-backup" || operation.kind === "apply-auth-backup") {
     command = operation.kind === "auth-status" ? "auth-list" : operation.kind;
     data = createMockAuthVaultReport();
+  } else if (operation.kind === "check-profile-auth") {
+    command = "quota";
+    data = {
+      generatedAt: new Date().toISOString(),
+      profileName: operation.profileName,
+      account: null,
+      capturedAt: Math.floor(Date.now() / 1000),
+      endpoint: "mock://usage",
+      windows: [{
+        id: "primary",
+        label: "主窗口",
+        usedPercent: 38,
+        remainingPercent: 62,
+        windowMinutes: 300,
+        resetsAt: Math.floor(Date.now() / 1000) + 7200,
+        allowed: true,
+        limitReached: false,
+        status: "available",
+      }],
+    };
   } else if (operation.kind === "model-route-status") {
     command = "model-route-status";
     data = createMockModelRouteReport();
@@ -192,7 +215,6 @@ const mockProfiles: ProfileInfo[] = [
     homeExists: true,
     userDataExists: true,
     configExists: true,
-    websocketFeaturesEnabled: true,
     managedByApp: false,
     isDefault: true,
     launcherKind: "desktop",
@@ -256,7 +278,6 @@ const mockProfiles: ProfileInfo[] = [
     homeExists: true,
     userDataExists: true,
     configExists: true,
-    websocketFeaturesEnabled: false,
     managedByApp: false,
     isDefault: false,
     launcherKind: "desktop",
@@ -320,7 +341,6 @@ const mockProfiles: ProfileInfo[] = [
     homeExists: true,
     userDataExists: true,
     configExists: true,
-    websocketFeaturesEnabled: true,
     managedByApp: true,
     isDefault: false,
     launcherKind: "desktop",
@@ -374,7 +394,6 @@ const mockProfiles: ProfileInfo[] = [
     homeExists: true,
     userDataExists: true,
     configExists: true,
-    websocketFeaturesEnabled: true,
     managedByApp: true,
     isDefault: false,
     launcherKind: "desktop",
@@ -417,7 +436,6 @@ const mockProfiles: ProfileInfo[] = [
     homeExists: true,
     userDataExists: true,
     configExists: true,
-    websocketFeaturesEnabled: false,
     managedByApp: true,
     isDefault: false,
     launcherKind: "desktop",
@@ -460,7 +478,6 @@ const mockProfiles: ProfileInfo[] = [
     homeExists: true,
     userDataExists: true,
     configExists: true,
-    websocketFeaturesEnabled: true,
     managedByApp: true,
     isDefault: false,
     launcherKind: "desktop",
@@ -503,7 +520,6 @@ const mockProfiles: ProfileInfo[] = [
     homeExists: true,
     userDataExists: true,
     configExists: true,
-    websocketFeaturesEnabled: false,
     managedByApp: true,
     isDefault: false,
     launcherKind: "desktop",
@@ -537,7 +553,6 @@ const mockProfiles: ProfileInfo[] = [
     homeExists: true,
     userDataExists: true,
     configExists: true,
-    websocketFeaturesEnabled: true,
     managedByApp: true,
     isDefault: false,
     launcherKind: "desktop",
@@ -551,14 +566,32 @@ const mockProfiles: ProfileInfo[] = [
   },
 ];
 
+const mockArchivedAtByName = new Map<string, string>();
+
+export function setMockProfileArchived(name: string, archived: boolean): void {
+  if (archived) {
+    mockArchivedAtByName.set(name, new Date().toISOString());
+  } else {
+    mockArchivedAtByName.delete(name);
+  }
+}
+
 export function createMockProfileReport(): ProfileReport {
+  const allProfiles = mockProfiles.map((profile) => {
+    const archivedAt = mockArchivedAtByName.get(profile.name) ?? null;
+    return { ...profile, isArchived: Boolean(archivedAt), archivedAt };
+  });
+  const profiles = allProfiles.filter((profile) => !profile.isArchived);
+  const archivedProfiles = allProfiles.filter((profile) => profile.isArchived);
   return {
     generatedAt: new Date().toISOString(),
     zshrcPath: "/Users/demo/.zshrc",
     metadataPath: "/Users/demo/.rcodexmanager/profile-metadata.json",
     homeDir: "/Users/demo",
-    profileCount: mockProfiles.length,
-    profiles: mockProfiles,
+    profileCount: profiles.length,
+    archivedCount: archivedProfiles.length,
+    profiles,
+    archivedProfiles,
   };
 }
 
@@ -972,11 +1005,13 @@ export function createMockModelRoutePreview(input: PreviewModelRouteInput): Mode
 }
 
 export function createMockActionReport(action: string, name: string): ProfileActionReport {
+  const report = createMockProfileReport();
   return {
     generatedAt: new Date().toISOString(),
     action,
     zshrcPath: "/Users/demo/.zshrc",
-    profile: mockProfiles.find((profile) => profile.name === name) ?? null,
+    profile: [...report.profiles, ...(report.archivedProfiles ?? [])]
+      .find((profile) => profile.name === name) ?? null,
     backups: [],
     message: `${action} ${name}`,
   };

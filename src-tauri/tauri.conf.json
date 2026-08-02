@@ -14,10 +14,10 @@
       {
         "label": "main",
         "title": "rCodexManager",
-        "width": 900,
-        "height": 640,
-        "minWidth": 900,
-        "minHeight": 520,
+        "width": 1000,
+        "height": 800,
+        "minWidth": 1000,
+        "minHeight": 800,
         "center": true,
         "titleBarStyle": "Overlay",
         "hiddenTitle": true

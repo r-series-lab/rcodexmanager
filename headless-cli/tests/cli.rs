@@ -33,22 +33,10 @@ fn info_and_capabilities_identify_headless_runtime() {
         .as_array()
         .expect("commands array");
     assert!(!commands.iter().any(|entry| entry["command"] == "desktop"));
-    let repair_network = commands
+    assert!(commands.iter().any(|entry| entry["command"] == "login"));
+    assert!(!commands
         .iter()
-        .find(|entry| entry["command"] == "repair-network")
-        .expect("repair-network capability");
-    assert!(repair_network["description"]
-        .as_str()
-        .expect("repair-network description")
-        .contains("Headless nodes do not manage launchctl"));
-    assert!(repair_network["examples"]
-        .as_array()
-        .expect("repair-network examples")
-        .iter()
-        .all(|example| example
-            .as_str()
-            .unwrap_or_default()
-            .contains("--skip-launchctl")));
+        .any(|entry| entry["command"] == "repair-network"));
     let model_route = commands
         .iter()
         .find(|entry| entry["command"] == "model-route")
@@ -57,6 +45,14 @@ fn info_and_capabilities_identify_headless_runtime() {
         .as_str()
         .expect("model-route description")
         .contains("do not own the desktop built-in proxy lifecycle"));
+}
+
+#[test]
+fn interactive_login_rejects_json_before_starting_codex() {
+    let output = run_cli(&["--json", "login", "--name", "codex-o", "--device-auth"]);
+    assert_eq!(output.status.code(), Some(2));
+    let payload = parse_json(&output);
+    assert_eq!(payload["error"]["code"], "streaming_command");
 }
 
 #[test]

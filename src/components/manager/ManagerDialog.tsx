@@ -19,6 +19,7 @@ import {
   Tooltip,
   Typography,
 } from "@mui/material";
+import { useI18n } from "../../i18n";
 
 export type StatusTone = "neutral" | "success" | "warning" | "error" | "info";
 
@@ -47,6 +48,7 @@ export function ManagerDialogShell({
   actions?: ReactNode;
   className?: string;
 }) {
+  const { t } = useI18n();
   return (
     <Dialog
       open={open}
@@ -57,26 +59,26 @@ export function ManagerDialogShell({
       slotProps={{ paper: { className: "manager-shell-paper" } }}
     >
       <DialogTitle className="manager-shell-title">
-        <Stack direction="row" spacing={1.25} className="manager-shell-title-main">
+        <Stack direction="row" spacing={1} className="manager-shell-title-main">
           <Box className="manager-shell-icon">{icon}</Box>
           <Box sx={{ minWidth: 0 }}>
-            <Typography component="h2" className="manager-shell-heading">{title}</Typography>
-            {subtitle ? <Typography className="manager-shell-subtitle">{subtitle}</Typography> : null}
+            <Typography component="h2" className="manager-shell-heading">{t(title)}</Typography>
+            {subtitle ? <Typography className="manager-shell-subtitle">{t(subtitle)}</Typography> : null}
           </Box>
         </Stack>
         <Stack direction="row" spacing={0.5} className="manager-shell-title-actions">
           {status}
           {onRefresh ? (
-            <Tooltip title="刷新">
+            <Tooltip title={t("刷新")}>
               <span>
-                <IconButton size="small" onClick={onRefresh} disabled={refreshing} aria-label="刷新">
+                <IconButton size="small" onClick={onRefresh} disabled={refreshing} aria-label={t("刷新")}>
                   {refreshing ? <CircularProgress size={18} /> : <RefreshRoundedIcon />}
                 </IconButton>
               </span>
             </Tooltip>
           ) : null}
-          <Tooltip title="关闭">
-            <IconButton size="small" onClick={onClose} aria-label="关闭">
+          <Tooltip title={t("关闭")}>
+            <IconButton size="small" onClick={onClose} aria-label={t("关闭")}>
               <CloseRoundedIcon />
             </IconButton>
           </Tooltip>
@@ -103,13 +105,14 @@ export function MasterDetailLayout({
   detailOpen: boolean;
   onBack?: () => void;
 }) {
+  const { t } = useI18n();
   return (
     <Box className={`manager-master-detail ${detailOpen ? "detail-open" : ""}`}>
       <Box className="manager-master-panel">{list}</Box>
       <Box className="manager-detail-panel">
         {onBack ? (
           <Button className="manager-detail-back" size="small" startIcon={<ArrowBackRoundedIcon />} onClick={onBack}>
-            返回列表
+            {t("返回列表")}
           </Button>
         ) : null}
         {detail}
@@ -129,16 +132,17 @@ export function DialogTabs({
   tabs: Array<{ value: string; label: string; disabled?: boolean }>;
   label: string;
 }) {
+  const { t } = useI18n();
   return (
     <Tabs
       value={value}
       onChange={(_, next: string) => onChange(next)}
       className="manager-tabs"
-      aria-label={label}
+      aria-label={t(label)}
       variant="scrollable"
       scrollButtons={false}
     >
-      {tabs.map((tab) => <Tab key={tab.value} value={tab.value} label={tab.label} disabled={tab.disabled} />)}
+      {tabs.map((tab) => <Tab key={tab.value} value={tab.value} label={t(tab.label)} disabled={tab.disabled} />)}
     </Tabs>
   );
 }
@@ -148,23 +152,26 @@ export function DialogActionBar({ children }: { children: ReactNode }) {
 }
 
 export function StatusBadge({ label, tone = "neutral", icon }: { label: string; tone?: StatusTone; icon?: ReactElement }) {
-  return <Chip size="small" label={label} icon={icon} className={`manager-status-badge ${tone}`} />;
+  const { t } = useI18n();
+  return <Chip size="small" label={t(label)} icon={icon} className={`manager-status-badge ${tone}`} />;
 }
 
 export function EmptyState({ icon, title, description }: { icon: ReactNode; title: string; description?: string }) {
+  const { t } = useI18n();
   return (
     <Box className="manager-empty-state">
       <Box className="manager-empty-icon">{icon}</Box>
-      <Typography variant="subtitle2">{title}</Typography>
-      {description ? <Typography variant="body2">{description}</Typography> : null}
+      <Typography variant="subtitle2">{t(title)}</Typography>
+      {description ? <Typography variant="body2">{t(description)}</Typography> : null}
     </Box>
   );
 }
 
 export function ErrorState({ message, onRetry }: { message: string; onRetry?: () => void }) {
+  const { t } = useI18n();
   return (
     <Box className="manager-error-state">
-      <Alert severity="error" action={onRetry ? <Button color="inherit" size="small" onClick={onRetry}>重试</Button> : null}>
+      <Alert severity="error" action={onRetry ? <Button color="inherit" size="small" onClick={onRetry}>{t("重试")}</Button> : null}>
         {message}
       </Alert>
     </Box>
@@ -190,16 +197,17 @@ export function SensitiveActionConfirmDialog({
   onCancel: () => void;
   onConfirm: () => void;
 }) {
+  const { t } = useI18n();
   return (
     <Dialog open={open} onClose={busy ? undefined : onCancel} fullWidth maxWidth="xs" className="manager-confirm-dialog">
-      <DialogTitle>{title}</DialogTitle>
+      <DialogTitle>{t(title)}</DialogTitle>
       <DialogContent>
         <Alert severity={tone}>{description}</Alert>
       </DialogContent>
       <DialogActions>
-        <Button onClick={onCancel} disabled={busy}>取消</Button>
+        <Button onClick={onCancel} disabled={busy}>{t("取消")}</Button>
         <Button color={tone === "error" ? "error" : "primary"} variant="contained" onClick={onConfirm} disabled={busy}>
-          {busy ? <CircularProgress size={18} color="inherit" /> : confirmLabel}
+          {busy ? <CircularProgress size={18} color="inherit" /> : t(confirmLabel)}
         </Button>
       </DialogActions>
     </Dialog>

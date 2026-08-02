@@ -94,7 +94,7 @@ body,
 #root {
   margin: 0;
   height: 100%;
-  min-width: 900px;
+  min-width: 1000px;
   width: 100%;
   overflow: hidden;
 }
@@ -154,7 +154,7 @@ body::-webkit-scrollbar-corner,
 
 .app-shell {
   height: 100vh;
-  min-width: 900px;
+  min-width: 1000px;
   padding: var(--window-drag-height) 9px 9px;
   border: 1px solid rgba(255, 255, 255, 0.38);
   border-radius: 18px;
@@ -925,7 +925,8 @@ body::-webkit-scrollbar-corner,
   grid-template-columns: minmax(0, 1fr);
   grid-template-areas:
     "search"
-    "status";
+    "status"
+    "feedback";
   align-items: center;
   gap: 7px 9px;
 }
@@ -1214,11 +1215,15 @@ body::-webkit-scrollbar-corner,
 }
 
 .feedback-slot {
-  grid-area: status;
+  grid-area: feedback;
   min-width: 0;
   display: flex;
   justify-content: flex-end;
   pointer-events: none;
+}
+
+.feedback-slot:empty {
+  display: none;
 }
 
 .feedback-line {
@@ -3419,6 +3424,17 @@ body::-webkit-scrollbar-corner,
   background: color-mix(in srgb, var(--success) 14%, transparent);
 }
 
+.profile-action-button.archived {
+  color: var(--accent);
+  border-color: var(--accent-line);
+  background: var(--accent-soft);
+}
+
+.profile-action-button.archived:hover {
+  border-color: var(--accent);
+  background: color-mix(in srgb, var(--accent-soft) 82%, var(--surface-hover));
+}
+
 .profile-list-surface {
   --profile-action-width: 56px;
   --profile-data-columns:
@@ -3671,6 +3687,15 @@ body::-webkit-scrollbar-corner,
   background: color-mix(in srgb, var(--muted) 70%, transparent);
 }
 
+.profile-status-cell.archived {
+  color: color-mix(in srgb, var(--muted) 88%, var(--text));
+}
+
+.profile-status-cell.archived .profile-status-dot {
+  border: 1px solid color-mix(in srgb, var(--muted) 58%, transparent);
+  background: transparent;
+}
+
 .profile-list-surface .profile-card-action {
   position: sticky;
   right: 0;
@@ -3877,7 +3902,6 @@ body::-webkit-scrollbar-corner,
   -webkit-text-fill-color: var(--success);
 }
 
-.hero-repair-action,
 .hero-quota-action {
   border-color: color-mix(in srgb, var(--muted) 32%, transparent);
   background: color-mix(in srgb, var(--surface-card) 46%, transparent);
@@ -4003,6 +4027,22 @@ body::-webkit-scrollbar-corner,
   color: var(--muted);
   border-color: color-mix(in srgb, var(--muted) 28%, transparent);
   background: color-mix(in srgb, var(--surface-elevated) 38%, transparent);
+}
+
+.account-login-button {
+  min-width: 58px !important;
+  min-height: 28px !important;
+  padding: 3px 7px !important;
+  font-size: 11px !important;
+  white-space: nowrap;
+}
+
+.account-login-button .MuiButton-startIcon {
+  margin-right: 3px;
+}
+
+.account-login-button .MuiSvgIcon-root {
+  font-size: 15px;
 }
 
 .path-open-button:hover,
@@ -4614,7 +4654,7 @@ body::-webkit-scrollbar-corner,
 }
 
 .create-profile-dialog .MuiDialog-paper {
-  width: min(640px, calc(100vw - 48px));
+  width: min(680px, calc(100vw - 48px));
 }
 
 .copy-profile-dialog .MuiDialog-paper {
@@ -4779,9 +4819,9 @@ body::-webkit-scrollbar-corner,
 
 .manager-shell-paper {
   width: min(840px, calc(100vw - 48px));
-  height: min(580px, calc(100vh - 40px));
+  height: 80vh;
   max-width: none !important;
-  max-height: none !important;
+  max-height: calc(100vh - 40px) !important;
   margin: 20px !important;
   overflow: hidden;
   border: 1px solid var(--manager-border);
@@ -5155,6 +5195,118 @@ body::-webkit-scrollbar-corner,
 
   .copy-dialog-wide {
     grid-column: auto;
+  }
+}
+
+/* Product identity: compact r-series brand block for the primary workbench. */
+.browser-panel {
+  grid-template-rows: 46px auto auto minmax(0, 1fr);
+}
+
+.browser-header {
+  min-height: 46px;
+  padding-inline: 1px;
+}
+
+.product-brand {
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.product-brand-mark {
+  width: 40px;
+  height: 40px;
+  flex: 0 0 40px;
+  display: grid;
+  place-items: center;
+  overflow: hidden;
+  border: 1px solid color-mix(in srgb, var(--line) 82%, transparent);
+  border-radius: 11px;
+  background: #111720;
+  box-shadow:
+    0 5px 14px color-mix(in srgb, #192b42 13%, transparent),
+    inset 0 1px 0 rgba(255, 255, 255, 0.09);
+}
+
+.product-brand-mark img {
+  width: 100%;
+  height: 100%;
+  display: block;
+  object-fit: cover;
+  user-select: none;
+}
+
+.product-brand-copy {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  gap: 3px;
+}
+
+.product-brand-name.MuiTypography-root {
+  display: flex;
+  align-items: baseline;
+  min-width: 0;
+  margin: 0;
+  color: var(--text);
+  font-size: 19px;
+  font-weight: 720;
+  line-height: 1;
+  letter-spacing: 0;
+  white-space: nowrap;
+}
+
+.product-brand-prefix {
+  color: var(--accent);
+}
+
+.product-brand-subtitle.MuiTypography-root {
+  overflow: hidden;
+  color: var(--muted);
+  font-size: 10.75px;
+  font-weight: 520;
+  line-height: 1.1;
+  letter-spacing: 0;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.app-shell[data-style="dark"] .product-brand-mark {
+  border-color: color-mix(in srgb, var(--line) 90%, transparent);
+  box-shadow:
+    0 7px 18px rgba(0, 0, 0, 0.22),
+    inset 0 1px 0 rgba(255, 255, 255, 0.06);
+}
+
+@media (max-height: 720px) {
+  .browser-panel {
+    grid-template-rows: 42px auto auto minmax(0, 1fr);
+  }
+
+  .browser-header {
+    min-height: 42px;
+  }
+
+  .product-brand {
+    gap: 9px;
+  }
+
+  .product-brand-mark {
+    width: 36px;
+    height: 36px;
+    flex-basis: 36px;
+    border-radius: 10px;
+  }
+
+  .product-brand-name.MuiTypography-root {
+    font-size: 17.5px;
+  }
+
+  .product-brand-subtitle.MuiTypography-root {
+    font-size: 10px;
   }
 }
 
@@ -5810,6 +5962,12 @@ body::-webkit-scrollbar-corner,
   background: rgba(31, 157, 88, 0.075);
 }
 
+.inspector-runtime-badge.archived.MuiChip-root {
+  border-color: color-mix(in srgb, var(--muted) 26%, transparent);
+  color: color-mix(in srgb, var(--muted) 90%, var(--text));
+  background: color-mix(in srgb, var(--muted) 8%, transparent);
+}
+
 .detail-tags {
   margin-top: 14px;
   gap: 8px;
@@ -5963,7 +6121,8 @@ body::-webkit-scrollbar-corner,
 }
 
 .secondary-action-bar {
-  gap: 10px;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px;
 }
 
 .secondary-action-bar .MuiButton-root {
@@ -6315,4 +6474,1537 @@ body::-webkit-scrollbar-corner,
 .session-detail-chips .MuiChip-root,
 .auth-detail-tags .MuiChip-root {
   font-weight: 640 !important;
+}
+
+/* Compact desktop density: keep the workbench efficient at every window size. */
+:root {
+  --window-drag-height: 48px;
+  --density-control-height: 30px;
+  --density-panel-gap: 8px;
+  --density-panel-padding: 10px;
+}
+
+.app-shell {
+  padding:
+    var(--window-drag-height)
+    clamp(12px, 1.25vw, 18px)
+    14px
+    clamp(14px, 1.4vw, 20px);
+  border-radius: 14px;
+}
+
+.window-toolbar {
+  top: 8px;
+  right: clamp(12px, 1.25vw, 18px);
+  min-height: 32px;
+}
+
+.window-toolbar .MuiIconButton-root,
+.inspector-toggle-button {
+  width: 32px;
+  height: 32px;
+  border-radius: 8px;
+}
+
+.window-toolbar .MuiIconButton-root .MuiSvgIcon-root {
+  width: 19px;
+  height: 19px;
+}
+
+.inspector-toggle-glyph {
+  width: 19px;
+  height: 16px;
+}
+
+.workbench-grid {
+  height: calc(100vh - var(--window-drag-height) - 14px);
+  grid-template-columns: minmax(0, 1fr);
+  gap: 10px;
+}
+
+.browser-panel {
+  grid-template-rows: 38px auto auto minmax(0, 1fr);
+  gap: 8px;
+  padding-top: 6px;
+}
+
+.browser-header {
+  min-height: 38px;
+}
+
+.browser-title {
+  gap: 10px;
+}
+
+.browser-title .MuiTypography-h5 {
+  font-size: 22px;
+  font-weight: 710;
+}
+
+.browser-subtitle {
+  font-size: 11.5px !important;
+}
+
+.browser-action-row {
+  margin-bottom: 0;
+}
+
+.browser-command-grid {
+  grid-template-columns: repeat(auto-fit, minmax(178px, 1fr));
+  gap: 8px;
+}
+
+.workbench-grid.no-inspector .browser-command-grid {
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+}
+
+.command-card,
+.workbench-grid:not(.inspector-collapsed) .command-card {
+  height: 70px;
+  grid-template-columns: 36px minmax(0, 1fr) 18px;
+  gap: 9px;
+  padding: 9px 10px;
+  border-radius: 8px;
+  box-shadow:
+    0 2px 7px rgba(41, 58, 82, 0.04),
+    inset 0 1px 0 rgba(255, 255, 255, 0.72);
+}
+
+.command-card:hover {
+  box-shadow: 0 5px 13px rgba(41, 58, 82, 0.075);
+}
+
+.command-icon,
+.workbench-grid:not(.inspector-collapsed) .command-icon {
+  width: 36px;
+  height: 36px;
+  border-radius: 10px;
+}
+
+.command-icon .MuiSvgIcon-root {
+  width: 20px;
+  height: 20px;
+}
+
+.command-card:nth-child(5) .command-icon {
+  color: #16735f;
+  background: rgba(22, 115, 95, 0.09);
+}
+
+.app-shell[data-style="dark"] .command-card:nth-child(5) .command-icon {
+  color: #76c9b5;
+  background: rgba(70, 174, 149, 0.1);
+}
+
+.command-copy {
+  gap: 3px;
+}
+
+.command-title {
+  font-size: 12.5px;
+  font-weight: 680;
+}
+
+.command-subtitle {
+  overflow: hidden;
+  font-size: 10.5px;
+  line-height: 1.35;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.command-chevron {
+  width: 17px !important;
+  height: 17px !important;
+}
+
+.browser-tools {
+  gap: 7px;
+}
+
+.filter-row {
+  gap: 7px;
+}
+
+.browser-tools .MuiInputBase-root {
+  min-height: 34px;
+  border-radius: 8px;
+  font-size: 12px;
+}
+
+.browser-tools .MuiInputBase-input,
+.browser-tools .MuiSelect-select {
+  padding-top: 7px;
+  padding-bottom: 7px;
+}
+
+.browser-tools .MuiInputAdornment-root .MuiSvgIcon-root {
+  width: 18px;
+  height: 18px;
+}
+
+.search-shortcut {
+  min-width: 30px;
+  height: 22px;
+  border-radius: 6px;
+  font-size: 10.5px;
+}
+
+.category-select {
+  flex-basis: 122px;
+  width: 122px;
+}
+
+.profile-sort-select {
+  flex-basis: 134px;
+  width: 134px;
+}
+
+.status-filter-strip {
+  min-height: 38px;
+  gap: 8px;
+}
+
+.status-filter-options {
+  gap: 8px;
+}
+
+.status-filter-chip {
+  height: 34px;
+  padding: 0 11px;
+  border-radius: 8px;
+  font-size: 10.5px;
+  font-weight: 610;
+}
+
+.status-filter-chip .MuiSvgIcon-root {
+  width: 15px;
+  height: 15px;
+}
+
+.status-filter-chip strong {
+  min-width: 18px;
+  height: 18px;
+  border-radius: 6px;
+  font-size: 9.5px;
+}
+
+.profile-icon-actions .MuiIconButton-root,
+.profile-create-button.MuiButton-root {
+  min-height: 34px;
+  height: 34px;
+  border-radius: 8px;
+}
+
+.profile-icon-actions .MuiIconButton-root {
+  width: 34px;
+}
+
+.profile-create-button.MuiButton-root {
+  padding-inline: 12px;
+  font-size: 11px;
+}
+
+.profile-create-button.MuiButton-contained {
+  border-color: color-mix(in srgb, var(--accent) 78%, transparent);
+  color: #ffffff;
+  background: var(--accent);
+  box-shadow: 0 5px 12px color-mix(in srgb, var(--accent) 24%, transparent);
+}
+
+.profile-create-button.MuiButton-contained:hover {
+  border-color: var(--accent);
+  color: #ffffff;
+  background: color-mix(in srgb, var(--accent) 88%, #0b3f9b);
+  box-shadow: 0 7px 16px color-mix(in srgb, var(--accent) 28%, transparent);
+}
+
+.status-filter-actions {
+  gap: 8px;
+  padding-left: 8px;
+  box-shadow: -10px 0 16px color-mix(in srgb, var(--surface) 78%, transparent);
+}
+
+.profile-list-surface {
+  --profile-action-width: 140px;
+  --profile-data-columns:
+    minmax(128px, 1fr)
+    minmax(50px, 0.38fr)
+    minmax(115px, 0.86fr)
+    minmax(62px, 0.48fr)
+    minmax(125px, 1fr)
+    minmax(92px, 0.7fr)
+    minmax(64px, 0.52fr)
+    minmax(58px, 0.46fr);
+  --profile-table-min-width: 940px;
+  margin-top: 4px;
+  border-radius: 9px;
+  box-shadow:
+    0 8px 24px rgba(31, 48, 70, 0.055),
+    inset 0 1px 0 color-mix(in srgb, #ffffff 58%, transparent);
+}
+
+.profile-list-header {
+  min-height: 38px;
+  isolation: isolate;
+  overflow: clip;
+  background: var(--profile-header-bg);
+  box-shadow: 0 4px 10px color-mix(in srgb, var(--text) 5%, transparent);
+  font-size: 10.25px;
+}
+
+.profile-header-main {
+  position: relative;
+  z-index: 1;
+  height: 100%;
+  gap: 9px;
+  padding: 0 12px 0 14px;
+  background: var(--profile-header-bg);
+}
+
+.app-shell[data-style="dark"] .profile-list-header,
+.app-shell[data-style="dark"] .profile-header-main {
+  background: var(--profile-header-bg);
+}
+
+.profile-list-surface .profile-grid {
+  scroll-padding-top: 38px;
+}
+
+.profile-list-surface .profile-card,
+.profile-list-surface .profile-card-main,
+.profile-list-surface .profile-card-action {
+  min-height: 62px;
+}
+
+.profile-list-surface .profile-card {
+  scroll-margin-top: 38px;
+}
+
+.profile-list-surface .profile-card:nth-child(odd):not(.selected):not(:hover) {
+  background: color-mix(in srgb, var(--surface-elevated) 22%, transparent);
+}
+
+.profile-list-surface .profile-card-main {
+  gap: 9px;
+  padding: 7px 12px 7px 14px;
+}
+
+.profile-identity-cell {
+  grid-template-columns: 34px minmax(0, 1fr);
+  gap: 8px;
+}
+
+.profile-avatar {
+  width: 34px;
+  height: 34px;
+  border-radius: 9px;
+  font-size: 12px;
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.28),
+    0 3px 8px rgba(31, 55, 90, 0.08);
+}
+
+.profile-identity-copy {
+  gap: 2px;
+}
+
+.profile-identity-copy .MuiTypography-subtitle1 {
+  font-size: 12.25px;
+  font-weight: 680;
+}
+
+.profile-identity-copy .MuiTypography-caption,
+.profile-session-time {
+  font-size: 9.5px;
+}
+
+.profile-list-surface .profile-card-meta span {
+  padding: 2px 7px;
+  font-size: 9px;
+}
+
+.profile-account-cell,
+.profile-signal-cell,
+.profile-session-title,
+.profile-status-cell {
+  gap: 5px;
+}
+
+.profile-account-copy {
+  min-width: 0;
+  display: grid;
+  gap: 1px;
+}
+
+.profile-account-cell .MuiSvgIcon-root,
+.profile-signal-cell .MuiSvgIcon-root,
+.profile-session-title .MuiSvgIcon-root {
+  width: 15px;
+  height: 15px;
+}
+
+.profile-session-title .MuiTypography-caption,
+.profile-account-cell .MuiTypography-caption,
+.profile-signal-cell .MuiTypography-caption,
+.profile-status-cell .MuiTypography-caption {
+  font-size: 9.75px;
+}
+
+.profile-account-copy .MuiTypography-caption {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.profile-account-copy .profile-account-meta {
+  color: var(--muted);
+  font-size: 8.75px;
+  line-height: 1.15;
+}
+
+.profile-quota-cell {
+  min-width: 0;
+  min-height: 28px;
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  padding-right: 3px;
+  color: var(--muted);
+}
+
+.profile-quota-cell .MuiSvgIcon-root {
+  width: 14px;
+  height: 14px;
+  flex: 0 0 auto;
+}
+
+.profile-quota-cell .MuiTypography-caption {
+  min-width: 0;
+  overflow: hidden;
+  color: inherit;
+  font-size: 9.5px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.profile-quota-cell.good {
+  color: var(--success);
+}
+
+.profile-quota-cell.warning {
+  color: var(--warning);
+}
+
+.profile-quota-cell.error {
+  color: var(--danger);
+}
+
+.profile-quota-values {
+  min-width: 0;
+  width: 100%;
+  max-width: 112px;
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  align-items: end;
+  gap: 8px;
+}
+
+.profile-quota-metric {
+  min-width: 0;
+  display: grid;
+  gap: 3px;
+}
+
+.profile-quota-metric-label {
+  min-width: 0;
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 3px;
+  white-space: nowrap;
+}
+
+.profile-quota-metric small {
+  color: var(--muted);
+  font-size: 7.5px;
+  font-weight: 650;
+  line-height: 1;
+  letter-spacing: 0;
+}
+
+.profile-quota-metric strong {
+  color: inherit;
+  font-size: 9px;
+  font-weight: 760;
+  line-height: 1;
+}
+
+.profile-quota-metric .MuiLinearProgress-root {
+  height: 3px;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--muted) 16%, transparent);
+}
+
+.profile-quota-metric .MuiLinearProgress-bar {
+  border-radius: inherit;
+  background: var(--success);
+  transition: none;
+}
+
+.profile-quota-metric.warning {
+  color: var(--warning);
+}
+
+.profile-quota-metric.warning .MuiLinearProgress-bar {
+  background: var(--warning);
+}
+
+.profile-quota-metric.error {
+  color: var(--danger);
+}
+
+.profile-quota-metric.error .MuiLinearProgress-bar {
+  background: var(--danger);
+}
+
+.profile-signal-cell {
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  color: var(--muted);
+}
+
+.profile-signal-cell .MuiSvgIcon-root {
+  flex: 0 0 auto;
+}
+
+.profile-signal-cell .MuiTypography-caption {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.profile-signal-cell.good {
+  color: var(--success);
+}
+
+.profile-signal-cell.warning {
+  color: var(--warning);
+}
+
+.profile-signal-cell.error {
+  color: var(--danger);
+}
+
+.profile-status-dot {
+  width: 7px;
+  height: 7px;
+}
+
+.profile-list-surface .profile-card-action {
+  grid-template-columns: 32px 32px 32px 18px;
+  gap: 5px;
+  box-sizing: border-box;
+  padding-left: 8px;
+  box-shadow: -8px 0 16px rgba(42, 59, 82, 0.045);
+}
+
+.profile-list-surface .profile-card-action .MuiIconButton-root {
+  width: 32px;
+  height: 32px;
+  border-radius: 8px;
+}
+
+.profile-list-surface .profile-card-action .profile-more-button {
+  width: 18px;
+  height: 30px;
+}
+
+.profile-list-surface .profile-archive-button {
+  color: var(--muted);
+}
+
+.profile-list-surface .profile-archive-button:hover {
+  color: var(--accent);
+}
+
+.profile-list-surface .profile-delete-button {
+  color: color-mix(in srgb, var(--danger) 78%, var(--muted));
+}
+
+.profile-list-surface .profile-delete-button:hover {
+  color: var(--danger);
+  border-color: color-mix(in srgb, var(--danger) 34%, var(--control-border));
+  background: color-mix(in srgb, var(--danger) 8%, transparent);
+}
+
+.profile-list-surface .profile-card.archived .profile-card-action {
+  grid-template-columns: 1fr;
+}
+
+.profile-quota-dialog .quota-block {
+  min-height: 112px;
+  border: 1px solid var(--line-soft);
+  background: color-mix(in srgb, var(--surface-card) 82%, transparent);
+}
+
+.profile-edit-dialog .MuiDialog-paper {
+  max-width: 620px;
+  max-height: min(720px, calc(100vh - 40px));
+}
+
+.profile-edit-dialog .MuiDialogContent-root {
+  padding: 0 12px 10px !important;
+}
+
+.profile-edit-layout {
+  display: grid;
+  gap: 0;
+  border: 1px solid var(--line-soft);
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--surface-card) 76%, transparent);
+  overflow: hidden;
+}
+
+.profile-edit-summary {
+  min-width: 0;
+  min-height: 58px;
+  display: grid;
+  grid-template-columns: 36px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 9px;
+  padding: 9px 12px;
+  border-bottom: 1px solid var(--line-soft);
+  background: color-mix(in srgb, var(--accent-soft) 30%, var(--surface-elevated));
+}
+
+.profile-edit-summary .profile-avatar {
+  width: 36px;
+  height: 36px;
+}
+
+.profile-edit-summary-copy {
+  min-width: 0;
+  display: grid;
+  gap: 1px;
+}
+
+.profile-edit-summary-copy .MuiTypography-subtitle1 {
+  overflow: hidden;
+  font-size: 12.5px;
+  font-weight: 680;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.profile-edit-summary-copy .MuiTypography-caption {
+  color: var(--muted);
+  font-size: 9.75px;
+}
+
+.profile-edit-summary .MuiChip-root,
+.profile-edit-section-heading .MuiChip-root {
+  height: 22px;
+  border-radius: 7px;
+  font-size: 9.5px;
+}
+
+.profile-edit-section {
+  display: grid;
+  gap: 8px;
+  padding: 10px 12px;
+  border-bottom: 1px solid var(--line-soft);
+}
+
+.profile-edit-section:last-child {
+  border-bottom: 0;
+}
+
+.profile-edit-section-heading {
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.profile-edit-section-heading > div {
+  min-width: 0;
+  display: grid;
+  gap: 1px;
+}
+
+.profile-edit-section-heading .MuiTypography-subtitle2 {
+  font-size: 11px;
+  font-weight: 680;
+}
+
+.profile-edit-section-heading .MuiTypography-caption {
+  color: var(--muted);
+  font-size: 9.5px;
+}
+
+.profile-edit-section-heading .MuiButton-root {
+  min-height: 28px;
+  flex: 0 0 auto;
+  border-radius: 7px;
+  font-size: 9.75px;
+}
+
+.profile-edit-field-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.profile-edit-field-grid .MuiInputBase-root {
+  min-height: 36px;
+  border-radius: 8px;
+  font-size: 11px;
+}
+
+.profile-edit-field-grid .MuiInputBase-input,
+.profile-edit-field-grid .MuiSelect-select {
+  padding-top: 8px;
+  padding-bottom: 8px;
+}
+
+.profile-edit-field-grid .MuiInputLabel-root {
+  font-size: 11px;
+}
+
+.profile-edit-note {
+  grid-column: 1 / -1;
+}
+
+.profile-edit-note .MuiInputBase-root {
+  min-height: 54px;
+}
+
+.profile-edit-path-list {
+  display: grid;
+  gap: 6px;
+}
+
+.profile-edit-path-list > button {
+  width: 100%;
+  min-width: 0;
+  min-height: 40px;
+  display: grid;
+  grid-template-columns: 18px minmax(0, 1fr) 18px;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 9px;
+  border: 1px solid var(--line-soft);
+  border-radius: 7px;
+  color: var(--text);
+  text-align: left;
+  background: color-mix(in srgb, var(--surface-elevated) 62%, transparent);
+  cursor: pointer;
+}
+
+.profile-edit-path-list > button:hover:not(:disabled) {
+  border-color: var(--accent-line);
+  background: color-mix(in srgb, var(--accent-soft) 34%, var(--surface-elevated));
+}
+
+.profile-edit-path-list > button:disabled {
+  opacity: 0.52;
+  cursor: default;
+}
+
+.profile-edit-path-list > button > span {
+  min-width: 0;
+  display: grid;
+  gap: 1px;
+}
+
+.profile-edit-path-list > button strong {
+  font-size: 10px;
+  font-weight: 650;
+}
+
+.profile-edit-path-list > button small {
+  overflow: hidden;
+  color: var(--muted);
+  font-size: 9px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.profile-edit-path-list > button .MuiSvgIcon-root {
+  width: 16px;
+  height: 16px;
+  color: var(--muted);
+}
+
+.profile-edit-config-status {
+  min-height: 28px;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 4px 2px 0;
+  color: var(--muted);
+  font-size: 9.5px;
+}
+
+.profile-edit-config-status span {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.profile-edit-config-status .MuiSvgIcon-root {
+  width: 14px;
+  height: 14px;
+}
+
+.profile-edit-config-status .good {
+  color: var(--success);
+}
+
+.profile-edit-config-status .warning {
+  color: var(--warning);
+}
+
+@media (max-height: 700px) {
+  .profile-edit-dialog .MuiDialog-paper {
+    max-height: calc(100vh - 20px);
+  }
+
+  .profile-edit-section {
+    padding-block: 8px;
+  }
+
+  .profile-edit-summary {
+    min-height: 52px;
+    padding-block: 7px;
+  }
+}
+
+.profile-list-footer {
+  min-height: 40px;
+  padding: 5px 12px;
+  font-size: 10.5px;
+}
+
+.profile-page-controls .MuiIconButton-root,
+.profile-page-controls > span {
+  width: 28px;
+  height: 28px;
+}
+
+.profile-page-size {
+  min-height: 30px;
+  padding-inline: 9px;
+  font-size: 10px;
+}
+
+.inspector-panel {
+  padding-top: 6px;
+}
+
+.inspector-content,
+.inspector-body {
+  gap: 6px;
+}
+
+.inspector-hero,
+.inspector-section,
+.session-block,
+.quota-block,
+.inspector-action-dock {
+  border-radius: 8px;
+  box-shadow:
+    0 2px 7px rgba(41, 58, 82, 0.03),
+    inset 0 1px 0 rgba(255, 255, 255, 0.7);
+}
+
+.inspector-hero {
+  min-height: 0;
+  padding: 12px;
+}
+
+.inspector-title {
+  gap: 8px;
+}
+
+.inspector-profile-heading {
+  gap: 6px;
+}
+
+.inspector-profile-identity {
+  grid-template-columns: 42px minmax(0, 1fr);
+  gap: 10px;
+}
+
+.inspector-profile-avatar {
+  width: 42px;
+  height: 42px;
+  border-radius: 11px;
+  font-size: 17px;
+}
+
+.inspector-eyebrow {
+  font-size: 10px !important;
+}
+
+.inspector-title .MuiTypography-h5 {
+  font-size: 18px;
+  font-weight: 690;
+}
+
+.inspector-title .MuiTypography-body2 {
+  margin-top: 3px;
+  font-size: 11px;
+}
+
+.inspector-runtime-badge.MuiChip-root {
+  height: 22px;
+  padding-left: 5px;
+  font-size: 9.5px;
+}
+
+.inspector-runtime-badge.MuiChip-root::before {
+  width: 6px;
+  height: 6px;
+}
+
+.detail-tags {
+  margin-top: 7px;
+  gap: 5px;
+}
+
+.detail-tags .MuiChip-root {
+  height: 22px;
+  border-radius: 7px;
+  font-size: 9.5px;
+}
+
+.inspector-primary-actions {
+  gap: 6px;
+  margin-top: 8px;
+}
+
+.inspector-primary-actions .MuiButton-root {
+  min-height: 32px;
+  border-radius: 8px;
+  font-size: 10.5px;
+}
+
+.profile-health-strip {
+  min-height: 32px;
+  margin-top: 8px;
+  border-radius: 8px;
+}
+
+.health-item {
+  padding-inline: 3px;
+  font-size: 9.5px;
+}
+
+.inspector-section,
+.session-block,
+.quota-block {
+  padding: 8px 10px;
+}
+
+.inspector-section-label {
+  margin-bottom: 6px !important;
+  font-size: 10px !important;
+}
+
+.inspector-system-list {
+  border-radius: 8px;
+}
+
+.inspector-system-list .path-block {
+  min-height: 44px;
+  padding: 6px 8px;
+}
+
+.path-title,
+.account-block .MuiTypography-subtitle2,
+.session-block .MuiTypography-subtitle2,
+.quota-block .MuiTypography-subtitle2 {
+  font-size: 10.5px;
+}
+
+.path-block .MuiTypography-caption,
+.account-block .MuiTypography-caption {
+  font-size: 9px;
+}
+
+.path-open-button,
+.account-copy-button,
+.session-open-button {
+  width: 29px;
+  height: 29px;
+  border-radius: 8px;
+}
+
+.account-block {
+  min-height: 44px;
+  padding: 6px 8px;
+  border-radius: 8px;
+}
+
+.account-block > .MuiStack-root > .MuiSvgIcon-root {
+  width: 23px;
+  height: 23px;
+}
+
+.session-content {
+  grid-template-columns: 40px minmax(0, 1fr) auto;
+  gap: 8px;
+  margin-top: 6px;
+  padding: 7px;
+  border-radius: 8px;
+}
+
+.session-icon-tile {
+  width: 40px;
+  height: 40px;
+  border-radius: 9px;
+}
+
+.session-title {
+  font-size: 10.5px !important;
+}
+
+.session-summary {
+  font-size: 9.5px !important;
+}
+
+.quota-block {
+  min-height: 72px;
+}
+
+.inspector-action-dock {
+  min-height: 48px;
+  padding: 7px 9px;
+}
+
+.secondary-action-bar {
+  gap: 6px;
+}
+
+.secondary-action-bar .MuiButton-root {
+  min-height: 30px;
+  border-radius: 8px;
+  font-size: 10px;
+}
+
+.app-task-dialog .MuiDialogContent-root,
+.manager-confirm-dialog .MuiDialogContent-root {
+  padding: 10px !important;
+}
+
+.task-dialog-title,
+.manager-confirm-dialog .MuiDialogTitle-root {
+  min-height: 48px;
+  padding: 7px 10px !important;
+}
+
+.task-dialog-title-icon {
+  width: 29px;
+  height: 29px;
+  flex-basis: 29px;
+}
+
+.task-dialog-heading {
+  font-size: 14px !important;
+}
+
+.app-task-dialog .MuiDialogActions-root,
+.manager-confirm-dialog .MuiDialogActions-root {
+  min-height: 44px;
+  padding: 6px 10px !important;
+}
+
+.app-task-dialog .MuiDialogActions-root .MuiButton-root,
+.manager-confirm-dialog .MuiDialogActions-root .MuiButton-root {
+  min-height: 29px;
+}
+
+.manager-shell-paper {
+  width: min(820px, calc(100vw - 36px));
+  height: 80vh;
+  max-height: calc(100vh - 28px) !important;
+  margin: 14px !important;
+}
+
+.manager-shell-title {
+  min-height: 48px;
+  padding: 7px 10px !important;
+  gap: 9px;
+}
+
+.manager-shell-icon {
+  width: 29px;
+  height: 29px;
+  flex-basis: 29px;
+}
+
+.manager-shell-icon svg {
+  font-size: 17px;
+}
+
+.manager-shell-heading {
+  font-size: 14px !important;
+}
+
+.manager-shell-subtitle {
+  font-size: 10.5px !important;
+}
+
+.manager-shell-title-actions .MuiIconButton-root {
+  width: 29px;
+  height: 29px;
+}
+
+.manager-shell-title-actions .manager-status-badge {
+  height: 27px !important;
+  font-size: 10.5px !important;
+}
+
+.manager-toolbar {
+  min-height: 42px;
+  padding: 6px 10px 0;
+  gap: 6px;
+}
+
+.manager-toolbar .MuiInputBase-root,
+.manager-toolbar .MuiButton-root,
+.manager-toolbar .MuiToggleButton-root {
+  min-height: 30px;
+}
+
+.manager-master-detail {
+  grid-template-columns: clamp(224px, 28%, 252px) minmax(0, 1fr);
+  margin: 6px 10px 0;
+  border-radius: 8px 8px 0 0;
+}
+
+.manager-tabs {
+  min-height: 34px !important;
+  padding: 0 8px;
+}
+
+.manager-tabs .MuiTab-root {
+  min-width: 58px;
+  min-height: 34px;
+  padding: 0 8px;
+  font-size: 11px;
+}
+
+.manager-action-bar {
+  min-height: 44px;
+  padding: 6px 10px !important;
+}
+
+.manager-action-bar .MuiButton-root {
+  min-height: 29px;
+}
+
+.manager-action-bar .MuiIconButton-root {
+  width: 29px;
+  height: 29px;
+}
+
+.manager-status-badge {
+  height: 21px !important;
+  font-size: 10px !important;
+}
+
+.manager-empty-state {
+  min-height: 138px;
+  padding: 14px;
+  gap: 5px;
+}
+
+.manager-empty-icon {
+  width: 40px;
+  height: 40px;
+}
+
+/* Tooltips describe controls but must never block a nearby compact action. */
+.MuiTooltip-popper {
+  pointer-events: none !important;
+}
+
+/* Create Profile is a short setup flow, not a flat collection of inputs. */
+.create-profile-dialog .MuiDialogContent-root {
+  padding: 0 !important;
+}
+
+.create-profile-layout {
+  display: grid;
+  background: var(--manager-detail-bg);
+}
+
+.create-profile-preview {
+  min-width: 0;
+  min-height: 62px;
+  display: grid;
+  grid-template-columns: 38px minmax(120px, 1fr) auto;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 14px;
+  border-bottom: 1px solid var(--manager-border);
+  background: color-mix(in srgb, var(--accent-soft) 32%, var(--manager-toolbar-bg));
+}
+
+.create-profile-preview-avatar {
+  width: 38px;
+  height: 38px;
+  display: grid;
+  place-items: center;
+  border: 1px solid var(--accent-line);
+  border-radius: 9px;
+  color: var(--accent);
+  background: var(--manager-control-bg);
+  font-size: 15px;
+  font-weight: 720;
+  text-transform: lowercase;
+  box-shadow: 0 2px 7px color-mix(in srgb, var(--accent) 10%, transparent);
+}
+
+.create-profile-preview-copy {
+  min-width: 0;
+  display: grid;
+  gap: 1px;
+}
+
+.create-profile-preview-copy .MuiTypography-root {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.create-profile-preview-title {
+  color: var(--text);
+  font-size: 12px !important;
+  font-weight: 700 !important;
+}
+
+.create-profile-preview-copy .MuiTypography-caption {
+  color: var(--muted);
+  font-size: 9.75px;
+}
+
+.create-profile-preview-tags {
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 5px;
+}
+
+.create-profile-preview-tags .MuiChip-root {
+  max-width: 112px;
+  height: 22px;
+  border: 1px solid var(--manager-border-soft);
+  border-radius: 7px;
+  background: var(--manager-control-bg);
+  font-size: 9.5px;
+}
+
+.create-profile-preview-tags .MuiChip-label {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.create-profile-section {
+  min-width: 0;
+  display: grid;
+  gap: 9px;
+  padding: 10px 14px 11px;
+  border-bottom: 1px solid var(--manager-border-soft);
+  background: var(--manager-detail-bg);
+}
+
+.create-profile-section:last-child {
+  border-bottom: 0;
+}
+
+.create-profile-section-heading {
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.create-profile-section-icon {
+  width: 26px;
+  height: 26px;
+  flex: 0 0 26px;
+  display: grid;
+  place-items: center;
+  border: 1px solid var(--manager-border);
+  border-radius: 7px;
+  color: var(--accent);
+  background: var(--manager-control-bg);
+}
+
+.create-profile-section-icon .MuiSvgIcon-root {
+  width: 15px;
+  height: 15px;
+}
+
+.create-profile-section-heading .MuiTypography-subtitle2 {
+  color: var(--text);
+  font-size: 11px;
+  font-weight: 700;
+  line-height: 1.25;
+}
+
+.create-profile-section-heading .MuiTypography-caption {
+  display: block;
+  margin-top: 1px;
+  color: var(--muted);
+  font-size: 9.5px;
+  line-height: 1.25;
+}
+
+.create-profile-identity-grid,
+.create-profile-runtime-grid,
+.create-profile-path-grid {
+  min-width: 0;
+  display: grid;
+  align-items: start;
+  gap: 8px;
+}
+
+.create-profile-identity-grid {
+  grid-template-columns: minmax(180px, 1.15fr) minmax(150px, 1fr) minmax(130px, 0.8fr);
+}
+
+.create-profile-runtime-grid,
+.create-profile-path-grid {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.create-profile-dialog .MuiFormHelperText-root {
+  margin: 3px 4px 0;
+  min-height: 12px;
+  font-size: 9.5px;
+  line-height: 1.2;
+}
+
+.create-profile-dialog .MuiInputBase-input {
+  min-width: 0;
+}
+
+@media (max-width: 680px) {
+  .create-profile-preview {
+    grid-template-columns: 36px minmax(0, 1fr);
+  }
+
+  .create-profile-preview-tags {
+    grid-column: 1 / -1;
+    justify-content: flex-start;
+  }
+
+  .create-profile-identity-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .create-profile-identity-grid > :last-child {
+    grid-column: 1 / -1;
+  }
+}
+
+@media (max-width: 520px) {
+  .create-profile-identity-grid,
+  .create-profile-runtime-grid,
+  .create-profile-path-grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .create-profile-identity-grid > :last-child {
+    grid-column: auto;
+  }
+}
+
+/* r-series settings surface: compact, sectioned, and localization-ready. */
+.settings-dialog.app-task-dialog .MuiDialog-paper {
+  width: min(620px, calc(100vw - 36px));
+  max-height: min(720px, calc(100vh - 28px));
+}
+
+.settings-dialog .settings-dialog-content {
+  padding: 0 !important;
+  background: var(--manager-detail-bg);
+}
+
+.settings-preference-list {
+  display: grid;
+}
+
+.settings-preference-section {
+  min-width: 0;
+  display: grid;
+  grid-template-columns: minmax(190px, 0.72fr) minmax(280px, 1.28fr);
+  align-items: center;
+  gap: 18px;
+  padding: 13px 16px;
+  border-bottom: 1px solid var(--manager-border-soft);
+}
+
+.settings-preference-section:last-child {
+  border-bottom: 0;
+}
+
+.settings-preference-heading {
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 9px;
+}
+
+.settings-preference-icon {
+  width: 30px;
+  height: 30px;
+  flex: 0 0 30px;
+  display: grid;
+  place-items: center;
+  border: 1px solid var(--manager-border);
+  border-radius: 8px;
+  color: var(--accent);
+  background: var(--manager-control-bg);
+}
+
+.settings-preference-icon .MuiSvgIcon-root {
+  width: 17px;
+  height: 17px;
+}
+
+.settings-preference-heading .MuiTypography-subtitle2 {
+  color: var(--text);
+  font-size: 11.5px;
+  font-weight: 700;
+  line-height: 1.25;
+}
+
+.settings-preference-heading .MuiTypography-caption {
+  display: block;
+  margin-top: 2px;
+  color: var(--muted);
+  font-size: 9.5px;
+  line-height: 1.3;
+}
+
+.settings-segmented-control {
+  width: 100%;
+  min-width: 0;
+  display: grid !important;
+  gap: 6px;
+}
+
+.theme-mode-selector.settings-segmented-control {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
+.language-selector {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.settings-segmented-control .MuiToggleButtonGroup-grouped {
+  min-width: 0;
+  min-height: 38px;
+  margin: 0 !important;
+  display: inline-flex;
+  flex-direction: row;
+  gap: 6px;
+  padding: 6px 9px;
+  border: 1px solid var(--manager-border) !important;
+  border-radius: 8px !important;
+  color: var(--muted);
+  background: var(--manager-control-bg);
+  font-size: 10px;
+  font-weight: 680;
+  text-transform: none;
+}
+
+.settings-segmented-control .MuiToggleButtonGroup-grouped:hover {
+  border-color: var(--accent-line) !important;
+  color: var(--text);
+  background: var(--manager-list-hover);
+}
+
+.settings-segmented-control .MuiToggleButtonGroup-grouped.Mui-selected,
+.settings-segmented-control .MuiToggleButtonGroup-grouped.Mui-selected:hover {
+  border-color: var(--accent-line) !important;
+  color: var(--accent);
+  background: var(--accent-soft);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--accent) 9%, transparent);
+}
+
+.settings-segmented-control .MuiSvgIcon-root {
+  width: 16px;
+  height: 16px;
+}
+
+.language-code {
+  min-width: 20px;
+  color: inherit;
+  font-size: 9px;
+  font-weight: 760;
+  letter-spacing: 0;
+}
+
+.settings-diagnostics-section {
+  display: block;
+  padding-block: 14px;
+}
+
+.settings-diagnostics-section .settings-doctor-heading {
+  margin: 0 0 10px;
+}
+
+.settings-diagnostics-section .doctor-report,
+.settings-diagnostics-section .doctor-empty-state,
+.settings-diagnostics-section > .MuiAlert-root {
+  margin-left: 39px;
+}
+
+.settings-diagnostics-section .doctor-check-list {
+  max-height: min(36vh, 250px);
+}
+
+@media (max-width: 620px) {
+  .settings-preference-section {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 9px;
+  }
+
+  .settings-diagnostics-section .doctor-report,
+  .settings-diagnostics-section .doctor-empty-state,
+  .settings-diagnostics-section > .MuiAlert-root {
+    margin-left: 0;
+  }
+}
+
+/* Keep the brand mark inside a stable header track after density overrides. */
+.browser-panel {
+  grid-template-rows: 46px auto auto minmax(0, 1fr);
+}
+
+.browser-header {
+  min-height: 46px;
+}
+
+@media (max-height: 720px) {
+  .browser-panel {
+    grid-template-rows: 42px auto auto minmax(0, 1fr);
+  }
+
+  .browser-header {
+    min-height: 42px;
+  }
 }

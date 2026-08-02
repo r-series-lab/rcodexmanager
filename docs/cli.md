@@ -142,6 +142,10 @@ rcodexmanager --json launch --name codex-f
 rcodexmanager --json terminate --name codex-f
 rcodexmanager --json stop --name codex-f
 
+# 从日常列表软归档，并按原样恢复
+rcodexmanager --json archive --name codex-f
+rcodexmanager --json restore --name codex-f
+
 # 重建配置；默认也重置 user data
 rcodexmanager --json reset --name codex-f --model gpt-5.5 --reasoning-effort medium
 rcodexmanager --json reset --name codex-f --keep-user-data
@@ -151,7 +155,9 @@ rcodexmanager --json delete --name codex-f
 rcodexmanager --json delete --name codex-f --archive-data
 ```
 
-默认 `codex` profile 不能删除、重置、修改模型或安全终止。执行写操作前先用 `list` 检查 `isDefault` 和 `isRunning`。
+默认 `codex` profile 不能归档、删除、重置、修改模型或安全终止。运行中的 profile 必须先停止才能归档。`archive` 只在 `~/.rcodexmanager/profile-metadata.json` 写入归档时间，不修改启动函数、`CODEX_HOME`、User Data、认证、会话或模型配置；`list` 的 `profiles` 只返回活动项，归档项位于 `archivedProfiles`。执行写操作前先用 `list` 检查 `isDefault`、`isRunning` 和 `isArchived`。
+
+`list` 中每个 Profile 的 `authState` 只返回认证状态、access token 到期时间和是否存在 refresh token，不返回凭证正文。状态包括 `missing`、`valid`、`refresh-required`、`expired`、`api-key`、`unknown` 和 `invalid`。静态状态不等同于服务端在线确认；服务器节点详情中的“验证认证”会执行只读 `quota --name <profile>`。
 
 `model set` 会备份当前 `config.toml`，只更新顶层 `model` 和 `model_reasoning_effort`，并保留 `model_provider`、Provider 配置、认证和会话。运行中的 Profile 必须先停止。不要为了切换模型使用 `reset`，后者会归档并重建 Profile 数据目录。
 
@@ -175,16 +181,18 @@ rcodexmanager --json sessions detail --profile codex-g --session-id <id> --updat
 ## 账号与额度
 
 ```bash
+# 本机浏览器登录；服务器/无界面环境使用设备码
+rcodexmanager login --name codex-g
+rcodexmanager login --name codex-g --device-auth
+
 rcodexmanager --json quota --name codex-g
 
 rcodexmanager --json import-auth --name codex-g \
   --source /path/to/auth.json --confirm-sensitive
 
-rcodexmanager --json repair-network --name codex-g
-rcodexmanager --json repair-network --name codex-g --skip-launchctl
 ```
 
-`quota` 使用 profile 当前 access token 调用只读 usage 接口，不另存 token。`import-auth` 只允许停止中的非默认 profile，并先备份原 `auth.json`。
+`login` 调用官方 Codex 登录流程并直接写入目标 `CODEX_HOME`。它需要持续输出授权地址或设备码，因此不支持 `--json`；无界面 Linux 应使用 `--device-auth`。授权地址和一次性代码属于短期敏感信息，不应写入日志。`quota` 使用 profile 当前 access token 调用只读 usage 接口，不另存 token。`import-auth` 只允许停止中的非默认 profile，并先备份原 `auth.json`。
 
 ## 认证库
 

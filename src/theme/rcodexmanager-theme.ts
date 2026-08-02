@@ -113,9 +113,9 @@ export function createRcodexManagerTheme(styleMode: CodexManagerStyleMode) {
         },
         styleOverrides: {
           root: {
-            minHeight: 30,
+            minHeight: 29,
             borderRadius: 8,
-            paddingInline: 10,
+            paddingInline: 9,
             transition:
               "background-color 140ms ease, border-color 140ms ease, color 140ms ease, box-shadow 140ms ease",
             "&.MuiButton-containedPrimary": {
@@ -148,9 +148,9 @@ export function createRcodexManagerTheme(styleMode: CodexManagerStyleMode) {
         },
         styleOverrides: {
           root: {
-            width: 30,
-            height: 30,
-            borderRadius: 9,
+            width: 29,
+            height: 29,
+            borderRadius: 8,
             border: `1px solid ${tokens.line}`,
             backgroundColor: dark ? "rgba(255,255,255,0.02)" : "rgba(255,255,255,0.64)",
             color: tokens.text,
@@ -169,8 +169,8 @@ export function createRcodexManagerTheme(styleMode: CodexManagerStyleMode) {
       MuiChip: {
         styleOverrides: {
           root: {
-            height: 21,
-            borderRadius: 8,
+            height: 20,
+            borderRadius: 7,
             fontWeight: 680,
             fontSize: "0.68rem",
             maxWidth: "100%",
@@ -206,8 +206,8 @@ export function createRcodexManagerTheme(styleMode: CodexManagerStyleMode) {
       MuiAlert: {
         styleOverrides: {
           root: {
-            minHeight: 32,
-            borderRadius: 10,
+            minHeight: 30,
+            borderRadius: 8,
             paddingBlock: 2,
             paddingInline: 9,
             fontSize: "0.78rem",
@@ -224,7 +224,7 @@ export function createRcodexManagerTheme(styleMode: CodexManagerStyleMode) {
       MuiDialogTitle: {
         styleOverrides: {
           root: {
-            padding: "14px 16px 8px",
+            padding: "11px 14px 7px",
             fontSize: "1rem",
             fontWeight: 850,
           },
@@ -233,14 +233,14 @@ export function createRcodexManagerTheme(styleMode: CodexManagerStyleMode) {
       MuiDialogContent: {
         styleOverrides: {
           root: {
-            padding: "8px 16px",
+            padding: "7px 14px",
           },
         },
       },
       MuiDialogActions: {
         styleOverrides: {
           root: {
-            padding: "8px 16px 14px",
+            padding: "7px 14px 11px",
           },
         },
       },

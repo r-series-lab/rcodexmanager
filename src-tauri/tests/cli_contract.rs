@@ -120,8 +120,9 @@ fn capabilities_json_lists_profile_commands() {
     assert!(commands.iter().any(|item| item["command"] == "delete"));
     assert!(commands.iter().any(|item| item["command"] == "terminate"));
     assert!(commands.iter().any(|item| item["command"] == "quota"));
+    assert!(commands.iter().any(|item| item["command"] == "login"));
     assert!(commands.iter().any(|item| item["command"] == "import-auth"));
-    assert!(commands
+    assert!(!commands
         .iter()
         .any(|item| item["command"] == "repair-network"));
     assert!(commands.iter().any(|item| item["command"] == "auth"));
@@ -129,15 +130,26 @@ fn capabilities_json_lists_profile_commands() {
     assert!(commands.iter().any(|item| item["command"] == "wechat"));
     assert!(commands.iter().any(|item| item["command"] == "feishu"));
     assert!(commands.iter().any(|item| item["command"] == "model-route"));
-    let repair_network = commands
-        .iter()
-        .find(|item| item["command"] == "repair-network")
-        .expect("repair-network capability");
-    assert!(repair_network["description"]
-        .as_str()
-        .expect("repair-network description")
-        .contains("macOS system proxy"));
-    assert_eq!(repair_network["examples"].as_array().unwrap().len(), 2);
+}
+
+#[test]
+fn login_rejects_json_without_starting_an_interactive_process() {
+    let home = fixture_home();
+    let home_path = home_arg(home.path());
+    let output = run_cli(&[
+        "--home",
+        &home_path,
+        "--json",
+        "login",
+        "--name",
+        "codex-b",
+        "--device-auth",
+    ]);
+    assert_eq!(output.status.code(), Some(2));
+
+    let payload = parse_stdout_json(&output);
+    assert_eq!(payload["ok"], false);
+    assert_eq!(payload["error"]["code"], "streaming_command");
 }
 
 #[test]
@@ -452,6 +464,7 @@ responses_websocket_response_processed = true
         payload["data"]["profile"]["modelProvider"],
         "custom-provider"
     );
+    assert_eq!(payload["data"]["profile"]["authState"]["status"], "api-key");
     assert_eq!(payload["data"]["backups"].as_array().unwrap().len(), 1);
     assert!(std::path::Path::new(
         payload["data"]["backups"][0]["backupPath"]
@@ -490,45 +503,6 @@ fn quota_json_without_auth_fails_without_network() {
         .as_str()
         .unwrap()
         .contains("auth.json"));
-}
-
-#[test]
-fn repair_network_patches_websocket_feature_flags() {
-    let home = fixture_home();
-    let home_path = home_arg(home.path());
-
-    let output = run_cli(&[
-        "--home",
-        &home_path,
-        "repair-network",
-        "--name",
-        "codex-b",
-        "--skip-launchctl",
-        "--json",
-    ]);
-    assert_eq!(output.status.code(), Some(0));
-
-    let payload = parse_stdout_json(&output);
-    assert_eq!(payload["ok"], true);
-    assert_eq!(payload["command"], "repair-network");
-    assert_eq!(payload["data"]["profileName"], "codex-b");
-    assert_eq!(payload["data"]["configUpdated"], true);
-    assert_eq!(payload["data"]["launchEnvUpdated"], false);
-
-    let config = std::fs::read_to_string(home.path().join(".codex-isolated-test/config.toml"))
-        .expect("config should exist");
-    assert!(config.contains("[features]"));
-    assert!(config.contains("responses_websockets = true"));
-    assert!(config.contains("responses_websockets_v2 = true"));
-    assert!(config.contains("responses_websocket_response_processed = true"));
-
-    let listed = run_cli(&["--home", &home_path, "list", "--json"]);
-    assert_eq!(listed.status.code(), Some(0));
-    let listed_payload = parse_stdout_json(&listed);
-    assert_eq!(
-        listed_payload["data"]["profiles"][0]["websocketFeaturesEnabled"],
-        true
-    );
 }
 
 #[test]
@@ -809,7 +783,7 @@ fn copy_profile_creates_new_launcher_and_can_copy_auth() {
         .expect("copied config should exist");
     assert!(config.contains("model = \"gpt-5.5\""));
     assert!(config.contains("model_reasoning_effort = \"medium\""));
-    assert!(config.contains("responses_websockets = true"));
+    assert!(!config.contains("responses_websockets"));
 
     let target_auth: Value = serde_json::from_str(
         &std::fs::read_to_string(home.path().join(".codex-f/auth.json"))
@@ -1079,6 +1053,7 @@ fn model_route_preview_apply_and_restore_keep_json_contract() {
     assert!(routed_config.contains("rcodexmanager_preset = \"glm\""));
     assert!(routed_config
         .contains("rcodexmanager_upstream_base_url = \"https://open.bigmodel.cn/api/paas/v4\""));
+    assert!(!routed_config.contains("responses_websockets"));
     assert!(!routed_config.contains("auth_mode"));
     assert_eq!(
         std::fs::read_to_string(&auth_path).expect("auth should stay unchanged"),
@@ -1196,6 +1171,9 @@ fn create_reset_and_delete_profile_keep_json_contract() {
     assert_eq!(create_payload["data"]["profile"]["name"], "codex-f");
     assert_eq!(create_payload["data"]["profile"]["alias"], "Draft");
     assert_eq!(create_payload["data"]["profile"]["category"], "深度");
+    let created_config =
+        std::fs::read_to_string(home.path().join(".codex-f/config.toml")).expect("created config");
+    assert!(!created_config.contains("responses_websockets"));
 
     let update = run_cli(&[
         "--home",
@@ -1270,4 +1248,61 @@ fn create_reset_and_delete_profile_keep_json_contract() {
     let delete_payload = parse_stdout_json(&delete);
     assert_eq!(delete_payload["ok"], true);
     assert_eq!(delete_payload["command"], "delete");
+}
+
+#[test]
+fn archive_and_restore_profile_only_change_visibility_metadata() {
+    let home = fixture_home();
+    let home_path = home_arg(home.path());
+    let zshrc_path = home.path().join(".zshrc");
+    let config_path = home.path().join(".codex-isolated-test/config.toml");
+    let zshrc_before = std::fs::read_to_string(&zshrc_path).expect("zshrc before archive");
+    let config_before = std::fs::read_to_string(&config_path).expect("config before archive");
+
+    let archive = run_cli(&[
+        "--home", &home_path, "archive", "--name", "codex-b", "--json",
+    ]);
+    assert_eq!(archive.status.code(), Some(0));
+    let archive_payload = parse_stdout_json(&archive);
+    assert_eq!(archive_payload["ok"], true);
+    assert_eq!(archive_payload["command"], "archive");
+    assert_eq!(archive_payload["data"]["profile"]["isArchived"], true);
+    assert!(archive_payload["data"]["profile"]["archivedAt"].is_string());
+
+    let archived_list = run_cli(&["--home", &home_path, "list", "--json"]);
+    let archived_payload = parse_stdout_json(&archived_list);
+    assert_eq!(archived_payload["data"]["profileCount"], 0);
+    assert_eq!(archived_payload["data"]["archivedCount"], 1);
+    assert_eq!(
+        archived_payload["data"]["archivedProfiles"][0]["name"],
+        "codex-b"
+    );
+    assert_eq!(
+        std::fs::read_to_string(&zshrc_path).expect("zshrc after archive"),
+        zshrc_before
+    );
+    assert_eq!(
+        std::fs::read_to_string(&config_path).expect("config after archive"),
+        config_before
+    );
+
+    let duplicate = run_cli(&[
+        "--home", &home_path, "create", "--name", "codex-b", "--json",
+    ]);
+    assert_eq!(duplicate.status.code(), Some(2));
+
+    let restore = run_cli(&[
+        "--home", &home_path, "restore", "--name", "codex-b", "--json",
+    ]);
+    assert_eq!(restore.status.code(), Some(0));
+    let restore_payload = parse_stdout_json(&restore);
+    assert_eq!(restore_payload["ok"], true);
+    assert_eq!(restore_payload["command"], "restore");
+    assert_eq!(restore_payload["data"]["profile"]["isArchived"], false);
+
+    let active_list = run_cli(&["--home", &home_path, "list", "--json"]);
+    let active_payload = parse_stdout_json(&active_list);
+    assert_eq!(active_payload["data"]["profileCount"], 1);
+    assert_eq!(active_payload["data"]["archivedCount"], 0);
+    assert_eq!(active_payload["data"]["profiles"][0]["name"], "codex-b");
 }

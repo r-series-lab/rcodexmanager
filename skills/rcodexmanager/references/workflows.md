@@ -76,6 +76,15 @@ If a session changed between list/detail, pass its `updatedAt` to prevent stale 
 
 If apply fails, do not manually copy token files. Report the error and preserved backup.
 
+## Sign In A Profile
+
+1. Identify the exact profile with `list`.
+2. For a local desktop profile, use the App login guide or `rcodexmanager login --name <profile>`.
+3. For Linux/headless, run `rcodexmanager login --name <profile> --device-auth`.
+4. Keep the process attached while the user opens the official URL and enters the one-time code.
+5. Treat the URL/code as ephemeral secrets; do not place them in logs, notes, task history, or metadata.
+6. Re-run `list` after Codex reports completion. Optionally run `quota`; report transport errors as unverified, not invalid credentials.
+
 ## Sync A Mac Profile To Linux
 
 1. Probe the server node and refresh its Profile list.
@@ -145,7 +154,7 @@ Do not attempt to stop an external or cc-switch listener.
 1. Read route status and target running state.
 2. Confirm the user wants rCodexManager routing fields removed.
 3. Run `model-route restore --confirm-sensitive`.
-4. Verify the profile retains base model/reasoning/WebSocket configuration and auth remains unchanged.
+4. Verify the profile retains base model, reasoning, and unrelated configuration while auth remains unchanged.
 
 ## Diagnose A Failed Route
 

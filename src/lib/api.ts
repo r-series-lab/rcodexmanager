@@ -14,10 +14,14 @@ import {
   createMockServerNodeProbe,
   createMockServerNodeReport,
   createMockWechatBridgeReport,
+  setMockProfileArchived,
 } from "./mock-data";
 import type {
   ApplyAuthBackupInput,
   ApplyModelRouteInput,
+  AuthLoginMode,
+  AuthLoginSessionReport,
+  AuthLoginTargetKind,
   AuthBackupImportPreview,
   AuthBackupExportReport,
   AuthBatchBackupResult,
@@ -39,7 +43,6 @@ import type {
   ListProfileSessionsInput,
   ReadProfileSessionDetailInput,
   ReadFeishuRemoteLogInput,
-  CodexNetworkRepairReport,
   DoctorReport,
   ModelRoutePreview,
   ModelRouteProxyCheckResult,
@@ -62,6 +65,7 @@ import type {
   StopWechatBridgeInput,
   UnbindWechatBridgeInput,
   UpdateAuthBackupInput,
+  UpdateProfileModelInput,
   WechatBridgeLogReport,
   WechatBridgeReport,
   RunServerNodeOperationInput,
@@ -73,6 +77,36 @@ import type {
   SyncServerProfileReport,
   UpsertServerNodeInput,
 } from "./types";
+
+const mockAuthLoginSessions = new Map<string, { report: AuthLoginSessionReport; polls: number }>();
+
+function createMockAuthLoginSession(
+  targetKind: AuthLoginTargetKind,
+  targetId: string | null,
+  profileName: string,
+  mode: AuthLoginMode,
+): AuthLoginSessionReport {
+  const now = new Date();
+  const report: AuthLoginSessionReport = {
+    sessionId: `auth-login-mock-${Date.now()}`,
+    targetKind,
+    targetId,
+    profileName,
+    mode,
+    status: "waiting",
+    verificationUrl: mode === "device-code"
+      ? "https://auth.openai.com/codex/device"
+      : "https://auth.openai.com/oauth/authorize?state=mock",
+    userCode: mode === "device-code" ? "DEMO-CODE1" : null,
+    startedAt: now.toISOString(),
+    expiresAt: new Date(now.getTime() + (mode === "device-code" ? 15 : 10) * 60_000).toISOString(),
+    message: mode === "device-code"
+      ? "设备码已就绪，正在等待服务器完成登录。"
+      : "授权页已就绪，正在等待浏览器完成登录。",
+  };
+  mockAuthLoginSessions.set(report.sessionId, { report, polls: 0 });
+  return report;
+}
 
 export async function listServerNodes(): Promise<ServerNodeReport> {
   if (!isTauriRuntime()) return createMockServerNodeReport();
@@ -173,6 +207,18 @@ export async function runServerNodeOperation<T = unknown>(
         },
       } as ServerNodeOperationReport<T>;
     }
+    if (scenario === "auth-network" && input.operation.kind === "check-profile-auth") {
+      return {
+        ...report,
+        ok: false,
+        exitCode: 1,
+        data: null,
+        error: {
+          code: "operation_failed",
+          message: "usage request failed: error sending request for url",
+        },
+      } as ServerNodeOperationReport<T>;
+    }
     return report as ServerNodeOperationReport<T>;
   }
   return invoke<ServerNodeOperationReport<T>>("run_server_node_operation_command", { input });
@@ -206,6 +252,74 @@ export async function syncServerProfile(
     };
   }
   return invoke<SyncServerProfileReport>("sync_server_profile_command", { input });
+}
+
+export async function startLocalProfileLogin(profileName: string): Promise<AuthLoginSessionReport> {
+  if (!isTauriRuntime()) {
+    return createMockAuthLoginSession("local-profile", null, profileName, "browser-oauth");
+  }
+  return invoke<AuthLoginSessionReport>("start_local_profile_login_command", {
+    input: { profileName },
+  });
+}
+
+export async function startServerProfileLogin(
+  nodeId: string,
+  profileName: string,
+): Promise<AuthLoginSessionReport> {
+  if (!isTauriRuntime()) {
+    return createMockAuthLoginSession("server-profile", nodeId, profileName, "device-code");
+  }
+  return invoke<AuthLoginSessionReport>("start_server_profile_login_command", {
+    input: { nodeId, profileName },
+  });
+}
+
+export async function readAuthLoginSession(sessionId: string): Promise<AuthLoginSessionReport> {
+  if (!isTauriRuntime()) {
+    const session = mockAuthLoginSessions.get(sessionId);
+    if (!session) throw new Error("authentication session was not found or has expired");
+    session.polls += 1;
+    if (session.polls >= 2 && session.report.status === "waiting") {
+      session.report = {
+        ...session.report,
+        status: "completed",
+        verificationUrl: null,
+        userCode: null,
+        message: "认证已完成。",
+      };
+    }
+    return session.report;
+  }
+  return invoke<AuthLoginSessionReport>("read_auth_login_session_command", {
+    input: { sessionId },
+  });
+}
+
+export async function cancelAuthLoginSession(sessionId: string): Promise<AuthLoginSessionReport> {
+  if (!isTauriRuntime()) {
+    const session = mockAuthLoginSessions.get(sessionId);
+    if (!session) throw new Error("authentication session was not found or has expired");
+    session.report = {
+      ...session.report,
+      status: "cancelled",
+      verificationUrl: null,
+      userCode: null,
+      message: "登录已取消。",
+    };
+    return session.report;
+  }
+  return invoke<AuthLoginSessionReport>("cancel_auth_login_session_command", {
+    input: { sessionId },
+  });
+}
+
+export async function openAuthLoginUrl(url: string): Promise<void> {
+  if (!isTauriRuntime()) {
+    window.open(url, "_blank", "noopener,noreferrer");
+    return;
+  }
+  return invoke<void>("open_auth_login_url_command", { input: { url } });
 }
 
 function isTauriRuntime(): boolean {
@@ -637,11 +751,34 @@ export async function deleteProfile(name: string, archiveData: boolean): Promise
   return invoke<ProfileActionReport>("delete_profile_command", { name, archiveData });
 }
 
+export async function archiveProfile(name: string): Promise<ProfileActionReport> {
+  if (!isTauriRuntime()) {
+    setMockProfileArchived(name, true);
+    return createMockActionReport("archive", name);
+  }
+  return invoke<ProfileActionReport>("archive_profile_command", { name });
+}
+
+export async function restoreArchivedProfile(name: string): Promise<ProfileActionReport> {
+  if (!isTauriRuntime()) {
+    setMockProfileArchived(name, false);
+    return createMockActionReport("restore", name);
+  }
+  return invoke<ProfileActionReport>("restore_archived_profile_command", { name });
+}
+
 export async function updateProfileMetadata(input: ProfileMetadataInput): Promise<ProfileActionReport> {
   if (!isTauriRuntime()) {
     return createMockActionReport("update", input.name);
   }
   return invoke<ProfileActionReport>("update_profile_metadata_command", { input });
+}
+
+export async function updateProfileModel(input: UpdateProfileModelInput): Promise<ProfileActionReport> {
+  if (!isTauriRuntime()) {
+    return createMockActionReport("model-update", input.profileName);
+  }
+  return invoke<ProfileActionReport>("update_profile_model_command", { input });
 }
 
 export async function resetProfile(input: ResetProfileInput): Promise<ProfileActionReport> {
@@ -707,34 +844,6 @@ export async function importProfileAuth(input: ImportAuthInput): Promise<Profile
     return createMockActionReport("importAuth", input.name);
   }
   return invoke<ProfileActionReport>("import_profile_auth_command", { input });
-}
-
-export async function repairProfileNetwork(name: string): Promise<CodexNetworkRepairReport> {
-  if (!isTauriRuntime()) {
-    return {
-      generatedAt: new Date().toISOString(),
-      profileName: name,
-      configPath: `~/.${name}/config.toml`,
-      configUpdated: true,
-      featureFlags: [
-        "responses_websockets",
-        "responses_websockets_v2",
-        "responses_websocket_response_processed",
-      ],
-      proxy: {
-        httpProxy: "http://127.0.0.1:7897",
-        httpsProxy: "http://127.0.0.1:7897",
-        allProxy: "socks5://127.0.0.1:7897",
-        wsProxy: "http://127.0.0.1:7897",
-        wssProxy: "http://127.0.0.1:7897",
-        noProxy: "localhost,127.0.0.1,::1,*.local",
-      },
-      launchEnvUpdated: true,
-      launchEnvError: null,
-      message: `repaired ${name}: enabled WebSocket flags and synced launch proxy`,
-    };
-  }
-  return invoke<CodexNetworkRepairReport>("repair_profile_network_command", { name });
 }
 
 export async function revealPath(path: string): Promise<void> {

@@ -36,6 +36,15 @@ const MODEL_ROUTE_PROXY_LOG_LIMIT: usize = 30;
 const CHATGPT_BASE_URL: &str = "https://chatgpt.com";
 const CHATGPT_USAGE_ENDPOINT: &str = "https://chatgpt.com/backend-api/wham/usage";
 const QUOTA_HTTP_TIMEOUT_SECONDS: u64 = 25;
+const CODEX_WRAPPER_PROXY_SCAN_MAX_BYTES: u64 = 128 * 1024;
+const PROXY_ENV_KEYS: &[&str] = &[
+    "HTTPS_PROXY",
+    "https_proxy",
+    "ALL_PROXY",
+    "all_proxy",
+    "HTTP_PROXY",
+    "http_proxy",
+];
 const PROFILE_SESSION_PREVIEW_LIMIT: usize = 1;
 const SESSION_INDEX_READ_CHUNK_SIZE: u64 = 16 * 1024;
 const CODEX_MAIN_EXECUTABLE_SUFFIXES: &[&str] = &[
@@ -60,11 +69,6 @@ const FEISHU_REMOTE_HTTP_TIMEOUT_MS: u64 = 700;
 const FEISHU_REMOTE_LOG_TAIL_LINES: usize = 120;
 const FEISHU_REMOTE_PROJECT_URL: &str = "https://github.com/kxn/codex-remote-feishu";
 const MODEL_ROUTE_PROVIDER_ID: &str = "rcodexmanager-route";
-const CODEX_WEBSOCKET_FEATURE_FLAGS: &[&str] = &[
-    "responses_websockets",
-    "responses_websockets_v2",
-    "responses_websocket_response_processed",
-];
 
 pub fn app_name() -> &'static str {
     "rCodexManager"
@@ -415,6 +419,26 @@ pub enum ProfileLauncherKind {
     Server,
 }
 
+#[derive(Debug, Clone, Copy, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "kebab-case")]
+pub enum ProfileAuthStatus {
+    Missing,
+    Valid,
+    RefreshRequired,
+    Expired,
+    ApiKey,
+    Unknown,
+    Invalid,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ProfileAuthState {
+    pub status: ProfileAuthStatus,
+    pub expires_at: Option<i64>,
+    pub refresh_available: bool,
+}
+
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ProfileInfo {
@@ -431,15 +455,17 @@ pub struct ProfileInfo {
     pub home_exists: bool,
     pub user_data_exists: bool,
     pub config_exists: bool,
-    pub websocket_features_enabled: bool,
     pub managed_by_app: bool,
     pub is_default: bool,
+    pub is_archived: bool,
+    pub archived_at: Option<String>,
     pub launcher_kind: ProfileLauncherKind,
     pub zshrc_line: usize,
     pub is_running: bool,
     pub running_pids: Vec<u32>,
     pub running_process_count: usize,
     pub account: Option<CodexAccountInfo>,
+    pub auth_state: ProfileAuthState,
     pub latest_session: Option<CodexSessionSummary>,
     pub recent_sessions: Vec<CodexSessionSummary>,
 }
@@ -504,20 +530,6 @@ pub struct ProxyEnvSettings {
     pub ws_proxy: Option<String>,
     pub wss_proxy: Option<String>,
     pub no_proxy: String,
-}
-
-#[derive(Debug, Clone, Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct CodexNetworkRepairReport {
-    pub generated_at: String,
-    pub profile_name: String,
-    pub config_path: String,
-    pub config_updated: bool,
-    pub feature_flags: Vec<String>,
-    pub proxy: Option<ProxyEnvSettings>,
-    pub launch_env_updated: bool,
-    pub launch_env_error: Option<String>,
-    pub message: String,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -704,7 +716,9 @@ pub struct ProfileReport {
     pub metadata_path: String,
     pub home_dir: String,
     pub profile_count: usize,
+    pub archived_count: usize,
     pub profiles: Vec<ProfileInfo>,
+    pub archived_profiles: Vec<ProfileInfo>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -968,6 +982,7 @@ struct ProfileMetadata {
     alias: Option<String>,
     category: Option<String>,
     note: Option<String>,
+    archived_at: Option<String>,
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
@@ -998,6 +1013,8 @@ struct CodexAuthMaterial {
     access_token: Option<String>,
     account_id: Option<String>,
     access_token_expires_at: Option<i64>,
+    has_refresh_token: bool,
+    has_api_key: bool,
 }
 
 #[derive(Debug, Clone)]
@@ -1130,6 +1147,7 @@ pub fn list_profiles(context: &ProfileContext) -> Result<ProfileReport, String> 
             .unwrap_or_else(|| default_user_data_dir(context, &function.name, launcher_kind));
         let config_path = codex_home.join("config.toml");
         let config = read_codex_config(&config_path);
+        let (account, auth_state) = read_profile_auth(&codex_home);
         let recent_sessions =
             read_recent_session_summaries(&codex_home, PROFILE_SESSION_PREVIEW_LIMIT);
         let latest_session = recent_sessions.first().cloned();
@@ -1143,6 +1161,7 @@ pub fn list_profiles(context: &ProfileContext) -> Result<ProfileReport, String> 
             .clone()
             .filter(|value| !value.trim().is_empty())
             .unwrap_or_else(|| derived_category(config.reasoning_effort.as_deref()));
+        let archived_at = metadata.archived_at.clone();
         let managed_by_app = managed_ranges
             .iter()
             .any(|(start, end)| function.start_line >= *start && function.end_line <= *end);
@@ -1172,22 +1191,26 @@ pub fn list_profiles(context: &ProfileContext) -> Result<ProfileReport, String> 
                 home_exists: codex_home.exists(),
                 user_data_exists: user_data_dir.exists(),
                 config_exists: config_path.exists(),
-                websocket_features_enabled: config.websocket_features_enabled,
                 managed_by_app,
                 is_default: false,
+                is_archived: archived_at.is_some(),
+                archived_at,
                 launcher_kind,
                 zshrc_line: function.start_line + 1,
                 is_running: !running_pids.is_empty(),
                 running_process_count: running_pids.len(),
                 running_pids,
-                account: read_codex_account(&codex_home),
+                account,
+                auth_state,
                 latest_session,
                 recent_sessions,
             },
         );
     }
 
-    let profiles: Vec<_> = profiles.into_values().collect();
+    let (archived_profiles, profiles): (Vec<_>, Vec<_>) = profiles
+        .into_values()
+        .partition(|profile| profile.is_archived);
 
     Ok(ProfileReport {
         generated_at: now_iso(),
@@ -1195,7 +1218,9 @@ pub fn list_profiles(context: &ProfileContext) -> Result<ProfileReport, String> 
         metadata_path: path_string(&metadata_path(context)),
         home_dir: path_string(&context.home_dir),
         profile_count: profiles.len(),
+        archived_count: archived_profiles.len(),
         profiles,
+        archived_profiles,
     })
 }
 
@@ -5257,6 +5282,49 @@ pub fn delete_profile(
     })
 }
 
+pub fn archive_profile(
+    context: &ProfileContext,
+    name: &str,
+) -> Result<ProfileActionReport, String> {
+    validate_profile_selector_name(name)?;
+    let profile = find_profile(context, name)?;
+    ensure_mutable_profile(&profile, "archive")?;
+    if profile.is_running {
+        return Err(format!(
+            "profile {name} is running; stop it before archiving"
+        ));
+    }
+
+    set_profile_archived_at(context, name, Some(now_iso()))?;
+    let archived = find_archived_profile(context, name)?;
+    Ok(ProfileActionReport {
+        generated_at: now_iso(),
+        action: "archive".to_string(),
+        zshrc_path: path_string(&context.zshrc_path),
+        profile: Some(archived),
+        backups: Vec::new(),
+        message: format!("archived {name}; launcher and profile data were kept"),
+    })
+}
+
+pub fn restore_archived_profile(
+    context: &ProfileContext,
+    name: &str,
+) -> Result<ProfileActionReport, String> {
+    validate_profile_selector_name(name)?;
+    let archived = find_archived_profile(context, name)?;
+    set_profile_archived_at(context, name, None)?;
+    let profile = find_profile(context, name)?;
+    Ok(ProfileActionReport {
+        generated_at: now_iso(),
+        action: "restore".to_string(),
+        zshrc_path: path_string(&context.zshrc_path),
+        profile: Some(profile),
+        backups: Vec::new(),
+        message: format!("restored {} to the active profile list", archived.name),
+    })
+}
+
 pub fn update_profile_metadata(
     context: &ProfileContext,
     input: ProfileMetadataInput,
@@ -5363,7 +5431,6 @@ pub fn update_profile_model(
         "model_reasoning_effort".to_string(),
         toml::Value::String(reasoning_effort.clone()),
     );
-    ensure_websocket_features_in_table(&mut table)?;
     let config_text =
         toml::to_string_pretty(&toml::Value::Table(table)).map_err(|error| error.to_string())?;
     write_text_atomic(&config_path, &config_text)?;
@@ -5565,7 +5632,8 @@ pub fn read_profile_quota(
             .as_ref()
             .and_then(|account| account.account_id.as_deref())
     });
-    let usage = fetch_usage_json(access_token, account_id)?;
+    let quota_proxy = resolve_quota_proxy_url(context);
+    let usage = fetch_usage_json(access_token, account_id, quota_proxy.as_deref())?;
     let windows = parse_quota_windows(&usage);
     if windows.is_empty() {
         return Err("usage endpoint returned no quota windows".to_string());
@@ -5579,6 +5647,44 @@ pub fn read_profile_quota(
         endpoint: CHATGPT_USAGE_ENDPOINT.to_string(),
         windows,
     })
+}
+
+pub fn profile_login_command(
+    context: &ProfileContext,
+    name: &str,
+    device_auth: bool,
+) -> Result<Command, String> {
+    validate_profile_selector_name(name)?;
+    let profile = find_profile(context, name)?;
+    let codex = resolve_server_command_binary(context, "codex").ok_or_else(|| {
+        "Codex CLI was not found in the current PATH or user bin directory".to_string()
+    })?;
+    let mut command = Command::new(codex);
+    command
+        .arg("login")
+        .args(["-c", "cli_auth_credentials_store=\"file\""])
+        .env("CODEX_HOME", &profile.codex_home);
+    if device_auth {
+        command.arg("--device-auth");
+    } else {
+        command.env("BROWSER", "/usr/bin/false");
+    }
+    Ok(command)
+}
+
+pub fn run_profile_login_foreground(
+    context: &ProfileContext,
+    name: &str,
+    device_auth: bool,
+) -> Result<(), String> {
+    let status = profile_login_command(context, name, device_auth)?
+        .status()
+        .map_err(|error| format!("failed to run Codex login: {error}"))?;
+    if status.success() {
+        Ok(())
+    } else {
+        Err(format!("Codex login exited with {status}"))
+    }
 }
 
 pub fn import_profile_auth(
@@ -5653,75 +5759,6 @@ fn read_profile_auth_payload(
         )
     })?;
     normalize_import_auth_json(&contents)
-}
-
-pub fn repair_profile_network(
-    context: &ProfileContext,
-    name: &str,
-    update_launch_env: bool,
-) -> Result<CodexNetworkRepairReport, String> {
-    validate_profile_selector_name(name)?;
-    let profile = find_profile(context, name)?;
-    let codex_home = PathBuf::from(&profile.codex_home);
-    fs::create_dir_all(&codex_home).map_err(|error| error.to_string())?;
-
-    let config_path = codex_home.join("config.toml");
-    let config_updated = ensure_codex_websocket_features(
-        &config_path,
-        profile.model.as_deref().unwrap_or(DEFAULT_MODEL),
-        profile
-            .reasoning_effort
-            .as_deref()
-            .unwrap_or(DEFAULT_REASONING_EFFORT),
-    )?;
-
-    let proxy = detect_system_proxy_env().ok();
-    let mut launch_env_updated = false;
-    let mut launch_env_error = None;
-    if update_launch_env {
-        if let Some(proxy) = proxy.as_ref() {
-            match apply_launchctl_proxy_env(proxy) {
-                Ok(()) => launch_env_updated = true,
-                Err(error) => launch_env_error = Some(error),
-            }
-        }
-    }
-
-    let message = match (config_updated, proxy.is_some(), launch_env_updated) {
-        (true, true, true) => format!(
-            "repaired {name}: enabled WebSocket flags and synced launch proxy; restart Codex to use the new environment"
-        ),
-        (false, true, true) => format!(
-            "{name} already had WebSocket flags; synced launch proxy, restart Codex to use it"
-        ),
-        (true, true, false) => {
-            format!("enabled WebSocket flags for {name}; proxy was detected but launch env was not updated")
-        }
-        (false, true, false) => {
-            format!("{name} already had WebSocket flags; proxy was detected but launch env was not updated")
-        }
-        (true, false, _) => format!(
-            "enabled WebSocket flags for {name}; no macOS system proxy was detected"
-        ),
-        (false, false, _) => format!(
-            "{name} already had WebSocket flags; no macOS system proxy was detected"
-        ),
-    };
-
-    Ok(CodexNetworkRepairReport {
-        generated_at: now_iso(),
-        profile_name: profile.name,
-        config_path: path_string(&config_path),
-        config_updated,
-        feature_flags: CODEX_WEBSOCKET_FEATURE_FLAGS
-            .iter()
-            .map(|flag| (*flag).to_string())
-            .collect(),
-        proxy,
-        launch_env_updated,
-        launch_env_error,
-        message,
-    })
 }
 
 pub fn reveal_in_finder(path: PathBuf) -> Result<(), String> {
@@ -5872,6 +5909,7 @@ fn default_profile_info(
     }
 
     let config = read_codex_config(&config_path);
+    let (account, auth_state) = read_profile_auth(&codex_home);
     let metadata = metadata_store
         .profiles
         .get("codex")
@@ -5897,15 +5935,17 @@ fn default_profile_info(
         home_exists: codex_home.exists(),
         user_data_exists: user_data_dir.exists(),
         config_exists: config_path.exists(),
-        websocket_features_enabled: config.websocket_features_enabled,
         managed_by_app: false,
         is_default: true,
+        is_archived: false,
+        archived_at: None,
         launcher_kind: default_profile_launcher_kind(),
         zshrc_line: 0,
         is_running: !running_pids.is_empty(),
         running_process_count: running_pids.len(),
         running_pids,
-        account: read_codex_account(&codex_home),
+        account,
+        auth_state,
         latest_session,
         recent_sessions,
     })
@@ -5974,6 +6014,14 @@ fn find_profile(context: &ProfileContext, name: &str) -> Result<ProfileInfo, Str
         .into_iter()
         .find(|profile| profile.name == name)
         .ok_or_else(|| format!("profile {name} was not found"))
+}
+
+fn find_archived_profile(context: &ProfileContext, name: &str) -> Result<ProfileInfo, String> {
+    list_profiles(context)?
+        .archived_profiles
+        .into_iter()
+        .find(|profile| profile.name == name)
+        .ok_or_else(|| format!("archived profile {name} was not found"))
 }
 
 #[derive(Debug, Clone)]
@@ -6116,6 +6164,7 @@ fn server_profile_tmux_session_name(profile_name: &str) -> String {
 
 fn resolve_server_command_binary(context: &ProfileContext, command: &str) -> Option<PathBuf> {
     let mut candidates = vec![
+        context.home_dir.join("bin").join(command),
         context.home_dir.join(".local/bin").join(command),
         PathBuf::from("/usr/local/bin").join(command),
         PathBuf::from("/usr/bin").join(command),
@@ -7122,8 +7171,62 @@ fn truncate_chars(value: &str, max_chars: usize) -> String {
     format!("{}...", value.chars().take(keep).collect::<String>())
 }
 
-fn read_codex_account(codex_home: &Path) -> Option<CodexAccountInfo> {
-    read_codex_auth_material(codex_home)?.account
+fn read_profile_auth(codex_home: &Path) -> (Option<CodexAccountInfo>, ProfileAuthState) {
+    let auth_path = codex_home.join("auth.json");
+    if !auth_path.exists() {
+        return (None, missing_profile_auth_state());
+    }
+
+    let Some(material) = read_codex_auth_material(codex_home) else {
+        return (
+            None,
+            ProfileAuthState {
+                status: ProfileAuthStatus::Invalid,
+                expires_at: None,
+                refresh_available: false,
+            },
+        );
+    };
+    let state = profile_auth_state_from_material(&material, Utc::now().timestamp());
+    (material.account.clone(), state)
+}
+
+fn missing_profile_auth_state() -> ProfileAuthState {
+    ProfileAuthState {
+        status: ProfileAuthStatus::Missing,
+        expires_at: None,
+        refresh_available: false,
+    }
+}
+
+fn profile_auth_state_from_material(
+    material: &CodexAuthMaterial,
+    now_timestamp: i64,
+) -> ProfileAuthState {
+    let status = if material.has_api_key {
+        ProfileAuthStatus::ApiKey
+    } else if material.access_token.is_none() {
+        ProfileAuthStatus::Invalid
+    } else if material
+        .access_token_expires_at
+        .is_some_and(|expires_at| expires_at <= now_timestamp)
+    {
+        if material.has_refresh_token {
+            ProfileAuthStatus::RefreshRequired
+        } else {
+            ProfileAuthStatus::Expired
+        }
+    } else if material.access_token_expires_at.is_some() {
+        ProfileAuthStatus::Valid
+    } else {
+        ProfileAuthStatus::Unknown
+    };
+
+    ProfileAuthState {
+        status,
+        expires_at: material.access_token_expires_at,
+        refresh_available: material.has_refresh_token,
+    }
 }
 
 fn read_codex_auth_material(codex_home: &Path) -> Option<CodexAuthMaterial> {
@@ -7174,6 +7277,12 @@ fn read_codex_auth_material_from_value(root: &Value) -> Option<CodexAuthMaterial
         .and_then(Value::as_str)
         .and_then(decode_jwt_payload)
         .and_then(|value| value.get("exp").and_then(Value::as_i64));
+    let has_refresh_token = string_at(tokens, &["refresh_token"])
+        .or_else(|| string_at(root, &["refresh_token"]))
+        .is_some();
+    let has_api_key = string_at(root, &["OPENAI_API_KEY"])
+        .or_else(|| string_at(root, &["api_key"]))
+        .is_some();
 
     let account = if auth_mode.is_none()
         && account_id.is_none()
@@ -7197,7 +7306,7 @@ fn read_codex_auth_material_from_value(root: &Value) -> Option<CodexAuthMaterial
         })
     };
 
-    if account.is_none() && access_token.is_none() {
+    if account.is_none() && access_token.is_none() && !has_api_key {
         return None;
     }
 
@@ -7206,17 +7315,29 @@ fn read_codex_auth_material_from_value(root: &Value) -> Option<CodexAuthMaterial
         access_token,
         account_id,
         access_token_expires_at,
+        has_refresh_token,
+        has_api_key,
     })
 }
 
-fn fetch_usage_json(access_token: &str, account_id: Option<&str>) -> Result<Value, String> {
-    let client = reqwest::blocking::Client::builder()
+fn fetch_usage_json(
+    access_token: &str,
+    account_id: Option<&str>,
+    proxy_url: Option<&str>,
+) -> Result<Value, String> {
+    let mut client_builder = reqwest::blocking::Client::builder()
         .timeout(Duration::from_secs(QUOTA_HTTP_TIMEOUT_SECONDS))
         .user_agent(format!(
             "rCodexManager/{} ({})",
             env!("CARGO_PKG_VERSION"),
             CHATGPT_BASE_URL
-        ))
+        ));
+    if let Some(proxy_url) = proxy_url {
+        let proxy = reqwest::Proxy::all(proxy_url)
+            .map_err(|_| "configured server proxy is invalid".to_string())?;
+        client_builder = client_builder.proxy(proxy);
+    }
+    let client = client_builder
         .build()
         .map_err(|error| format!("failed to build usage client: {error}"))?;
 
@@ -7232,7 +7353,7 @@ fn fetch_usage_json(access_token: &str, account_id: Option<&str>) -> Result<Valu
 
     let response = request
         .send()
-        .map_err(|error| format!("usage request failed: {error}"))?;
+        .map_err(|error| format_usage_transport_error(proxy_url.is_some(), &error.to_string()))?;
     let status = response.status();
     let content_type = response
         .headers()
@@ -7254,6 +7375,119 @@ fn fetch_usage_json(access_token: &str, account_id: Option<&str>) -> Result<Valu
     response
         .json::<Value>()
         .map_err(|error| format!("failed to parse usage response: {error}"))
+}
+
+fn resolve_quota_proxy_url(context: &ProfileContext) -> Option<String> {
+    proxy_url_from_environment().or_else(|| proxy_url_from_codex_wrapper(context))
+}
+
+fn proxy_url_from_environment() -> Option<String> {
+    PROXY_ENV_KEYS.iter().find_map(|key| {
+        std::env::var(key)
+            .ok()
+            .and_then(|value| normalize_http_proxy_url(&value))
+    })
+}
+
+fn proxy_url_from_codex_wrapper(context: &ProfileContext) -> Option<String> {
+    let mut candidates = vec![
+        context.home_dir.join("bin/codex"),
+        context.home_dir.join(".local/bin/codex"),
+    ];
+    if let Some(resolved) = resolve_server_command_binary(context, "codex") {
+        if !candidates.contains(&resolved) {
+            candidates.push(resolved);
+        }
+    }
+
+    candidates.into_iter().find_map(|path| {
+        let metadata = fs::metadata(&path).ok()?;
+        if !metadata.is_file()
+            || metadata.len() == 0
+            || metadata.len() > CODEX_WRAPPER_PROXY_SCAN_MAX_BYTES
+        {
+            return None;
+        }
+        let contents = fs::read_to_string(path).ok()?;
+        proxy_url_from_shell_script(&contents)
+    })
+}
+
+fn proxy_url_from_shell_script(contents: &str) -> Option<String> {
+    let mut assignments = BTreeMap::new();
+    for line in contents.lines() {
+        let trimmed = line.trim();
+        if trimmed.is_empty() || trimmed.starts_with('#') {
+            continue;
+        }
+        let assignment = trimmed.strip_prefix("export ").unwrap_or(trimmed).trim();
+        let Some((key, raw_value)) = assignment.split_once('=') else {
+            continue;
+        };
+        let key = key.trim();
+        if !PROXY_ENV_KEYS.contains(&key) {
+            continue;
+        }
+        if let Some(value) = parse_literal_shell_value(raw_value) {
+            assignments.insert(key.to_string(), value);
+        }
+    }
+
+    PROXY_ENV_KEYS.iter().find_map(|key| {
+        assignments
+            .get(*key)
+            .and_then(|value| normalize_http_proxy_url(value))
+    })
+}
+
+fn parse_literal_shell_value(raw_value: &str) -> Option<String> {
+    let value = raw_value.trim();
+    if value.is_empty() {
+        return None;
+    }
+
+    let parsed = if let Some(inner) = value.strip_prefix('\'') {
+        let end = inner.find('\'')?;
+        if !inner[end + 1..].trim().is_empty() {
+            return None;
+        }
+        inner[..end].to_string()
+    } else if let Some(inner) = value.strip_prefix('"') {
+        let end = inner.rfind('"')?;
+        if !inner[end + 1..].trim().is_empty() {
+            return None;
+        }
+        let inner = &inner[..end];
+        if inner.contains('$') || inner.contains('`') {
+            return None;
+        }
+        inner.replace("\\\"", "\"").replace("\\\\", "\\")
+    } else {
+        let literal = value.split_whitespace().next()?;
+        if literal.contains('$') || literal.contains('`') {
+            return None;
+        }
+        literal.to_string()
+    };
+
+    (!parsed.trim().is_empty()).then_some(parsed)
+}
+
+fn normalize_http_proxy_url(value: &str) -> Option<String> {
+    let trimmed = value.trim();
+    let parsed = reqwest::Url::parse(trimmed).ok()?;
+    if !matches!(parsed.scheme(), "http" | "https") || parsed.host_str().is_none() {
+        return None;
+    }
+    Some(trimmed.to_string())
+}
+
+fn format_usage_transport_error(using_proxy: bool, detail: &str) -> String {
+    if using_proxy {
+        "usage request could not reach ChatGPT through the configured server proxy; check the proxy service and retry".to_string()
+    } else {
+        format!("usage request failed: {detail}")
+    }
 }
 
 fn resolve_import_source_path(
@@ -8675,12 +8909,35 @@ fn upsert_metadata(context: &ProfileContext, input: ProfileMetadataInput) -> Res
         alias: merge_metadata_field(current.alias, input.alias),
         category: merge_metadata_field(current.category, input.category),
         note: merge_metadata_field(current.note, input.note),
+        archived_at: current.archived_at,
     };
 
-    if next.alias.is_some() || next.category.is_some() || next.note.is_some() {
+    if next.alias.is_some()
+        || next.category.is_some()
+        || next.note.is_some()
+        || next.archived_at.is_some()
+    {
         store.profiles.insert(input.name, next);
     }
 
+    write_metadata_store(context, &store)
+}
+
+fn set_profile_archived_at(
+    context: &ProfileContext,
+    name: &str,
+    archived_at: Option<String>,
+) -> Result<(), String> {
+    let mut store = read_metadata_store(context)?;
+    let metadata = store.profiles.entry(name.to_string()).or_default();
+    metadata.archived_at = archived_at;
+    if metadata.alias.is_none()
+        && metadata.category.is_none()
+        && metadata.note.is_none()
+        && metadata.archived_at.is_none()
+    {
+        store.profiles.remove(name);
+    }
     write_metadata_store(context, &store)
 }
 
@@ -8927,7 +9184,7 @@ fn write_profile_config(
         fs::create_dir_all(parent).map_err(|error| error.to_string())?;
     }
     let config = format!(
-        "model = \"{}\"\nmodel_reasoning_effort = \"{}\"\n\n[features]\nresponses_websockets = true\nresponses_websockets_v2 = true\nresponses_websocket_response_processed = true\n",
+        "model = \"{}\"\nmodel_reasoning_effort = \"{}\"\n",
         escape_toml_string(model),
         escape_toml_string(reasoning_effort),
     );
@@ -8955,13 +9212,6 @@ fn write_copied_profile_config(
             ("model", model),
             ("model_reasoning_effort", reasoning_effort),
         ],
-    );
-    let contents = upsert_toml_bool_section(
-        &contents,
-        "features",
-        CODEX_WEBSOCKET_FEATURE_FLAGS
-            .iter()
-            .map(|flag| (*flag, true)),
     );
     fs::write(target_config_path, contents).map_err(|error| {
         format!(
@@ -9563,7 +9813,6 @@ fn build_model_route_config_text(
         MODEL_ROUTE_PROVIDER_ID.to_string(),
         toml::Value::Table(provider_table),
     );
-    ensure_websocket_features_in_table(&mut table)?;
 
     toml::to_string_pretty(&toml::Value::Table(table)).map_err(|error| error.to_string())
 }
@@ -9612,8 +9861,6 @@ fn restore_model_route_config_text(
             ),
         );
     }
-    ensure_websocket_features_in_table(&mut table)?;
-
     toml::to_string_pretty(&toml::Value::Table(table)).map_err(|error| error.to_string())
 }
 
@@ -10805,14 +11052,6 @@ fn ensure_table<'a>(
         .ok_or_else(|| format!("{key} must be a TOML table"))
 }
 
-fn ensure_websocket_features_in_table(table: &mut toml::value::Table) -> Result<(), String> {
-    let features = ensure_table(table, "features")?;
-    for flag in CODEX_WEBSOCKET_FEATURE_FLAGS {
-        features.insert((*flag).to_string(), toml::Value::Boolean(true));
-    }
-    Ok(())
-}
-
 fn is_chat_wire_api(value: &str) -> bool {
     matches!(
         value.trim().to_ascii_lowercase().as_str(),
@@ -10832,7 +11071,6 @@ struct CodexConfig {
     model: Option<String>,
     model_provider: Option<String>,
     reasoning_effort: Option<String>,
-    websocket_features_enabled: bool,
 }
 
 fn read_codex_config(config_path: &Path) -> CodexConfig {
@@ -10854,9 +11092,6 @@ fn read_codex_config(config_path: &Path) -> CodexConfig {
         model: read_string("model"),
         model_provider: read_string("model_provider"),
         reasoning_effort: read_string("model_reasoning_effort"),
-        websocket_features_enabled: CODEX_WEBSOCKET_FEATURE_FLAGS
-            .iter()
-            .all(|flag| read_bool_in_section(&contents, "features", flag) == Some(true)),
     }
 }
 
@@ -10895,59 +11130,6 @@ fn read_top_level_string(contents: &str, key: &str) -> Option<String> {
     })
 }
 
-fn read_bool_in_section(contents: &str, section: &str, key: &str) -> Option<bool> {
-    let lines: Vec<&str> = contents.lines().collect();
-    let (start, end) = find_toml_section_range(&lines, section)?;
-    let prefix = format!("{key} =");
-    lines[start..end].iter().find_map(|line| {
-        let trimmed = line.trim();
-        if !trimmed.starts_with(&prefix) {
-            return None;
-        }
-        match trimmed[prefix.len()..].trim() {
-            "true" => Some(true),
-            "false" => Some(false),
-            _ => None,
-        }
-    })
-}
-
-fn ensure_codex_websocket_features(
-    config_path: &Path,
-    fallback_model: &str,
-    fallback_reasoning_effort: &str,
-) -> Result<bool, String> {
-    if !config_path.exists() {
-        write_profile_config(config_path, fallback_model, fallback_reasoning_effort)?;
-        return Ok(true);
-    }
-
-    let previous = fs::read_to_string(config_path).map_err(|error| {
-        format!(
-            "failed to read config {}: {error}",
-            path_string(config_path)
-        )
-    })?;
-    let next = upsert_toml_bool_section(
-        &previous,
-        "features",
-        CODEX_WEBSOCKET_FEATURE_FLAGS
-            .iter()
-            .map(|flag| (*flag, true)),
-    );
-    if next == previous {
-        return Ok(false);
-    }
-
-    fs::write(config_path, next).map_err(|error| {
-        format!(
-            "failed to write config {}: {error}",
-            path_string(config_path)
-        )
-    })?;
-    Ok(true)
-}
-
 fn upsert_toml_top_level_strings<'a>(
     contents: &str,
     pairs: impl IntoIterator<Item = (&'a str, &'a str)>,
@@ -10980,66 +11162,6 @@ fn upsert_toml_top_level_strings<'a>(
     } else {
         joined
     }
-}
-
-fn upsert_toml_bool_section<'a>(
-    contents: &str,
-    section: &str,
-    pairs: impl IntoIterator<Item = (&'a str, bool)>,
-) -> String {
-    let pairs: Vec<(&str, bool)> = pairs.into_iter().collect();
-    let mut lines: Vec<String> = contents.lines().map(ToString::to_string).collect();
-    let had_trailing_newline = contents.ends_with('\n');
-    let borrowed: Vec<&str> = lines.iter().map(String::as_str).collect();
-
-    let Some((start, end)) = find_toml_section_range(&borrowed, section) else {
-        if !lines.is_empty() && !lines.last().is_some_and(|line| line.trim().is_empty()) {
-            lines.push(String::new());
-        }
-        lines.push(format!("[{section}]"));
-        for (key, value) in pairs {
-            lines.push(format!("{key} = {value}"));
-        }
-        return with_trailing_newline(lines.join("\n"));
-    };
-
-    let mut insert_at = end;
-    for (key, value) in pairs {
-        let prefix = format!("{key} =");
-        let replacement = format!("{key} = {value}");
-        if let Some(index) =
-            (start..end).find(|index| lines[*index].trim_start().starts_with(&prefix))
-        {
-            lines[index] = replacement;
-        } else {
-            lines.insert(insert_at, replacement);
-            insert_at += 1;
-        }
-    }
-
-    let joined = lines.join("\n");
-    if had_trailing_newline {
-        with_trailing_newline(joined)
-    } else {
-        joined
-    }
-}
-
-fn find_toml_section_range(lines: &[&str], section: &str) -> Option<(usize, usize)> {
-    let header = format!("[{section}]");
-    let start = lines
-        .iter()
-        .position(|line| line.trim() == header)?
-        .checked_add(1)?;
-    let end = lines[start..]
-        .iter()
-        .position(|line| {
-            let trimmed = line.trim();
-            trimmed.starts_with('[') && trimmed.ends_with(']')
-        })
-        .map(|offset| start + offset)
-        .unwrap_or(lines.len());
-    Some((start, end))
 }
 
 fn detect_system_proxy_env() -> Result<ProxyEnvSettings, String> {
@@ -11115,19 +11237,6 @@ fn apply_child_proxy_env(command: &mut Command, proxy: &ProxyEnvSettings) {
     for (key, value) in proxy_env_pairs(proxy) {
         command.env(key, &value);
     }
-}
-
-fn apply_launchctl_proxy_env(proxy: &ProxyEnvSettings) -> Result<(), String> {
-    for (key, value) in proxy_env_pairs(proxy) {
-        let status = Command::new("launchctl")
-            .args(["setenv", key, &value])
-            .status()
-            .map_err(|error| format!("failed to run launchctl setenv {key}: {error}"))?;
-        if !status.success() {
-            return Err(format!("launchctl setenv {key} exited with {status}"));
-        }
-    }
-    Ok(())
 }
 
 fn proxy_env_pairs(proxy: &ProxyEnvSettings) -> Vec<(&'static str, String)> {
@@ -11243,17 +11352,48 @@ mod tests {
         clear_model_route_proxy_diagnostic, clear_model_route_proxy_logs,
         command_has_user_data_dir, feishu_remote_paths, is_codex_main_process,
         matching_profile_pids, model_route_proxy_check_result, model_route_responses_endpoint,
-        parse_codex_home_from_environ, parse_node_major_version, read_model_route_proxy_status,
+        parse_codex_home_from_environ, parse_node_major_version, proxy_url_from_codex_wrapper,
+        proxy_url_from_shell_script, read_model_route_proxy_status,
         read_recent_session_index_summaries, read_session_file_details,
         record_model_route_proxy_diagnostic, responses_to_chat_completions_minimal,
         responses_to_chat_completions_with_context, sanitize_external_command_output,
         server_profile_launch_command, start_model_route_proxy, stop_model_route_proxy,
-        terminate_wechat_bridge_pids, wechat_runtime_path_entries, ModelRouteStreamState,
-        ModelRouteToolContext, ProfileContext, RunningCodexProcess, MODEL_ROUTE_PROXY_PORT,
-        SESSION_DETAIL_HEAD_BYTES, SESSION_DETAIL_TAIL_BYTES,
+        terminate_wechat_bridge_pids, wechat_runtime_path_entries, CodexAuthMaterial,
+        ModelRouteStreamState, ModelRouteToolContext, ProfileAuthStatus, ProfileContext,
+        RunningCodexProcess, MODEL_ROUTE_PROXY_PORT, SESSION_DETAIL_HEAD_BYTES,
+        SESSION_DETAIL_TAIL_BYTES,
     };
 
     static MODEL_ROUTE_PROXY_TEST_LOCK: Mutex<()> = Mutex::new(());
+
+    #[test]
+    fn profile_auth_state_distinguishes_expired_and_refreshable_tokens() {
+        let valid = CodexAuthMaterial {
+            account: None,
+            access_token: Some("token".to_string()),
+            account_id: None,
+            access_token_expires_at: Some(2_000),
+            has_refresh_token: true,
+            has_api_key: false,
+        };
+        assert_eq!(
+            super::profile_auth_state_from_material(&valid, 1_000).status,
+            ProfileAuthStatus::Valid
+        );
+
+        let mut refreshable = valid.clone();
+        refreshable.access_token_expires_at = Some(900);
+        assert_eq!(
+            super::profile_auth_state_from_material(&refreshable, 1_000).status,
+            ProfileAuthStatus::RefreshRequired
+        );
+
+        refreshable.has_refresh_token = false;
+        assert_eq!(
+            super::profile_auth_state_from_material(&refreshable, 1_000).status,
+            ProfileAuthStatus::Expired
+        );
+    }
 
     #[test]
     fn feishu_remote_paths_are_isolated_from_external_default_install() {
@@ -11351,6 +11491,53 @@ mod tests {
         );
         assert!(command.starts_with("exec env CODEX_HOME='/home/demo/codex profile'"));
         assert!(command.ends_with("'/usr/local/bin/codex'"));
+    }
+
+    #[test]
+    fn codex_wrapper_proxy_parser_prefers_https_and_ignores_dynamic_shell_values() {
+        let script = r#"#!/bin/sh
+export HTTP_PROXY='http://127.0.0.1:7891'
+export HTTPS_PROXY="http://proxy-user:proxy-password@127.0.0.1:7890"
+export ALL_PROXY="$DYNAMIC_PROXY"
+exec /usr/local/bin/codex "$@"
+"#;
+
+        assert_eq!(
+            proxy_url_from_shell_script(script).as_deref(),
+            Some("http://proxy-user:proxy-password@127.0.0.1:7890")
+        );
+    }
+
+    #[test]
+    fn quota_proxy_discovers_the_user_codex_wrapper() {
+        let temp = tempfile::tempdir().unwrap();
+        let bin_dir = temp.path().join("bin");
+        std::fs::create_dir_all(&bin_dir).unwrap();
+        std::fs::write(
+            bin_dir.join("codex"),
+            "#!/bin/sh\nexport HTTPS_PROXY='http://127.0.0.1:7890'\n",
+        )
+        .unwrap();
+        let context = ProfileContext {
+            home_dir: temp.path().to_path_buf(),
+            zshrc_path: temp.path().join(".zshrc"),
+        };
+
+        assert_eq!(
+            proxy_url_from_codex_wrapper(&context).as_deref(),
+            Some("http://127.0.0.1:7890")
+        );
+    }
+
+    #[test]
+    fn proxied_usage_transport_errors_do_not_expose_proxy_details() {
+        let detail = "proxy authentication failed for proxy-user:proxy-password@127.0.0.1";
+        let message = super::format_usage_transport_error(true, detail);
+
+        assert!(message.contains("configured server proxy"));
+        assert!(!message.contains("proxy-user"));
+        assert!(!message.contains("proxy-password"));
+        assert!(!message.contains("127.0.0.1"));
     }
 
     #[test]

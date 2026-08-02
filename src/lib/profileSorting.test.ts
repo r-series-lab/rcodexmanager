@@ -34,7 +34,6 @@ function profile(
     homeExists: true,
     userDataExists: true,
     configExists: true,
-    websocketFeaturesEnabled: true,
     managedByApp: true,
     isDefault: options.default ?? false,
     launcherKind: "desktop",

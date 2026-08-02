@@ -34,6 +34,7 @@ import type {
   ProfileSessionReport,
   ReadProfileSessionDetailInput,
 } from "../../lib/types";
+import { useI18n } from "../../i18n";
 import "../manager-dialogs.css";
 
 type SessionSourceProfile = Pick<ProfileInfo, "name" | "alias" | "category" | "isDefault">;
@@ -47,11 +48,11 @@ function profileLabel(profile: SessionSourceProfile): string {
   return profile.alias?.trim() || profile.name;
 }
 
-function formatTime(value: string | null | undefined): string {
-  if (!value) return "时间未知";
+function formatTime(value: string | null | undefined, locale: string, unknownLabel: string): string {
+  if (!value) return unknownLabel;
   const date = new Date(value);
   if (Number.isNaN(date.getTime())) return value;
-  return new Intl.DateTimeFormat("zh-CN", {
+  return new Intl.DateTimeFormat(locale, {
     month: "2-digit",
     day: "2-digit",
     hour: "2-digit",
@@ -112,6 +113,7 @@ export function SessionCenterDialog({
   onCopySummary: (item: SessionCenterItem) => void;
   onCopyReference: (item: SessionCenterItem) => void;
 }) {
+  const { language, t } = useI18n();
   const [selectedKey, setSelectedKey] = useState("");
   const [tab, setTab] = useState("summary");
   const [detailByKey, setDetailByKey] = useState<Record<string, CodexSessionSummary>>({});
@@ -165,7 +167,7 @@ export function SessionCenterDialog({
     if (selectedItemKey) void loadSelectedDetail();
   }, [open, selectedItemKey]);
 
-  const lastRefresh = report?.generatedAt ? formatTime(report.generatedAt) : "尚未刷新";
+  const lastRefresh = report?.generatedAt ? formatTime(report.generatedAt, language, t("时间未知")) : t("尚未刷新");
   const detailLoading = Boolean(selectedItemKey && detailLoadingKey === selectedItemKey);
   const pageStart = report ? report.offset + 1 : (page - 1) * pageSize + 1;
   const pageEnd = report ? report.offset + report.sessions.length : pageStart + items.length - 1;
@@ -195,12 +197,12 @@ export function SessionCenterDialog({
                 <Stack direction="row" spacing={1} sx={{ alignItems: "flex-start" }}>
                   <TerminalRoundedIcon className="feature-list-leading-icon" />
                   <Box sx={{ minWidth: 0, flex: 1 }}>
-                    <Typography className="feature-list-title">{item.session.title || "未命名会话"}</Typography>
+                    <Typography className="feature-list-title">{item.session.title || t("未命名会话")}</Typography>
                     <Typography className="feature-list-meta">
-                      {profileLabel(item.profile)} · {formatTime(item.session.updatedAt)}
+                      {profileLabel(item.profile)} · {formatTime(item.session.updatedAt, language, t("时间未知"))}
                     </Typography>
                     <Typography className="feature-list-preview">
-                      {item.session.summary || "暂无摘要"}
+                      {item.session.summary || t("暂无摘要")}
                     </Typography>
                   </Box>
                 </Stack>
@@ -216,9 +218,9 @@ export function SessionCenterDialog({
     <Box className="feature-detail">
       <Box className="feature-detail-header">
         <Box sx={{ minWidth: 0 }}>
-          <Typography className="feature-detail-title">{detail.title || "未命名会话"}</Typography>
+          <Typography className="feature-detail-title">{detail.title || t("未命名会话")}</Typography>
           <Typography className="feature-detail-subtitle">
-            {profileLabel(selectedItem.profile)} · 更新于 {formatTime(detail.updatedAt)}
+            {profileLabel(selectedItem.profile)} · {t("更新于 {time}", { time: formatTime(detail.updatedAt, language, t("时间未知")) })}
           </Typography>
         </Box>
         <StatusBadge label={selectedItem.profile.category || "未分类"} />
@@ -235,14 +237,14 @@ export function SessionCenterDialog({
         ) : detailError ? (
           <ErrorState message={detailError} onRetry={() => void loadSelectedDetail(true)} />
         ) : tab === "summary" ? (
-          <Stack spacing={2}>
+          <Stack spacing={1.25}>
             <section className="feature-section">
-              <Typography className="feature-section-label">会话摘要</Typography>
-              <Typography className="feature-section-copy">{detail.summary || "这条会话还没有可用摘要。"}</Typography>
+              <Typography className="feature-section-label">{t("会话摘要")}</Typography>
+              <Typography className="feature-section-copy">{detail.summary || t("这条会话还没有可用摘要。")}</Typography>
             </section>
           </Stack>
         ) : (
-          <Stack spacing={1.25}>
+          <Stack spacing={1}>
             <SourceRow label="Profile" value={selectedItem.profile.name} />
             <SourceRow label="分类" value={selectedItem.profile.category || "未分类"} />
             <SourceRow label="会话 ID" value={detail.id} mono />
@@ -261,7 +263,7 @@ export function SessionCenterDialog({
     <ManagerDialogShell
       open={open}
       title="会话中心"
-      subtitle={`${report?.sessionCount ?? 0} 条当前结果 · ${lastRefresh}`}
+      subtitle={t("{count} 条当前结果 · {time}", { count: report?.sessionCount ?? 0, time: lastRefresh })}
       icon={<ChatBubbleOutlineRoundedIcon />}
       status={<StatusBadge label={loading ? "刷新中" : "索引分页"} tone={loading ? "info" : "neutral"} icon={<FormatListBulletedRoundedIcon />} />}
       refreshing={loading}
@@ -271,14 +273,14 @@ export function SessionCenterDialog({
       actions={
         <>
           <Stack direction="row" spacing={0.5} sx={{ alignItems: "center" }}>
-            <Tooltip title="上一页"><span><IconButton size="small" onClick={() => onPageChange(page - 1)} disabled={loading || page <= 1}><KeyboardArrowLeftRoundedIcon /></IconButton></span></Tooltip>
-            <Typography variant="caption">{items.length ? `${pageStart}-${pageEnd}` : "0 条"} · 第 {page} 页</Typography>
-            <Tooltip title="下一页"><span><IconButton size="small" onClick={() => onPageChange(page + 1)} disabled={loading || !report?.hasMore}><KeyboardArrowRightRoundedIcon /></IconButton></span></Tooltip>
+            <Tooltip title={t("上一页")}><span><IconButton size="small" onClick={() => onPageChange(page - 1)} disabled={loading || page <= 1}><KeyboardArrowLeftRoundedIcon /></IconButton></span></Tooltip>
+            <Typography variant="caption">{t("{range} · 第 {page} 页", { range: items.length ? `${pageStart}-${pageEnd}` : t("0 条"), page })}</Typography>
+            <Tooltip title={t("下一页")}><span><IconButton size="small" onClick={() => onPageChange(page + 1)} disabled={loading || !report?.hasMore}><KeyboardArrowRightRoundedIcon /></IconButton></span></Tooltip>
           </Stack>
           <Stack direction="row" spacing={0.75}>
-            <Button size="small" startIcon={<FolderOpenRoundedIcon />} disabled={!detail?.path} onClick={() => detail && onOpen(detail)}>在文件夹中显示</Button>
-            <Button size="small" startIcon={<ContentCopyRoundedIcon />} disabled={!selectedItem} onClick={() => selectedItem && onCopySummary(selectedItem)}>复制摘要</Button>
-            <Button size="small" variant="contained" disabled={!selectedItem} onClick={() => selectedItem && onCopyReference(selectedItem)}>引用到当前</Button>
+            <Button size="small" startIcon={<FolderOpenRoundedIcon />} disabled={!detail?.path} onClick={() => detail && onOpen(detail)}>{t("在文件夹中显示")}</Button>
+            <Button size="small" startIcon={<ContentCopyRoundedIcon />} disabled={!selectedItem} onClick={() => selectedItem && onCopySummary(selectedItem)}>{t("复制摘要")}</Button>
+            <Button size="small" variant="contained" disabled={!selectedItem} onClick={() => selectedItem && onCopyReference(selectedItem)}>{t("引用到当前")}</Button>
           </Stack>
         </>
       }
@@ -288,21 +290,21 @@ export function SessionCenterDialog({
           size="small"
           value={query}
           onChange={(event) => onQueryChange(event.target.value)}
-          placeholder="搜索会话标题或摘要"
+          placeholder={t("搜索会话标题或摘要")}
           sx={{ minWidth: 200, flex: 1 }}
           slotProps={{ input: { startAdornment: <InputAdornment position="start"><SearchRoundedIcon fontSize="small" /></InputAdornment> } }}
         />
         <TextField select size="small" value={profileName} onChange={(event) => onProfileChange(event.target.value)} sx={{ width: 170 }}>
-          <MenuItem value="">全部源</MenuItem>
+          <MenuItem value="">{t("全部源")}</MenuItem>
           {profileOptions.map((profile) => <MenuItem key={profile.name} value={profile.name}>{profileLabel(profile)}</MenuItem>)}
         </TextField>
         <TextField select size="small" value={category} onChange={(event) => onCategoryChange(event.target.value)} sx={{ width: 120 }}>
-          <MenuItem value="">全部标签</MenuItem>
+          <MenuItem value="">{t("全部标签")}</MenuItem>
           {categories.map((item) => <MenuItem key={item} value={item}>{item}</MenuItem>)}
         </TextField>
-        <Button className="manager-filter-toggle" size="small" variant={profileName === activeProfileName ? "contained" : "outlined"} disabled={!activeProfileName} onClick={() => onProfileChange(activeProfileName)}>当前</Button>
+        <Button className="manager-filter-toggle" size="small" variant={profileName === activeProfileName ? "contained" : "outlined"} disabled={!activeProfileName} onClick={() => onProfileChange(activeProfileName)}>{t("当前")}</Button>
         <TextField select size="small" value={pageSize} onChange={(event) => onPageSizeChange(Number(event.target.value))} sx={{ width: 92 }}>
-          {[10, 20, 50].map((size) => <MenuItem key={size} value={size}>{size} / 页</MenuItem>)}
+          {[10, 20, 50].map((size) => <MenuItem key={size} value={size}>{t("{count} / 页", { count: size })}</MenuItem>)}
         </TextField>
       </DialogToolbar>
       <MasterDetailLayout list={list} detail={detailPanel} detailOpen={Boolean(selectedItem)} onBack={() => setSelectedKey("")} />
@@ -311,9 +313,10 @@ export function SessionCenterDialog({
 }
 
 function SourceRow({ label, value, mono = false }: { label: string; value: string; mono?: boolean }) {
+  const { t } = useI18n();
   return (
     <Box className="feature-source-row">
-      <Typography variant="caption">{label}</Typography>
+      <Typography variant="caption">{t(label)}</Typography>
       <Typography className={mono ? "mono" : ""}>{value}</Typography>
     </Box>
   );

@@ -1,3 +1,4 @@
+pub mod auth_login;
 pub mod cli;
 pub mod core;
 pub mod remote;
@@ -80,6 +81,72 @@ async fn sync_server_profile_command(
     })
     .await
     .map_err(|error| error.to_string())?
+}
+
+#[tauri::command]
+async fn start_local_profile_login_command(
+    input: auth_login::StartLocalProfileLoginInput,
+) -> Result<auth_login::AuthLoginSessionReport, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let context = core::ProfileContext::from_options(None, None)?;
+        let profile_name = input.profile_name.trim().to_string();
+        let command = core::profile_login_command(&context, &profile_name, false)?;
+        auth_login::start_auth_login_process(
+            auth_login::AuthLoginTargetKind::LocalProfile,
+            None,
+            profile_name.clone(),
+            auth_login::AuthLoginMode::BrowserOauth,
+            format!("local:{profile_name}"),
+            command,
+        )
+    })
+    .await
+    .map_err(|error| error.to_string())?
+}
+
+#[tauri::command]
+async fn start_server_profile_login_command(
+    input: auth_login::StartServerProfileLoginInput,
+) -> Result<auth_login::AuthLoginSessionReport, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let context = core::ProfileContext::from_options(None, None)?;
+        let node_id = input.node_id.trim().to_string();
+        let profile_name = input.profile_name.trim().to_string();
+        let command = remote::server_profile_login_command(&context, &node_id, &profile_name)?;
+        auth_login::start_auth_login_process(
+            auth_login::AuthLoginTargetKind::ServerProfile,
+            Some(node_id.clone()),
+            profile_name.clone(),
+            auth_login::AuthLoginMode::DeviceCode,
+            format!("server:{node_id}:{profile_name}"),
+            command,
+        )
+    })
+    .await
+    .map_err(|error| error.to_string())?
+}
+
+#[tauri::command]
+async fn read_auth_login_session_command(
+    input: auth_login::AuthLoginSessionInput,
+) -> Result<auth_login::AuthLoginSessionReport, String> {
+    tauri::async_runtime::spawn_blocking(move || auth_login::read_auth_login_session(input))
+        .await
+        .map_err(|error| error.to_string())?
+}
+
+#[tauri::command]
+async fn cancel_auth_login_session_command(
+    input: auth_login::AuthLoginSessionInput,
+) -> Result<auth_login::AuthLoginSessionReport, String> {
+    tauri::async_runtime::spawn_blocking(move || auth_login::cancel_auth_login_session(input))
+        .await
+        .map_err(|error| error.to_string())?
+}
+
+#[tauri::command]
+fn open_auth_login_url_command(input: auth_login::OpenAuthLoginUrlInput) -> Result<(), String> {
+    auth_login::open_auth_login_url(input)
 }
 
 #[tauri::command]
@@ -528,12 +595,46 @@ async fn delete_profile_command(
 }
 
 #[tauri::command]
+async fn archive_profile_command(name: String) -> Result<core::ProfileActionReport, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let context = core::ProfileContext::from_options(None, None)?;
+        core::archive_profile(&context, &name)
+    })
+    .await
+    .map_err(|error| error.to_string())?
+}
+
+#[tauri::command]
+async fn restore_archived_profile_command(
+    name: String,
+) -> Result<core::ProfileActionReport, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let context = core::ProfileContext::from_options(None, None)?;
+        core::restore_archived_profile(&context, &name)
+    })
+    .await
+    .map_err(|error| error.to_string())?
+}
+
+#[tauri::command]
 async fn update_profile_metadata_command(
     input: core::ProfileMetadataInput,
 ) -> Result<core::ProfileActionReport, String> {
     tauri::async_runtime::spawn_blocking(move || {
         let context = core::ProfileContext::from_options(None, None)?;
         core::update_profile_metadata(&context, input)
+    })
+    .await
+    .map_err(|error| error.to_string())?
+}
+
+#[tauri::command]
+async fn update_profile_model_command(
+    input: core::UpdateProfileModelInput,
+) -> Result<core::ProfileActionReport, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let context = core::ProfileContext::from_options(None, None)?;
+        core::update_profile_model(&context, input)
     })
     .await
     .map_err(|error| error.to_string())?
@@ -594,18 +695,6 @@ async fn import_profile_auth_command(
 }
 
 #[tauri::command]
-async fn repair_profile_network_command(
-    name: String,
-) -> Result<core::CodexNetworkRepairReport, String> {
-    tauri::async_runtime::spawn_blocking(move || {
-        let context = core::ProfileContext::from_options(None, None)?;
-        core::repair_profile_network(&context, &name, true)
-    })
-    .await
-    .map_err(|error| error.to_string())?
-}
-
-#[tauri::command]
 fn reveal_path_command(path: String) -> Result<(), String> {
     core::reveal_in_finder(path.into())
 }
@@ -626,6 +715,11 @@ pub fn run() {
             probe_server_node_command,
             run_server_node_operation_command,
             sync_server_profile_command,
+            start_local_profile_login_command,
+            start_server_profile_login_command,
+            read_auth_login_session_command,
+            cancel_auth_login_session_command,
+            open_auth_login_url_command,
             run_doctor_command,
             list_profiles_command,
             list_profile_sessions_command,
@@ -666,16 +760,23 @@ pub fn run() {
             create_profile_command,
             copy_profile_command,
             delete_profile_command,
+            archive_profile_command,
+            restore_archived_profile_command,
             update_profile_metadata_command,
+            update_profile_model_command,
             reset_profile_command,
             launch_profile_command,
             terminate_profile_command,
             read_profile_quota_command,
             import_profile_auth_command,
-            repair_profile_network_command,
             reveal_path_command,
             open_cc_switch_command
         ])
-        .run(tauri::generate_context!())
-        .expect("error while running tauri application");
+        .build(tauri::generate_context!())
+        .expect("error while building tauri application")
+        .run(|_, event| {
+            if matches!(event, tauri::RunEvent::Exit) {
+                auth_login::cancel_all_auth_login_sessions();
+            }
+        });
 }

@@ -130,6 +130,9 @@ pub enum ServerNodeOperation {
         input: ReadProfileSessionDetailInput,
     },
     AuthStatus,
+    CheckProfileAuth {
+        profile_name: String,
+    },
     WechatStatus {
         profile_name: Option<String>,
     },
@@ -409,6 +412,46 @@ pub fn sync_server_profile(
     sync_server_profile_with_ssh(context, input, Path::new("ssh"))
 }
 
+pub fn server_profile_login_command(
+    context: &ProfileContext,
+    node_id: &str,
+    profile_name: &str,
+) -> Result<Command, String> {
+    let profile_name = profile_name.trim();
+    if profile_name != "codex"
+        && (!profile_name.starts_with("codex-")
+            || profile_name.len() > 80
+            || !profile_name.chars().all(|character| {
+                character.is_ascii_lowercase() || character.is_ascii_digit() || character == '-'
+            }))
+    {
+        return Err("invalid server profile name".to_string());
+    }
+    let node = find_server_node(context, node_id)?;
+    let remote_command = [
+        shell_quote(&node.remote_binary),
+        "login".to_string(),
+        "--name".to_string(),
+        shell_quote(profile_name),
+        "--device-auth".to_string(),
+    ]
+    .join(" ");
+    let mut command = Command::new("ssh");
+    command.args([
+        "-o",
+        "BatchMode=yes",
+        "-o",
+        "ConnectTimeout=8",
+        "-o",
+        "ServerAliveInterval=5",
+        "-o",
+        "ServerAliveCountMax=1",
+        &node.ssh_target,
+        &remote_command,
+    ]);
+    Ok(command)
+}
+
 pub fn sync_server_profile_with_ssh(
     context: &ProfileContext,
     input: SyncServerProfileInput,
@@ -676,7 +719,8 @@ pub fn run_server_node_operation_with_ssh(
 fn operation_timeout(operation: &ServerNodeOperation) -> Duration {
     match operation {
         ServerNodeOperation::ReadSession { .. } => SSH_DETAIL_TIMEOUT,
-        ServerNodeOperation::ModelRouteCheck { .. } => SSH_NETWORK_TIMEOUT,
+        ServerNodeOperation::ModelRouteCheck { .. }
+        | ServerNodeOperation::CheckProfileAuth { .. } => SSH_NETWORK_TIMEOUT,
         ServerNodeOperation::WechatStart { .. }
         | ServerNodeOperation::WechatRestart { .. }
         | ServerNodeOperation::FeishuStart { .. }
@@ -727,6 +771,9 @@ fn operation_arguments(operation: ServerNodeOperation) -> Result<Vec<String>, St
         }
         ServerNodeOperation::AuthStatus => {
             arguments.extend(["auth".to_string(), "list".to_string()]);
+        }
+        ServerNodeOperation::CheckProfileAuth { profile_name } => {
+            arguments.extend(["quota".to_string(), "--name".to_string(), profile_name]);
         }
         ServerNodeOperation::WechatStatus { profile_name } => {
             arguments.extend(["wechat".to_string(), "status".to_string()]);
@@ -1623,6 +1670,60 @@ mod tests {
             ]
             .map(str::to_string)
         );
+    }
+
+    #[test]
+    fn profile_auth_check_uses_read_only_quota_command() {
+        let arguments = operation_arguments(ServerNodeOperation::CheckProfileAuth {
+            profile_name: "codex-p".to_string(),
+        })
+        .expect("operation arguments");
+        assert_eq!(
+            arguments,
+            ["quota", "--name", "codex-p"].map(str::to_string)
+        );
+        assert_eq!(
+            operation_timeout(&ServerNodeOperation::CheckProfileAuth {
+                profile_name: "codex-p".to_string(),
+            }),
+            SSH_NETWORK_TIMEOUT
+        );
+    }
+
+    #[test]
+    fn server_profile_login_uses_device_auth_without_json_or_secrets() {
+        let root = tempdir().expect("temp home");
+        let context = ProfileContext {
+            home_dir: root.path().to_path_buf(),
+            zshrc_path: root.path().join(".zshrc"),
+        };
+        let report = upsert_server_node(
+            &context,
+            UpsertServerNodeInput {
+                id: None,
+                name: "Test node".to_string(),
+                ssh_target: "test-server".to_string(),
+                remote_binary: Some("/home/demo/bin/rcodexmanager".to_string()),
+            },
+        )
+        .expect("store server node");
+        let node = report.nodes.first().expect("server node");
+
+        let command =
+            server_profile_login_command(&context, &node.id, "codex-p").expect("login command");
+        let arguments = command
+            .get_args()
+            .map(|argument| argument.to_string_lossy().into_owned())
+            .collect::<Vec<_>>();
+        let remote = arguments.last().expect("remote command");
+
+        assert_eq!(command.get_program(), "ssh");
+        assert!(arguments.contains(&"BatchMode=yes".to_string()));
+        assert!(arguments.contains(&"test-server".to_string()));
+        assert!(remote.contains("rcodexmanager' login --name 'codex-p' --device-auth"));
+        assert!(!remote.contains("--json"));
+        assert!(!remote.to_ascii_lowercase().contains("token"));
+        assert!(!remote.to_ascii_lowercase().contains("secret"));
     }
 
     #[test]

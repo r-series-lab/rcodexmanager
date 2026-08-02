@@ -21,7 +21,7 @@
 
 | 模块 | 主要能力 | 数据加载策略 |
 | --- | --- | --- |
-| Profile 工作区 | 创建、复制、编辑、启动、终止、重置、归档、账号导入、额度窗口查询、网络修复 | 首页只读取 profile 状态和最近摘要 |
+| Profile 工作区 | 创建、复制、编辑、启动、终止、重置、归档、官方登录、账号导入、额度窗口查询、网络修复 | 首页只读取 profile 状态和最近摘要 |
 | Doctor 诊断 | 一键检查启动配置、profile 路径、进程、认证、模型路由、代理、认证库与远程渠道 | 只读执行，报告自动脱敏 |
 | 会话中心 | 搜索、profile/分类筛选、分页、摘要/来源详情、复制摘要 | 先读索引，选中后才读取单条 JSONL 详情 |
 | 认证库 | 单个或批量备份、导入预检、导入导出、备注/置顶、应用、回滚、重复清理 | 打开弹窗后加载，30 秒缓存 |
@@ -29,7 +29,7 @@
 | 模型路由 | 状态检查、模板、草稿测试、配置预览、应用、恢复、自检、代理诊断 | 打开弹窗后加载，敏感字段只保存在内存 |
 | 服务器节点 | SSH 探测、远程 Profile 生命周期、会话、认证、模型路由、渠道和 Doctor | 不在首页预加载，切换标签后按需调用远程 JSON CLI |
 
-桌面窗口默认宽度为 `900px`，最小尺寸为 `900×520`。各管理域共用紧凑的主从式弹窗、亮色/暗色/跟随系统主题和统一的加载、错误、空状态与安全确认交互。
+桌面窗口默认与最小尺寸均为 `1000×800`。各管理域共用紧凑的主从式弹窗、亮色/暗色/跟随系统主题和统一的加载、错误、空状态与安全确认交互。
 
 设置弹窗中的“运行诊断”可生成一份只读 Doctor 报告。诊断不会修改 profile、认证或渠道配置；报告只保留状态和可操作建议，并隐藏 token、密钥、邮箱与完整本机路径。出现问题时建议先运行诊断，再进入对应管理中心处理。
 
@@ -53,10 +53,12 @@ rCodexManager 读取并维护以下本地资源：
 
 - 从默认目录和 Bash/Zsh 启动配置自动发现 profile。
 - 支持关键词、运行/登录/会话状态与分类筛选。
-- 展示账号、模型、路径、最近会话、WebSocket feature 和进程状态。
+- 展示账号、模型、路径、最近会话、额度、环境和进程状态。
+- 账号区可直接启动官方 Codex 登录：本机 Profile 展示可复制的浏览器 OAuth 地址，Linux 服务器 Profile 展示可复制的一次性设备码。
 - 按需读取 5 小时、周额度及其他 usage 窗口；展示已用比例、重置时间和可执行的过期/网络错误提示，不持久化 access token。
-- 网络修复会检查 WebSocket feature、代理状态和启动环境；修改前保留配置备份，并且不会接管来源不明的代理进程。
-- 行点击会选择 profile，并在侧栏收起时自动展开详情。
+- 行点击只选择 profile，不打开额外侧栏；双击可直接编辑别名、分类、备注、模型和推理等级。
+- 列表操作栏直接提供启动/停止、归档和删除；认证、额度、路径、会话等低频操作收纳在 `...` 菜单。
+- 停止中的自定义 profile 可软归档：归档后从“全部”隐藏，但启动配置、目录、认证、会话和模型配置保持不变，可随时从“已归档”恢复。
 - 操作列固定在列表右侧，横向滚动时保持对齐。
 
 ### 会话中心
@@ -117,6 +119,8 @@ Mac App 顶部的“服务器节点”入口通过已配置的 SSH Host 连接 L
 - 服务器会话支持搜索、Profile 筛选和 `10/20/50` 分页，只在选中会话后读取单条详情；切换筛选时会丢弃过期响应。
 - 支持创建服务器 Profile、启动/停止、认证备份与应用、路由预览/测试/应用/恢复。
 - Profile 列表反显模型、推理等级和 Provider；停止中的非默认 Profile 可从服务器已发现模型中选择或填写自定义模型。模型更新只写 `config.toml`，写入前备份，不影响认证、会话、路由和 User Data。
+- Profile 列表根据 token 到期时间和 refresh token 状态显示“未过期 / 待刷新 / 已失效 / 认证异常 / 待验证”；详情中的“验证认证”通过只读 usage 请求在线确认，不修改 `auth.json`。
+- Profiles 页的“登录 / 刷新认证”调用服务器 Codex CLI 的设备码登录。Mac 只暂存授权地址、一次性代码和进程状态；授权完成、取消或过期后立即清除，不复制服务器凭证。
 - Profiles 页支持“从本机同步”：复制模型、推理等级、别名和分类到新的服务器 Profile；可选择同时同步登录认证，不复制会话和 User Data。
 - 认证同步必须二次确认，内容只经 SSH 标准输入传输。服务器临时文件使用私有权限并在导入后清理，认证正文不进入节点配置、任务历史或诊断日志。
 - 默认 Profile 和运行中 Profile 继续受到写入保护；敏感操作仍需二次确认。
@@ -213,6 +217,8 @@ cargo run --quiet --manifest-path ./src-tauri/Cargo.toml -- --json list
 rcodexmanager --json info
 rcodexmanager --json capabilities
 rcodexmanager --json list
+rcodexmanager --json archive --name codex-g
+rcodexmanager --json restore --name codex-g
 rcodexmanager --json quota --name codex-g
 ```
 
@@ -229,6 +235,10 @@ rcodexmanager --json sessions detail --profile codex-g --session-id <id>
 # 批量备份认证并只读预检导入包
 rcodexmanager --json auth backup-many --name codex-b --name codex-g --label Snapshot
 rcodexmanager --json auth preview-import --file ./backup.rcodex-auth.json
+
+# 官方 Codex 登录是交互式流，不使用 --json
+rcodexmanager login --name codex-g
+rcodexmanager login --name codex-g --device-auth
 
 # 查看远程渠道
 rcodexmanager --json wechat status

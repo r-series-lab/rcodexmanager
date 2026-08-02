@@ -1,6 +1,6 @@
 ---
 name: rcodexmanager
-description: Use and manage the user's rCodexManager desktop app, local CLI, and Linux headless server nodes. Use when tasks involve Codex profiles, isolated CODEX_HOME or user-data-dir instances, Mac-to-Linux SSH management, profile lifecycle, session history, auth vault backups or login-state transfer, quota, WebSocket/network repair, WeChat or Feishu remote channels, model providers, Responses proxies, cc-switch integration, or rCodexManager diagnostics and packaging.
+description: Use and manage the user's rCodexManager desktop app, local CLI, and Linux headless server nodes. Use when tasks involve Codex profiles, isolated CODEX_HOME or user-data-dir instances, Mac-to-Linux SSH management, profile lifecycle, session history, auth vault backups or login-state transfer, quota, WeChat or Feishu remote channels, model providers, Responses proxies, cc-switch integration, or rCodexManager diagnostics and packaging.
 ---
 
 # rCodexManager
@@ -15,6 +15,7 @@ Operate the user's local Codex profile workspace through the shared rCodexManage
 - Treat default profile `codex` as protected. Do not delete, reset, overwrite auth, terminate, or apply model routes to it.
 - Require a stopped target before auth application/import, model-route apply/restore, or other operations that modify a profile's active files.
 - Never print or summarize access tokens, refresh tokens, API keys, auth package contents, or Feishu App Secret values.
+- Treat OAuth URLs and device codes as ephemeral secrets. Keep the official Codex login process alive, do not persist the challenge, and clear it after completion, cancellation, or expiry.
 - Use `--confirm-sensitive` only when the user has requested the corresponding sensitive write. The flag is authorization for that one operation, not standing consent.
 - Preserve user data. Prefer backup, archive, preview, and rollback paths; never manually delete profile/auth/channel directories when the CLI has a recoverable operation.
 - For a server node, use the configured SSH alias and the remote headless CLI JSON contract. Do not open an extra management port or copy SSH credentials into rCodexManager metadata.
@@ -91,7 +92,7 @@ Do not open every management surface or load every session detail by default.
 Use CLI for:
 
 - Read-only aggregate health checks with `doctor` before targeted troubleshooting.
-- Profile creation, copy, metadata, lifecycle, reset/archive, quota, auth import, and network repair.
+- Profile creation, copy, metadata, lifecycle, reset/archive, quota, and auth import.
 - Paginated session index queries and one selected session detail.
 - Auth vault backup, import preview, import/export, metadata, apply, rollback, cleanup, and delete.
 - WeChat and Feishu status/lifecycle/log operations.
@@ -100,6 +101,7 @@ Use CLI for:
 Use the desktop app for:
 
 - QR scanning and visually following channel connection logs.
+- Starting official Codex browser/device login when the user needs a copyable authorization URL or server device code.
 - Theme mode and UI settings.
 - Starting/stopping the built-in model proxy. A one-shot CLI process cannot own its long-running lifecycle.
 - Comparing complex auth or model-route details when visual confirmation reduces risk.
@@ -112,7 +114,8 @@ Use the desktop app for:
 3. For launch, avoid starting a duplicate when `isRunning=true`.
 4. For terminate, target the exact custom profile; default `codex` cannot be safely terminated.
 5. For a model-only change, use `model set` on a stopped custom profile and verify `model` plus `modelProvider` from a fresh `list`. Do not use `reset` for this.
-6. For reset/delete, explain whether user data is retained or archived before executing.
+6. Prefer `archive` when the user only wants to hide a stopped custom profile from the daily list. It preserves the launcher, CODEX_HOME, User Data, auth, sessions, and model configuration; use `restore` to return it.
+7. For reset/delete, explain whether user data is retained or moved to a backup directory before executing.
 
 On Linux, managed launch uses a `rcodexmanager-<profile>` tmux session. After launch/terminate, verify `isRunning` from a fresh `list`; do not infer success from process creation alone.
 
@@ -155,12 +158,15 @@ When the App reports a possible version mismatch, compare `info` and `capabiliti
 
 ## Auth Workflow
 
-1. Run `auth list` and inspect backup validity and target running state.
-2. Create a backup before moving auth between profiles.
-3. For an imported package, run `auth preview-import` first; it must not write files.
-4. Apply only to a stopped, non-default profile with explicit confirmation.
-5. Use recorded application ids for rollback.
-6. Export/delete/cleanup only after explicit confirmation; do not expose package contents.
+1. For a new login, use the App login guide or `rcodexmanager login --name <profile>`. On a headless server use `--device-auth`; never add `--json` to this streaming command.
+2. Keep the login process alive until Codex reports completion. Do not log or persist the dynamic OAuth URL or one-time device code.
+3. Run `list` after login and inspect the target account/auth state. Use `quota` only as an optional online check; a network failure is not proof that credentials are invalid.
+4. For moving existing auth, run `auth list` and inspect backup validity and target running state.
+5. Create a backup before moving auth between profiles.
+6. For an imported package, run `auth preview-import` first; it must not write files.
+7. Apply only to a stopped, non-default profile with explicit confirmation.
+8. Use recorded application ids for rollback.
+9. Export/delete/cleanup only after explicit confirmation; do not expose package contents.
 
 ## Remote Channel Workflow
 
