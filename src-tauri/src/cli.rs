@@ -605,7 +605,7 @@ fn app_info(desktop_available: bool) -> AppInfo {
         version: env!("CARGO_PKG_VERSION"),
         identifier: app_identifier(),
         family: "r",
-        architecture: "simple-tool",
+        architecture: "modular-workbench",
         default_command: if desktop_available { "desktop" } else { "info" },
         desktop_available,
     }
@@ -647,7 +647,7 @@ fn capability_manifest(desktop_available: bool) -> CapabilityManifest {
                 json_supported: true,
                 reads_files: false,
                 writes_files: false,
-                examples: vec!["rcodexmanager info --json"],
+                examples: vec!["rcodexmanager --json info"],
             },
             CapabilityInfo {
                 command: "capabilities",
@@ -655,7 +655,7 @@ fn capability_manifest(desktop_available: bool) -> CapabilityManifest {
                 json_supported: true,
                 reads_files: false,
                 writes_files: false,
-                examples: vec!["rcodexmanager capabilities --json"],
+                examples: vec!["rcodexmanager --json capabilities"],
             },
             CapabilityInfo {
                 command: "doctor",
@@ -663,7 +663,7 @@ fn capability_manifest(desktop_available: bool) -> CapabilityManifest {
                 json_supported: true,
                 reads_files: true,
                 writes_files: false,
-                examples: vec!["rcodexmanager doctor --json"],
+                examples: vec!["rcodexmanager --json doctor"],
             },
             CapabilityInfo {
                 command: "list",
@@ -671,7 +671,7 @@ fn capability_manifest(desktop_available: bool) -> CapabilityManifest {
                 json_supported: true,
                 reads_files: true,
                 writes_files: false,
-                examples: vec!["rcodexmanager list --json"],
+                examples: vec!["rcodexmanager --json list"],
             },
             CapabilityInfo {
                 command: "sessions",
@@ -680,8 +680,8 @@ fn capability_manifest(desktop_available: bool) -> CapabilityManifest {
                 reads_files: true,
                 writes_files: false,
                 examples: vec![
-                    "rcodexmanager sessions list --profile codex-g --limit 20 --json",
-                    "rcodexmanager sessions detail --profile codex-g --session-id <id> --json",
+                    "rcodexmanager --json sessions list --profile codex-g --limit 20",
+                    "rcodexmanager --json sessions detail --profile codex-g --session-id <id>",
                 ],
             },
             CapabilityInfo {
@@ -691,8 +691,8 @@ fn capability_manifest(desktop_available: bool) -> CapabilityManifest {
                 reads_files: true,
                 writes_files: true,
                 examples: vec![
-                    "rcodexmanager create --name codex-f --model gpt-5.5 --reasoning-effort xhigh --alias Draft --category 深度 --json",
-                    "rcodexmanager create --name codex-o --server --json",
+                    "rcodexmanager --json create --name codex-f --model gpt-5.5 --reasoning-effort xhigh --alias Draft --category 深度",
+                    "rcodexmanager --json create --name codex-o --server",
                 ],
             },
             CapabilityInfo {
@@ -702,8 +702,8 @@ fn capability_manifest(desktop_available: bool) -> CapabilityManifest {
                 reads_files: true,
                 writes_files: true,
                 examples: vec![
-                    "rcodexmanager copy --source codex-b --name codex-f --auth-source codex-b --confirm-sensitive --json",
-                    "rcodexmanager copy --source codex --name codex-o --server --auth-source codex --confirm-sensitive --json",
+                    "rcodexmanager --json copy --source codex-b --name codex-f --auth-source codex-b --confirm-sensitive",
+                    "rcodexmanager --json copy --source codex --name codex-o --server --auth-source codex --confirm-sensitive",
                 ],
             },
             CapabilityInfo {
@@ -713,7 +713,7 @@ fn capability_manifest(desktop_available: bool) -> CapabilityManifest {
                 reads_files: true,
                 writes_files: true,
                 examples: vec![
-                    "rcodexmanager update --name codex-f --alias 主力 --category 平衡 --note 日常使用 --json",
+                    "rcodexmanager --json update --name codex-f --alias 主力 --category 平衡 --note 日常使用",
                 ],
             },
             CapabilityInfo {
@@ -722,7 +722,7 @@ fn capability_manifest(desktop_available: bool) -> CapabilityManifest {
                 json_supported: true,
                 reads_files: true,
                 writes_files: true,
-                examples: vec!["rcodexmanager archive --name codex-f --json"],
+                examples: vec!["rcodexmanager --json archive --name codex-f"],
             },
             CapabilityInfo {
                 command: "restore",
@@ -730,7 +730,7 @@ fn capability_manifest(desktop_available: bool) -> CapabilityManifest {
                 json_supported: true,
                 reads_files: true,
                 writes_files: true,
-                examples: vec!["rcodexmanager restore --name codex-f --json"],
+                examples: vec!["rcodexmanager --json restore --name codex-f"],
             },
             CapabilityInfo {
                 command: "model set",
@@ -739,7 +739,7 @@ fn capability_manifest(desktop_available: bool) -> CapabilityManifest {
                 reads_files: true,
                 writes_files: true,
                 examples: vec![
-                    "rcodexmanager model set --name codex-f --model gpt-5.5 --reasoning-effort xhigh --json",
+                    "rcodexmanager --json model set --name codex-f --model gpt-5.5 --reasoning-effort xhigh",
                 ],
             },
             CapabilityInfo {
@@ -748,7 +748,7 @@ fn capability_manifest(desktop_available: bool) -> CapabilityManifest {
                 json_supported: true,
                 reads_files: true,
                 writes_files: true,
-                examples: vec!["rcodexmanager delete --name codex-f --archive-data --json"],
+                examples: vec!["rcodexmanager --json delete --name codex-f --archive-data"],
             },
             CapabilityInfo {
                 command: "reset",
@@ -757,7 +757,7 @@ fn capability_manifest(desktop_available: bool) -> CapabilityManifest {
                 reads_files: true,
                 writes_files: true,
                 examples: vec![
-                    "rcodexmanager reset --name codex-f --model gpt-5.5 --reasoning-effort medium --json",
+                    "rcodexmanager --json reset --name codex-f --model gpt-5.5 --reasoning-effort medium",
                 ],
             },
             CapabilityInfo {
@@ -766,7 +766,7 @@ fn capability_manifest(desktop_available: bool) -> CapabilityManifest {
                 json_supported: true,
                 reads_files: true,
                 writes_files: true,
-                examples: vec!["rcodexmanager launch --name codex-f --json"],
+                examples: vec!["rcodexmanager --json launch --name codex-f"],
             },
             CapabilityInfo {
                 command: "terminate",
@@ -774,7 +774,7 @@ fn capability_manifest(desktop_available: bool) -> CapabilityManifest {
                 json_supported: true,
                 reads_files: true,
                 writes_files: false,
-                examples: vec!["rcodexmanager terminate --name codex-f --json"],
+                examples: vec!["rcodexmanager --json terminate --name codex-f"],
             },
             CapabilityInfo {
                 command: "quota",
@@ -782,7 +782,7 @@ fn capability_manifest(desktop_available: bool) -> CapabilityManifest {
                 json_supported: true,
                 reads_files: true,
                 writes_files: false,
-                examples: vec!["rcodexmanager quota --name codex-f --json"],
+                examples: vec!["rcodexmanager --json quota --name codex-f"],
             },
             CapabilityInfo {
                 command: "login",
@@ -802,7 +802,7 @@ fn capability_manifest(desktop_available: bool) -> CapabilityManifest {
                 reads_files: true,
                 writes_files: true,
                 examples: vec![
-                    "rcodexmanager import-auth --name codex-f --source /path/to/auth.json --confirm-sensitive --json",
+                    "rcodexmanager --json import-auth --name codex-f --source /path/to/auth.json --confirm-sensitive",
                 ],
             },
             CapabilityInfo {
@@ -812,11 +812,11 @@ fn capability_manifest(desktop_available: bool) -> CapabilityManifest {
                 reads_files: true,
                 writes_files: true,
                 examples: vec![
-                    "rcodexmanager auth list --json",
-                    "rcodexmanager auth backup --name codex-o --label Server --json",
-                    "rcodexmanager auth backup-many --name codex-b --name codex-g --label Snapshot --json",
-                    "rcodexmanager auth preview-import --file ./backup.rcodex-auth.json --json",
-                    "rcodexmanager auth apply --backup-id <id> --target codex-o --confirm-sensitive --json",
+                    "rcodexmanager --json auth list",
+                    "rcodexmanager --json auth backup --name codex-o --label Server",
+                    "rcodexmanager --json auth backup-many --name codex-b --name codex-g --label Snapshot",
+                    "rcodexmanager --json auth preview-import --file ./backup.rcodex-auth.json",
+                    "rcodexmanager --json auth apply --backup-id <id> --target codex-o --confirm-sensitive",
                 ],
             },
             CapabilityInfo {
@@ -826,10 +826,10 @@ fn capability_manifest(desktop_available: bool) -> CapabilityManifest {
                 reads_files: true,
                 writes_files: true,
                 examples: vec![
-                    "rcodexmanager wechat status --json",
-                    "rcodexmanager wechat start --name codex-o --json",
-                    "rcodexmanager wechat unbind --name codex-o --confirm-sensitive --json",
-                    "rcodexmanager wechat service --name codex-o --install --enable --now --json",
+                    "rcodexmanager --json wechat status",
+                    "rcodexmanager --json wechat start --name codex-o",
+                    "rcodexmanager --json wechat unbind --name codex-o --confirm-sensitive",
+                    "rcodexmanager --json wechat service --name codex-o --install --enable --now",
                 ],
             },
             CapabilityInfo {
@@ -839,10 +839,10 @@ fn capability_manifest(desktop_available: bool) -> CapabilityManifest {
                 reads_files: true,
                 writes_files: true,
                 examples: vec![
-                    "rcodexmanager feishu status --json",
-                    "rcodexmanager feishu configure --name codex-g --json",
-                    "rcodexmanager feishu start --name codex-g --json",
-                    "rcodexmanager feishu open setup --json",
+                    "rcodexmanager --json feishu status",
+                    "rcodexmanager --json feishu configure --name codex-g",
+                    "rcodexmanager --json feishu start --name codex-g",
+                    "rcodexmanager --json feishu open setup",
                 ],
             },
             CapabilityInfo {
@@ -852,12 +852,12 @@ fn capability_manifest(desktop_available: bool) -> CapabilityManifest {
                 reads_files: true,
                 writes_files: true,
                 examples: vec![
-                    "rcodexmanager model-route status --json",
-                    "rcodexmanager model-route proxy --json",
-                    "rcodexmanager model-route preview --name codex-g --preset aliyun-qwen --model qwen3-coder-plus --json",
-                    "rcodexmanager model-route preview --name codex-g --preset glm --model glm-4.6 --proxy-base-url http://127.0.0.1:15721/v1 --upstream-base-url https://open.bigmodel.cn/api/paas/v4 --json",
-                    "rcodexmanager model-route test-draft --name codex-g --preset glm --model glm-4.6 --upstream-base-url https://open.bigmodel.cn/api/paas/v4 --api-key-env ZAI_API_KEY --json",
-                    "rcodexmanager model-route apply --name codex-g --preset glm --model glm-4.6 --proxy-base-url http://127.0.0.1:15721/v1 --upstream-base-url https://open.bigmodel.cn/api/paas/v4 --api-key-env ZAI_API_KEY --confirm-sensitive --json",
+                    "rcodexmanager --json model-route status",
+                    "rcodexmanager --json model-route proxy",
+                    "rcodexmanager --json model-route preview --name codex-g --preset aliyun-qwen --model qwen3-coder-plus",
+                    "rcodexmanager --json model-route preview --name codex-g --preset glm --model glm-4.6 --proxy-base-url http://127.0.0.1:15721/v1 --upstream-base-url https://open.bigmodel.cn/api/paas/v4",
+                    "rcodexmanager --json model-route test-draft --name codex-g --preset glm --model glm-4.6 --upstream-base-url https://open.bigmodel.cn/api/paas/v4 --api-key-env ZAI_API_KEY",
+                    "rcodexmanager --json model-route apply --name codex-g --preset glm --model glm-4.6 --proxy-base-url http://127.0.0.1:15721/v1 --upstream-base-url https://open.bigmodel.cn/api/paas/v4 --api-key-env ZAI_API_KEY --confirm-sensitive",
                 ],
             },
         ],

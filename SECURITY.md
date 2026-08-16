@@ -1,5 +1,9 @@
 # Security Policy
 
+rCodexManager 是独立的社区开源项目，不隶属于 OpenAI，也未获得 OpenAI 的赞助或背书。请不要向 OpenAI 支持渠道报告本项目漏洞。
+
+rCodexManager is an independent community open-source project and is not affiliated with, sponsored by, or endorsed by OpenAI. Do not report this project's vulnerabilities through OpenAI support channels.
+
 [中文](#中文) | [English](#english)
 
 ## 中文

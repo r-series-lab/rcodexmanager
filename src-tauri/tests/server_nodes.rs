@@ -267,7 +267,7 @@ fn remote_session_detail_drains_output_larger_than_a_pipe_buffer() {
     .expect("large remote detail");
 
     assert!(report.ok);
-    assert_eq!(report.timeout_seconds, 60);
+    assert_eq!(report.timeout_seconds, 120);
     assert_eq!(
         report.data.unwrap()["summary"].as_str().unwrap().len(),
         1024 * 1024

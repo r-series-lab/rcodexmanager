@@ -42,7 +42,7 @@ Global flags: `--json`, `--home <PATH>`, `--shell-rc <PATH>`. `--zshrc` remains 
 
 The headless binary has `desktopAvailable=false` and no `desktop` capability. It auto-detects existing `.zshrc` then `.bashrc`. Mac server-node management executes the same commands over SSH and expects one JSON envelope on stdout.
 
-Read `capabilities` from the binary being operated. Desktop output may describe launchctl and the built-in proxy; Linux headless network-repair examples use `--skip-launchctl`, and headless model routing does not own the desktop proxy lifecycle.
+Read `capabilities` from the binary being operated. Desktop output includes the desktop launcher and may describe the built-in proxy. Linux headless output omits the desktop launcher, and headless model routing does not own the desktop proxy lifecycle.
 
 Node metadata stores only display name, SSH target, and remote binary path. Remote API keys must be referenced by environment-variable name.
 
@@ -51,7 +51,7 @@ Manual installation when requested:
 ```bash
 uname -s
 uname -m
-tar -xzf rcodexmanager-linux-x86_64.tar.gz
+tar -xzf rCodexManager_0.1.5_linux-x86_64.tar.gz
 ./install.sh
 ~/.local/bin/rcodexmanager --json info
 ~/.local/bin/rcodexmanager --json capabilities

@@ -2,6 +2,10 @@
 
 English | [中文](README.md)
 
+[Official website](https://rcm.rurie.top) · [Documentation](https://rcm.rurie.top/en/docs) · [Preview downloads](https://github.com/r-series-lab/rcodexmanager/releases) · [Issue tracker](https://github.com/r-series-lab/rcodexmanager/issues)
+
+> **Independent project notice:** rCodexManager is an independently maintained community open-source project. It is not affiliated with, sponsored by, or endorsed by OpenAI. Codex and OpenAI are trademarks of their respective owner. The `0.1.x` line is a Public Preview; see the [release workflow](docs/RELEASE_WORKFLOW_EN.md) for package-signing status.
+
 `rCodexManager` is a local-first workbench for multiple isolated Codex profiles. It manages profile lifecycle, session history, authorized login-state backups, remote messaging channels, third-party model routing, and headless Linux Codex nodes through one desktop app and JSON CLI.
 
 Typical uses include keeping development, research, plugin testing, and server work in separate `CODEX_HOME` directories; inspecting profile health; safely moving authorized login state between stopped profiles; and operating Codex on a Linux server through an existing SSH configuration.
@@ -19,7 +23,25 @@ Stack: `Tauri 2 + Rust + React 19 + TypeScript + Material UI`.
 - **Linux Nodes** use SSH and a headless CLI to manage remote profiles without opening an additional management port.
 
 The desktop window defaults to and is constrained to a minimum of `1000×800`.
-Profile rows keep launch, archive, and delete actions visible. Double-clicking a row opens the full profile editor; repair, authentication, quota, path, and session actions remain in the compact overflow menu.
+Profile rows keep launch, archive, and delete actions visible. Double-clicking a row opens the full profile editor; authentication, quota, path, and session actions remain in the compact overflow menu.
+
+## Interface Preview
+
+Public screenshots are generated from repository mock data and contain only `example.com` identities and sample paths.
+
+![Profile workspace](docs/assets/screenshots/profile-workspace.png)
+
+| Session center | Authentication vault |
+| --- | --- |
+| ![Session center](docs/assets/screenshots/session-center.png) | ![Authentication vault](docs/assets/screenshots/auth-vault.png) |
+
+| Remote channels | Model routing |
+| --- | --- |
+| ![Remote channels](docs/assets/screenshots/remote-channels.png) | ![Model routing](docs/assets/screenshots/model-routing.png) |
+
+![Linux server nodes](docs/assets/screenshots/server-nodes.png)
+
+See the [interface and feature guide](docs/interface_EN.md) for the five management centers, loading behavior, sign-in, settings, and safety boundaries.
 
 ## Profile Boundary
 
@@ -38,6 +60,14 @@ Build the desktop app:
 
 ```bash
 npm run build
+```
+
+Install the CLI matching the current source into `~/.local/bin`, which is the supported local PATH location:
+
+```bash
+npm run cli:install
+rcodexmanager --json info
+rcodexmanager --json capabilities
 ```
 
 `npm run build` is for local development validation and never supplies official Release assets. Use the unified source check for daily acceptance:
@@ -65,7 +95,7 @@ npm run headless:test
 npm run headless:package
 ```
 
-After uploading and extracting `dist/rcodexmanager-linux-<arch>.tar.gz` on the server:
+After uploading and extracting `dist/rCodexManager_<version>_linux-<arch>.tar.gz` on the server:
 
 ```bash
 ./install.sh

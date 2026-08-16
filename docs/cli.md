@@ -69,14 +69,23 @@ rcodexmanager --json list
 
 `desktop` 打开桌面应用，不支持 JSON。Linux 无界面构建不提供 `desktop`，不带子命令时返回结构化 `desktop_unavailable` 错误。`capabilities` 返回当前构建实际支持的命令组、读写属性和示例，可用于 agent 自发现。
 
-能力说明会按运行面区分：桌面端可描述 launchctl 与内置代理，Linux headless 的网络修复示例固定带 `--skip-launchctl`，模型路由只声明代理状态检查能力。Agent 应读取当前二进制的 `capabilities`，不能直接套用另一平台的示例。
+`info.data.architecture` 固定返回 `modular-workbench`。能力说明会按运行面区分：桌面端包含 `desktop` 并可描述内置代理，Linux headless 不包含 `desktop`，且模型路由只声明代理状态检查能力。Agent 应读取当前二进制的 `capabilities`，不能直接套用另一平台的示例。
+
+本机开发版安装到 PATH：
+
+```bash
+npm run cli:install
+~/.local/bin/rcodexmanager --json info
+```
+
+默认安装目录为 `~/.local/bin`，可通过 `RCODEXMANAGER_INSTALL_ROOT` 覆盖；脚本会在安装后立即读取 `info` 验证版本。
 
 ## Linux 无界面节点
 
 服务器不需要图形界面或 Tauri 运行库。发布归档中的无界面 CLI 与桌面端共享 profile、会话、认证、模型路由和渠道核心逻辑：
 
 ```bash
-tar -xzf rcodexmanager-linux-x86_64.tar.gz
+tar -xzf rCodexManager_0.1.5_linux-x86_64.tar.gz
 ./install.sh
 ~/.local/bin/rcodexmanager --json info
 ~/.local/bin/rcodexmanager --json doctor
@@ -192,7 +201,7 @@ rcodexmanager --json import-auth --name codex-g \
 
 ```
 
-`login` 调用官方 Codex 登录流程并直接写入目标 `CODEX_HOME`。它需要持续输出授权地址或设备码，因此不支持 `--json`；无界面 Linux 应使用 `--device-auth`。授权地址和一次性代码属于短期敏感信息，不应写入日志。`quota` 使用 profile 当前 access token 调用只读 usage 接口，不另存 token。`import-auth` 只允许停止中的非默认 profile，并先备份原 `auth.json`。
+`login` 调用官方 Codex 登录流程并直接写入目标 `CODEX_HOME`。它需要持续输出授权地址或设备码，因此不支持 `--json`；无界面 Linux 应使用 `--device-auth`。授权地址和一次性代码属于短期敏感信息，不应写入日志。`quota` 使用 profile 当前 access token 调用只读 usage 接口，不另存 token。macOS 查询按“代理环境变量 → Codex wrapper → 系统网络代理”的顺序选择代理，因此 Finder 启动的 App 也能复用系统代理；网络失败只表示无法在线验证，不等于认证失效。`import-auth` 只允许停止中的非默认 profile，并先备份原 `auth.json`。
 
 ## 认证库
 

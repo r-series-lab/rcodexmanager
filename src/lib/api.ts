@@ -52,8 +52,10 @@ import type {
   PreviewAuthBackupPackageInput,
   ProfileMetadataInput,
   ProfileActionReport,
+  ProfileInfo,
   ProfileQuotaReport,
   ProfileReport,
+  ProfileRuntimeReport,
   ProfileSessionReport,
   ReadWechatBridgeLogInput,
   ResetProfileInput,
@@ -342,6 +344,30 @@ export async function listProfiles(): Promise<ProfileReport> {
     return createMockProfileReport();
   }
   return invoke<ProfileReport>("list_profiles_command");
+}
+
+export async function listProfileRuntimeStatuses(
+  profiles: ProfileInfo[],
+): Promise<ProfileRuntimeReport> {
+  if (!isTauriRuntime()) {
+    return {
+      generatedAt: new Date().toISOString(),
+      profiles: profiles.map((profile) => ({
+        name: profile.name,
+        isRunning: profile.isRunning,
+        runningPids: profile.runningPids,
+        runningProcessCount: profile.runningProcessCount,
+      })),
+    };
+  }
+  const targets = profiles.map((profile) => ({
+    name: profile.name,
+    codexHome: profile.codexHome,
+    userDataDir: profile.userDataDir,
+    launcherKind: profile.launcherKind,
+    isDefault: profile.isDefault,
+  }));
+  return invoke<ProfileRuntimeReport>("list_profile_runtime_statuses_command", { targets });
 }
 
 export async function listProfileSessions(input: ListProfileSessionsInput): Promise<ProfileSessionReport> {

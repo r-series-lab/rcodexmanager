@@ -93,7 +93,7 @@ jobs:
         with:
           name: rCodexManager-linux-x86_64-preview
           if-no-files-found: error
-          path: dist/rcodexmanager-linux-x86_64.tar.gz
+          path: dist/rCodexManager_*_linux-x86_64.tar.gz
 
   publish-draft:
     name: Create draft GitHub Release
@@ -125,6 +125,6 @@ jobs:
           body: |
             rCodexManager 桌面预览包与 Linux Headless CLI / desktop preview packages and Linux headless CLI.
 
-            当前 macOS 包仅使用 ad-hoc 签名，未完成 Developer ID 签名与公证；Windows 包未完成 Authenticode 签名。该 Release 保持 Draft，不应作为正式下载入口。
+            当前 macOS 包仅使用 ad-hoc 签名，未完成 Developer ID 签名与公证；Windows 包未完成 Authenticode 签名。请在安装前核对 SHA-256，并将此版本视为 Public Preview。
 
-            macOS artifacts are currently ad-hoc signed and not notarized. Windows artifacts are not Authenticode signed. Keep this release as a Draft and do not expose it as a stable download.
+            macOS artifacts are currently ad-hoc signed and not notarized. Windows artifacts are not Authenticode signed. Verify SHA-256 checksums before installation and treat this release as a Public Preview.

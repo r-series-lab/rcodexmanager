@@ -4,10 +4,21 @@
 
 ## Unreleased
 
+- No unreleased changes.
+
+## 0.1.5
+
+The first user-facing Public Preview. It aligns the application, source Tag, and package version while completing open-source governance, independent-project disclosure, and release safety gates.
+
 ### Changed
 
 - Split the changelog into Chinese and English entry points, registered the English document source in the app manifest, and included it in version review.
 - Aligned the root `RELEASE.md` entry point with the bilingual release contract.
+- Corrected the CLI product architecture to `modular-workbench`, normalized `--json` examples, and added a repeatable local PATH installer.
+- Made quota requests fall back to a Codex wrapper or the macOS system proxy when proxy environment variables are absent; a network failure is no longer treated as invalid authentication.
+- Added public mock-data screenshots for the workspace, session center, authentication vault, and Linux node manager together with bilingual interface documentation.
+- Updated the website manifest capabilities, screenshots, and document index, and removed the retired network-repair domain.
+- Added the application version to Linux headless package names and covered desktop and server artifacts with the Release SHA-256 manifest.
 
 ## 0.1.2
 

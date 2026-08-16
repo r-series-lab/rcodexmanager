@@ -18,12 +18,13 @@ use std::thread;
 use std::time::{Duration, Instant};
 
 const SERVER_NODE_STORE_VERSION: u32 = 1;
-const SSH_PROBE_TIMEOUT: Duration = Duration::from_secs(15);
-const SSH_READ_TIMEOUT: Duration = Duration::from_secs(30);
-const SSH_DETAIL_TIMEOUT: Duration = Duration::from_secs(60);
-const SSH_WRITE_TIMEOUT: Duration = Duration::from_secs(60);
-const SSH_NETWORK_TIMEOUT: Duration = Duration::from_secs(120);
-const SSH_CHANNEL_TIMEOUT: Duration = Duration::from_secs(120);
+const SSH_CONNECT_TIMEOUT_OPTION: &str = "ConnectTimeout=30";
+const SSH_PROBE_TIMEOUT: Duration = Duration::from_secs(45);
+const SSH_READ_TIMEOUT: Duration = Duration::from_secs(90);
+const SSH_DETAIL_TIMEOUT: Duration = Duration::from_secs(120);
+const SSH_WRITE_TIMEOUT: Duration = Duration::from_secs(120);
+const SSH_NETWORK_TIMEOUT: Duration = Duration::from_secs(180);
+const SSH_CHANNEL_TIMEOUT: Duration = Duration::from_secs(180);
 const SSH_STDOUT_LIMIT: usize = 8 * 1024 * 1024;
 const SSH_STDERR_LIMIT: usize = 512 * 1024;
 
@@ -441,7 +442,7 @@ pub fn server_profile_login_command(
         "-o",
         "BatchMode=yes",
         "-o",
-        "ConnectTimeout=8",
+        SSH_CONNECT_TIMEOUT_OPTION,
         "-o",
         "ServerAliveInterval=5",
         "-o",
@@ -983,11 +984,24 @@ fn remote_cli_report_from_output(
             SSH_STDOUT_LIMIT / 1024 / 1024
         ));
     }
-    let envelope: Value = serde_json::from_str(output.stdout.trim()).map_err(|error| {
-        format!(
-            "server node returned invalid JSON: {error}; {}",
-            compact_error(&output.stderr, "no diagnostic output")
-        )
+    let stdout = output.stdout.trim();
+    let diagnostic = compact_error(
+        &output.stderr,
+        "the SSH transport ended before any JSON was returned",
+    );
+    if stdout.is_empty() {
+        return Err(format!(
+            "SSH transport ended before the server node returned JSON: {diagnostic}"
+        ));
+    }
+    let envelope: Value = serde_json::from_str(stdout).map_err(|error| {
+        if error.is_eof() {
+            format!(
+                "SSH transport ended before the server node returned complete JSON: {diagnostic}"
+            )
+        } else {
+            format!("server node returned invalid JSON: {error}; {diagnostic}")
+        }
     })?;
     let ok = envelope.get("ok").and_then(Value::as_bool).unwrap_or(false);
     let command = envelope
@@ -1044,7 +1058,7 @@ fn run_ssh_with_input(
             "-o",
             "BatchMode=yes",
             "-o",
-            "ConnectTimeout=8",
+            SSH_CONNECT_TIMEOUT_OPTION,
             "-o",
             "ServerAliveInterval=5",
             "-o",
@@ -1734,11 +1748,74 @@ mod tests {
     }
 
     #[test]
+    fn empty_remote_cli_stdout_is_reported_as_transport_interruption() {
+        let node = ServerNodeConfig {
+            id: "node-1".to_string(),
+            name: "Node".to_string(),
+            ssh_target: "demo-server".to_string(),
+            remote_binary: "rcodexmanager".to_string(),
+            created_at: "now".to_string(),
+            updated_at: "now".to_string(),
+        };
+        let error = remote_cli_report_from_output(
+            &node,
+            ProcessOutput {
+                exit_code: 255,
+                stdout: String::new(),
+                stderr: "Timeout, server demo-server not responding.".to_string(),
+                stdout_truncated: false,
+                stderr_truncated: false,
+                duration_ms: 30_000,
+            },
+            SSH_READ_TIMEOUT,
+            "node-op-1".to_string(),
+            "now".to_string(),
+        )
+        .expect_err("empty stdout should be a transport error");
+
+        assert!(error.contains("SSH transport ended"));
+        assert!(error.contains("Timeout"));
+        assert!(!error.contains("invalid JSON"));
+    }
+
+    #[test]
+    fn incomplete_remote_cli_json_is_reported_as_transport_interruption() {
+        let node = ServerNodeConfig {
+            id: "node-1".to_string(),
+            name: "Node".to_string(),
+            ssh_target: "demo-server".to_string(),
+            remote_binary: "rcodexmanager".to_string(),
+            created_at: "now".to_string(),
+            updated_at: "now".to_string(),
+        };
+        let error = remote_cli_report_from_output(
+            &node,
+            ProcessOutput {
+                exit_code: 0,
+                stdout: "{\"ok\":true,\"command\":\"list\"".to_string(),
+                stderr: String::new(),
+                stdout_truncated: false,
+                stderr_truncated: false,
+                duration_ms: 30_000,
+            },
+            SSH_READ_TIMEOUT,
+            "node-op-1".to_string(),
+            "now".to_string(),
+        )
+        .expect_err("incomplete JSON should be a transport error");
+
+        assert!(error.contains("complete JSON"));
+        assert!(!error.contains("invalid JSON"));
+    }
+
+    #[test]
     fn operation_timeouts_match_expected_workload() {
         assert_eq!(
             operation_timeout(&ServerNodeOperation::ListProfiles),
             SSH_READ_TIMEOUT
         );
+        assert_eq!(SSH_PROBE_TIMEOUT, Duration::from_secs(45));
+        assert_eq!(SSH_READ_TIMEOUT, Duration::from_secs(90));
         assert_eq!(
             operation_timeout(&ServerNodeOperation::ReadSession {
                 input: ReadProfileSessionDetailInput {
@@ -1749,18 +1826,21 @@ mod tests {
             }),
             SSH_DETAIL_TIMEOUT
         );
+        assert_eq!(SSH_DETAIL_TIMEOUT, Duration::from_secs(120));
         assert_eq!(
             operation_timeout(&ServerNodeOperation::ModelRouteCheck {
                 profile_name: "codex-o".to_string(),
             }),
             SSH_NETWORK_TIMEOUT
         );
+        assert_eq!(SSH_NETWORK_TIMEOUT, Duration::from_secs(180));
         assert_eq!(
             operation_timeout(&ServerNodeOperation::WechatStart {
                 profile_name: "codex-o".to_string(),
             }),
             SSH_CHANNEL_TIMEOUT
         );
+        assert_eq!(SSH_CHANNEL_TIMEOUT, Duration::from_secs(180));
     }
 
     #[test]

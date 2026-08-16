@@ -9,7 +9,8 @@ fi
 
 label="${1:-linux-$(uname -m)}"
 package_dir="$repo_root/dist/headless/$label"
-archive="$repo_root/dist/rcodexmanager-$label.tar.gz"
+version="$(python3 -c 'import json, pathlib, sys; print(json.loads(pathlib.Path(sys.argv[1]).read_text())["version"])' "$repo_root/package.json")"
+archive="$repo_root/dist/rCodexManager_${version}_${label}.tar.gz"
 
 "$repo_root/scripts/build-headless-cli.sh"
 

@@ -273,6 +273,18 @@ export interface ProfileReport {
   archivedProfiles?: ProfileInfo[];
 }
 
+export interface ProfileRuntimeInfo {
+  name: string;
+  isRunning: boolean;
+  runningPids: number[];
+  runningProcessCount: number;
+}
+
+export interface ProfileRuntimeReport {
+  generatedAt: string;
+  profiles: ProfileRuntimeInfo[];
+}
+
 export interface ProfileSessionReport {
   generatedAt: string;
   sessionCount: number;

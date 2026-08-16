@@ -1,7 +1,7 @@
 {
   "name": "rcodexmanager",
   "private": true,
-  "version": "0.1.2",
+  "version": "0.1.5",
   "type": "module",
   "scripts": {
     "dev": "npm run tauri dev",
@@ -30,7 +30,9 @@
     "headless:build": "./scripts/build-headless-cli.sh",
     "headless:test": "cargo test --manifest-path ./headless-cli/Cargo.toml",
     "headless:package": "./scripts/package-headless-cli.sh",
+    "cli:install": "./scripts/install-local-cli.sh",
     "skill:install": "./scripts/install-skill.sh",
+    "screenshots:product": "RCODEXMANAGER_CAPTURE_PRODUCT=1 playwright test e2e/product-screenshots.spec.ts --project=desktop-light",
     "skill:check": "./scripts/install-skill.sh --check",
     "size": "du -sh ./target ./dist 2>/dev/null || true",
     "clean:build-cache": "cargo clean --manifest-path ./src-tauri/Cargo.toml -p rcodexmanager && rm -rf ./dist ./target/release/bundle",
@@ -57,7 +59,7 @@
     "@vitejs/plugin-react": "^4.6.0",
     "jsdom": "^29.1.1",
     "typescript": "~5.8.3",
-    "vite": "^7.0.4",
+    "vite": "^7.3.6",
     "vitest": "^4.1.10"
   }
 }

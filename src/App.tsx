@@ -91,6 +91,7 @@ import {
   listModelRoutes,
   listWechatBridges,
   launchProfile,
+  listProfileRuntimeStatuses,
   listProfileSessions,
   listProfiles,
   previewModelRoute,
@@ -172,6 +173,7 @@ import {
   quotaWindowsForList,
   type ProfileQuotaCacheState,
 } from "./lib/profileQuota";
+import { mergeProfileRuntimeReport } from "./lib/profileRuntime";
 import {
   createTranslator,
   I18nProvider,
@@ -215,6 +217,8 @@ const actionKeys = {
   modelRouteProxy: "modelRoute.proxy",
   modelRouteCcSwitch: "modelRoute.cc-switch",
 };
+
+const PROFILE_RUNTIME_REFRESH_INTERVAL_MS = 5_000;
 
 type ProfileContextMenuState = {
   mouseX: number;
@@ -512,6 +516,8 @@ function App() {
   const styleMode = themePreference === "system" ? systemStyleMode : themePreference;
   const theme = useMemo(() => createRcodexManagerTheme(styleMode), [styleMode]);
   const [report, setReport] = useState<ProfileReport | null>(null);
+  const profileRuntimeTargetsRef = useRef<ProfileInfo[]>([]);
+  const profileRuntimeRefreshInFlightRef = useRef(false);
   const [activeName, setActiveName] = useState(initialActiveProfileName);
   const [profileSort, setProfileSort] = useState<ProfileSortMode>(initialProfileSortMode);
   const [query, setQuery] = useState("");
@@ -835,6 +841,10 @@ function App() {
     }
     try {
       const nextReport = await listProfiles();
+      profileRuntimeTargetsRef.current = [
+        ...nextReport.profiles,
+        ...(nextReport.archivedProfiles ?? []),
+      ];
       setReport(nextReport);
       setActiveName((current) => {
         const availableProfiles = statusFilter === "archived"
@@ -858,6 +868,21 @@ function App() {
       });
     } finally {
       finishAction(actionKeys.profileRefresh);
+    }
+  }
+
+  async function refreshProfileRuntimeStatuses() {
+    if (profileRuntimeRefreshInFlightRef.current || profileRuntimeTargetsRef.current.length === 0) {
+      return;
+    }
+    profileRuntimeRefreshInFlightRef.current = true;
+    try {
+      const runtimeReport = await listProfileRuntimeStatuses(profileRuntimeTargetsRef.current);
+      setReport((current) => current ? mergeProfileRuntimeReport(current, runtimeReport) : current);
+    } catch {
+      // Manual refresh remains the visible recovery path for transient process-scan failures.
+    } finally {
+      profileRuntimeRefreshInFlightRef.current = false;
     }
   }
 
@@ -1178,6 +1203,37 @@ function App() {
 
   useEffect(() => {
     void refreshProfiles();
+  }, []);
+
+  useEffect(() => {
+    let interval: number | null = null;
+    const stopPolling = () => {
+      if (interval !== null) {
+        window.clearInterval(interval);
+        interval = null;
+      }
+    };
+    const syncRuntime = () => {
+      if (document.visibilityState === "visible") {
+        void refreshProfileRuntimeStatuses();
+      }
+    };
+    const updatePolling = () => {
+      stopPolling();
+      if (document.visibilityState === "visible") {
+        syncRuntime();
+        interval = window.setInterval(syncRuntime, PROFILE_RUNTIME_REFRESH_INTERVAL_MS);
+      }
+    };
+
+    document.addEventListener("visibilitychange", updatePolling);
+    window.addEventListener("focus", syncRuntime);
+    updatePolling();
+    return () => {
+      stopPolling();
+      document.removeEventListener("visibilitychange", updatePolling);
+      window.removeEventListener("focus", syncRuntime);
+    };
   }, []);
 
   useEffect(() => {

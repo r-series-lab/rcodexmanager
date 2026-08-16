@@ -29,12 +29,30 @@
     "index": "02",
     "accent": "#3978f6",
     "accentSoft": "#dfe9ff",
-    "platforms": ["macOS", "Windows", "Linux CLI"],
-    "formats": ["Tauri", "Rust", "JSON CLI", "SSH"],
+    "platforms": [
+      "macOS",
+      "Windows",
+      "Linux CLI"
+    ],
+    "formats": [
+      "Tauri",
+      "Rust",
+      "JSON CLI",
+      "SSH"
+    ],
     "facts": [
-      { "label": "核心对象", "value": "隔离 Codex Profile" },
-      { "label": "远端协议", "value": "SSH + 单对象 JSON" },
-      { "label": "敏感数据", "value": "本机保存与脱敏诊断" }
+      {
+        "label": "核心对象",
+        "value": "隔离 Codex Profile"
+      },
+      {
+        "label": "远端协议",
+        "value": "SSH + 单对象 JSON"
+      },
+      {
+        "label": "敏感数据",
+        "value": "本机保存与脱敏诊断"
+      }
     ],
     "capabilities": [
       {
@@ -94,8 +112,99 @@
       "title": "高权限动作必须保持可见、可回滚",
       "body": "认证、配置和远端写入均有运行状态保护、备份和显式确认。应用不保存 SSH 凭据，不把密钥写入参数或诊断，也不接管来源不明的外部进程。"
     },
-    "releaseSummary": "0.1.2 增加服务器 Profile 的模型与 Provider 反显、安全模型切换和远端版本兼容提示。",
-    "screenshots": []
+    "releaseSummary": "0.1.5 Public Preview 已覆盖紧凑 Profile 工作区、额度与认证状态、五个按需加载的管理中心、官方登录流程和 SSH Linux 节点管理。",
+    "screenshots": [
+      {
+        "id": "profile-workspace",
+        "source": "docs/assets/screenshots/profile-workspace.png",
+        "alt": "使用 mock Profile 数据展示的 rCodexManager 主工作区",
+        "title": "Profile 工作区：一屏比较所有 Codex 环境",
+        "description": "主工作区把账号、认证、模型、最近会话、额度、环境和运行状态放进同一张紧凑表格，适合日常决定该启动、登录、归档还是进入管理中心。",
+        "highlights": [
+          "搜索、分类、状态和排序筛选 Profile",
+          "直接查看认证、额度、最近会话和运行状态",
+          "从行内动作启动、停止、归档或进入更多操作"
+        ],
+        "caption": "在一张紧凑列表中比较账号、认证、会话、额度、环境与运行状态，并保留启动、归档和删除等高频操作。",
+        "width": 1440,
+        "height": 900
+      },
+      {
+        "id": "session-center",
+        "source": "docs/assets/screenshots/session-center.png",
+        "alt": "rCodexManager 会话中心的索引与按需详情",
+        "title": "会话中心：先找索引，再读单条详情",
+        "description": "会话中心按 Profile、分类、关键词和分页检索历史会话，只有选中记录后才读取 JSONL 详情，适合快速定位最近工作上下文。",
+        "highlights": [
+          "分页搜索会话标题、摘要和来源",
+          "按 Profile 与分类缩小范围",
+          "选中后查看摘要、cwd 和来源路径"
+        ],
+        "caption": "先分页检索会话索引，选中后才读取单条详情，避免打开弹窗时扫描全部 JSONL 正文。",
+        "width": 1376,
+        "height": 720
+      },
+      {
+        "id": "auth-vault",
+        "source": "docs/assets/screenshots/auth-vault.png",
+        "alt": "rCodexManager 认证库的备份列表与详情",
+        "title": "认证库：备份、预检、应用和回滚登录态",
+        "description": "认证库展示已授权 auth.json 备份的有效性、来源、账号和应用历史，写入前通过预检、运行状态保护和恢复备份降低误操作风险。",
+        "highlights": [
+          "查看备份有效性、来源和账号",
+          "导入前只读预检外部包",
+          "应用或回滚前确认目标 Profile"
+        ],
+        "caption": "认证备份、有效性、来源和应用目标保持可见，写入前使用预检、运行保护和可恢复备份。",
+        "width": 1376,
+        "height": 720
+      },
+      {
+        "id": "remote-channels",
+        "source": "docs/assets/screenshots/remote-channels.png",
+        "alt": "rCodexManager 远程渠道管理微信与飞书连接",
+        "title": "远程渠道：把微信与飞书绑定到指定 Profile",
+        "description": "远程渠道按 Profile 管理微信桥接和飞书运行时，展示绑定、运行、日志和配置状态，同时不把第三方 App Secret 纳入 rCodexManager 数据。",
+        "highlights": [
+          "按 Profile 启停微信桥接",
+          "绑定外部 Feishu 运行时和二进制路径",
+          "查看脱敏日志与连接状态"
+        ],
+        "caption": "微信与飞书都围绕选中的 Profile 工作；遇到异常时先看状态与脱敏日志，再决定是否重启。",
+        "width": 1376,
+        "height": 720
+      },
+      {
+        "id": "model-routing",
+        "source": "docs/assets/screenshots/model-routing.png",
+        "alt": "rCodexManager 模型路由配置页面",
+        "title": "模型路由：先测试和预览，再写入 config.toml",
+        "description": "模型路由把 Provider 模板、模型、Responses URL、代理和诊断放在一起，草稿测试不会写文件，应用前会展示预览并备份配置。",
+        "highlights": [
+          "选择 Provider 模板、模型和 URL",
+          "草稿测试不修改当前配置",
+          "应用前预览写入内容并保留备份"
+        ],
+        "caption": "适合为自定义 Profile 接入 Qwen、GLM、本地模型或外部 Responses 服务，同时保持 auth.json 不变。",
+        "width": 1376,
+        "height": 720
+      },
+      {
+        "id": "server-nodes",
+        "source": "docs/assets/screenshots/server-nodes.png",
+        "alt": "rCodexManager 通过 SSH 管理 Linux Codex 节点",
+        "title": "服务器节点：通过 SSH 管理 Linux Codex",
+        "description": "服务器节点通过既有 SSH Host 调用远端 headless CLI，按需查看 Profile、会话、认证、路由、渠道和 Doctor，不保存 SSH 凭据。",
+        "highlights": [
+          "从 SSH Host 探测服务器节点",
+          "按标签加载远程 Profile、会话和认证",
+          "查看任务号、耗时、超时和失败建议"
+        ],
+        "caption": "通过既有 SSH Host 查看服务器 Profile、模型、认证和运行状态，不保存 SSH 凭据，也不开放额外端口。",
+        "width": 1376,
+        "height": 720
+      }
+    ]
   },
   "documentation": [
     {
@@ -111,6 +220,13 @@
       "description": "命令、JSON 合同、远端节点和 Agent 安全执行顺序。",
       "group": "自动化",
       "source": "docs/cli.md"
+    },
+    {
+      "id": "interface-guide",
+      "label": "界面与功能说明",
+      "description": "主工作区、五个管理中心、设置、登录与服务器节点的交互说明。",
+      "group": "开始使用",
+      "source": "docs/interface.md"
     },
     {
       "id": "release-workflow",
@@ -144,9 +260,18 @@
         },
         "website": {
           "facts": [
-            { "label": "Core object", "value": "Isolated Codex profile" },
-            { "label": "Remote protocol", "value": "SSH + single-object JSON" },
-            { "label": "Sensitive data", "value": "Local storage and redacted diagnostics" }
+            {
+              "label": "Core object",
+              "value": "Isolated Codex profile"
+            },
+            {
+              "label": "Remote protocol",
+              "value": "SSH + single-object JSON"
+            },
+            {
+              "label": "Sensitive data",
+              "value": "Local storage and redacted diagnostics"
+            }
           ],
           "capabilities": [
             {
@@ -206,7 +331,99 @@
             "title": "Privileged actions remain visible and recoverable",
             "body": "Authentication, configuration, and remote writes use runtime guards, backups, and explicit confirmation. The app does not store SSH credentials, place secrets in arguments or diagnostics, or take over external processes whose ownership cannot be established."
           },
-          "releaseSummary": "Version 0.1.2 adds server-profile model and provider visibility, guarded model switching, and remote version compatibility guidance."
+          "releaseSummary": "Version 0.1.5 Public Preview covers the compact Profile workspace, quota and authentication state, five lazy-loaded management centers, official sign-in, and SSH-managed Linux nodes.",
+          "screenshots": [
+            {
+              "id": "profile-workspace",
+              "source": "docs/assets/screenshots/profile-workspace.png",
+              "alt": "The rCodexManager workspace populated with public mock Profile data",
+              "title": "Profile workspace: compare every Codex environment in one view",
+              "description": "The workspace brings account, authentication, model, latest session, quota, environment, and runtime state into one compact table so users can decide whether to launch, sign in, archive, or open a management center.",
+              "highlights": [
+                "Filter Profiles by search, category, state, and sort order",
+                "Review authentication, quota, latest session, and runtime state",
+                "Launch, stop, archive, or open more actions from each row"
+              ],
+              "caption": "Compare accounts, authentication, sessions, quota, environment, and runtime state in one compact table with frequent lifecycle actions kept close at hand.",
+              "width": 1440,
+              "height": 900
+            },
+            {
+              "id": "session-center",
+              "source": "docs/assets/screenshots/session-center.png",
+              "alt": "The paginated rCodexManager session index and on-demand detail panel",
+              "title": "Session center: search the index before reading details",
+              "description": "Session Center filters history by Profile, category, query, and page size, then reads one selected JSONL detail only after the user asks for it.",
+              "highlights": [
+                "Search session titles, summaries, and sources",
+                "Narrow results by Profile and category",
+                "Read summary, cwd, and source path after selection"
+              ],
+              "caption": "Search the bounded index first and load one selected transcript detail instead of scanning every JSONL body when the dialog opens.",
+              "width": 1376,
+              "height": 720
+            },
+            {
+              "id": "auth-vault",
+              "source": "docs/assets/screenshots/auth-vault.png",
+              "alt": "The rCodexManager authentication vault list and detail panel",
+              "title": "Authentication vault: back up, preview, apply, and roll back login state",
+              "description": "The vault shows backup validity, source, account, and application history. Preview checks, runtime guards, and recovery backups protect every write.",
+              "highlights": [
+                "Inspect backup validity, source, and account",
+                "Preview imported packages before writing",
+                "Confirm target Profile before apply or rollback"
+              ],
+              "caption": "Backup validity, source, and target remain visible while previews, runtime guards, and recovery copies protect every write.",
+              "width": 1376,
+              "height": 720
+            },
+            {
+              "id": "remote-channels",
+              "source": "docs/assets/screenshots/remote-channels.png",
+              "alt": "rCodexManager managing WeChat and Feishu remote channels",
+              "title": "Remote channels: bind WeChat and Feishu to a selected Profile",
+              "description": "Remote Channels manages the profile-specific WeChat bridge and external Feishu runtime, keeping binding, runtime, logs, and configuration state visible without absorbing third-party secrets.",
+              "highlights": [
+                "Start and stop WeChat bridge instances per Profile",
+                "Bind an external Feishu runtime and binary path",
+                "Read redacted logs and connection state"
+              ],
+              "caption": "WeChat and Feishu both operate around the selected Profile; check state and redacted logs before restarting a failed channel.",
+              "width": 1376,
+              "height": 720
+            },
+            {
+              "id": "model-routing",
+              "source": "docs/assets/screenshots/model-routing.png",
+              "alt": "The rCodexManager model routing configuration page",
+              "title": "Model routing: test and preview before writing config.toml",
+              "description": "Model Routing keeps provider templates, model names, Responses URLs, proxy state, and diagnostics together. Draft tests do not write files, and apply requires a visible preview plus a backup.",
+              "highlights": [
+                "Choose provider template, model, and base URLs",
+                "Run draft tests without changing saved config",
+                "Preview writes and keep a recovery backup"
+              ],
+              "caption": "Use it to connect custom Profiles to Qwen, GLM, local models, or external Responses services while leaving auth.json untouched.",
+              "width": 1376,
+              "height": 720
+            },
+            {
+              "id": "server-nodes",
+              "source": "docs/assets/screenshots/server-nodes.png",
+              "alt": "rCodexManager managing a headless Linux Codex node over SSH",
+              "title": "Linux server nodes: manage Codex over SSH",
+              "description": "Server Nodes calls a remote headless CLI through an existing SSH Host and loads Profiles, sessions, authentication, routing, channels, and Doctor only when needed.",
+              "highlights": [
+                "Probe nodes from configured SSH Hosts",
+                "Load remote Profiles, sessions, and authentication by tab",
+                "Review operation ids, durations, timeouts, and recovery hints"
+              ],
+              "caption": "Inspect server Profiles, models, authentication, and runtime state through an existing SSH Host without storing SSH credentials or opening a management port.",
+              "width": 1376,
+              "height": 720
+            }
+          ]
         },
         "documentation": [
           {
@@ -215,7 +432,15 @@
             "description": "Profiles, sessions, authentication, channels, model routing, Linux nodes, CLI, and security boundaries.",
             "group": "Getting started",
             "source": "README_EN.md",
-            "reviewedForVersion": "0.1.2"
+            "reviewedForVersion": "0.1.5"
+          },
+          {
+            "id": "interface-guide",
+            "label": "Interface and feature guide",
+            "description": "The main workspace, five management centers, settings, sign-in, and Linux node interactions.",
+            "group": "Getting started",
+            "source": "docs/interface_EN.md",
+            "reviewedForVersion": "0.1.5"
           },
           {
             "id": "release-workflow",
@@ -223,7 +448,7 @@
             "description": "Source checks, server-created Tags, desktop and headless builds, and Draft Release review.",
             "group": "Releases",
             "source": "docs/RELEASE_WORKFLOW_EN.md",
-            "reviewedForVersion": "0.1.2"
+            "reviewedForVersion": "0.1.5"
           },
           {
             "id": "changelog",
@@ -231,7 +456,7 @@
             "description": "Features, security, compatibility, and documentation changes by version.",
             "group": "Releases",
             "source": "CHANGELOG_EN.md",
-            "reviewedForVersion": "0.1.2"
+            "reviewedForVersion": "0.1.5"
           }
         ]
       }
@@ -240,9 +465,18 @@
   "cli": {
     "contractVersion": 1,
     "jsonFlagPosition": "global-before-command",
-    "infoCommand": ["--json", "info"],
-    "capabilitiesCommand": ["--json", "capabilities"],
-    "doctorCommand": ["--json", "doctor"],
+    "infoCommand": [
+      "--json",
+      "info"
+    ],
+    "capabilitiesCommand": [
+      "--json",
+      "capabilities"
+    ],
+    "doctorCommand": [
+      "--json",
+      "doctor"
+    ],
     "domains": [
       "profiles",
       "sessions",
@@ -250,8 +484,7 @@
       "model",
       "wechat",
       "feishu",
-      "model-route",
-      "network"
+      "model-route"
     ],
     "highRiskPolicy": "认证导入、Profile 删除或重置、模型路由写入和远端配置变更必须先检查运行状态、生成备份并要求显式敏感操作确认。"
   },
@@ -278,6 +511,8 @@
       "rust-check",
       "rust-test",
       "headless:test",
+      "cli:install",
+      "screenshots:product",
       "test:scripts"
     ],
     "validationCommands": [

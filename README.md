@@ -4,6 +4,15 @@
   中文 · <a href="README_EN.md">English</a>
 </p>
 
+<p align="center">
+  <a href="https://rcm.rurie.top">官方网站</a> ·
+  <a href="https://rcm.rurie.top/zh/docs">使用文档</a> ·
+  <a href="https://github.com/r-series-lab/rcodexmanager/releases">预览版下载</a> ·
+  <a href="https://github.com/r-series-lab/rcodexmanager/issues">问题反馈</a>
+</p>
+
+> **独立项目声明：** rCodexManager 是社区维护的独立开源项目，不隶属于 OpenAI，也未获得 OpenAI 的赞助或背书。Codex 与 OpenAI 是其各自权利人的商标。当前 `0.1.x` 为 Public Preview，安装包签名状态见[发布流程](docs/RELEASE_WORKFLOW.md)。
+
 `rCodexManager` 是一个本地优先的 Codex 多 profile 工作台。它把多个隔离的 Codex 实例、历史会话、登录态备份、远程消息渠道和第三方模型路由集中在一个桌面应用与 CLI 中管理，也支持从 Mac 通过 SSH 管理 Linux 服务器上的 Codex。
 
 它适合这些场景：
@@ -21,7 +30,7 @@
 
 | 模块 | 主要能力 | 数据加载策略 |
 | --- | --- | --- |
-| Profile 工作区 | 创建、复制、编辑、启动、终止、重置、归档、官方登录、账号导入、额度窗口查询、网络修复 | 首页只读取 profile 状态和最近摘要 |
+| Profile 工作区 | 创建、复制、编辑、启动、终止、重置、归档、官方登录、账号导入、额度窗口查询 | 首页只读取 profile 状态和最近摘要 |
 | Doctor 诊断 | 一键检查启动配置、profile 路径、进程、认证、模型路由、代理、认证库与远程渠道 | 只读执行，报告自动脱敏 |
 | 会话中心 | 搜索、profile/分类筛选、分页、摘要/来源详情、复制摘要 | 先读索引，选中后才读取单条 JSONL 详情 |
 | 认证库 | 单个或批量备份、导入预检、导入导出、备注/置顶、应用、回滚、重复清理 | 打开弹窗后加载，30 秒缓存 |
@@ -32,6 +41,24 @@
 桌面窗口默认与最小尺寸均为 `1000×800`。各管理域共用紧凑的主从式弹窗、亮色/暗色/跟随系统主题和统一的加载、错误、空状态与安全确认交互。
 
 设置弹窗中的“运行诊断”可生成一份只读 Doctor 报告。诊断不会修改 profile、认证或渠道配置；报告只保留状态和可操作建议，并隐藏 token、密钥、邮箱与完整本机路径。出现问题时建议先运行诊断，再进入对应管理中心处理。
+
+## 界面预览
+
+公开界面图由仓库内置 mock 数据生成，只包含 `example.com` 账号和示例路径。主工作区用于快速比较，较重的任务进入五个按需加载的管理中心。
+
+![Profile 主工作区](docs/assets/screenshots/profile-workspace.png)
+
+| 会话中心 | 认证库 |
+| --- | --- |
+| ![会话中心](docs/assets/screenshots/session-center.png) | ![认证库](docs/assets/screenshots/auth-vault.png) |
+
+| 远程渠道 | 模型路由 |
+| --- | --- |
+| ![远程渠道](docs/assets/screenshots/remote-channels.png) | ![模型路由](docs/assets/screenshots/model-routing.png) |
+
+![Linux 服务器节点](docs/assets/screenshots/server-nodes.png)
+
+完整交互、数据加载和安全边界见[界面与功能说明](docs/interface.md)。
 
 ## Profile 模型
 
@@ -145,6 +172,16 @@ npm run dev
 npm run build
 ```
 
+将当前源码对应的 CLI 安装到已在 `PATH` 中的 `~/.local/bin`：
+
+```bash
+npm run cli:install
+rcodexmanager --json info
+rcodexmanager --json capabilities
+```
+
+安装脚本会使用当前主机 release 二进制并回显实际版本与产品架构。也可以把已构建二进制路径作为脚本参数传入。
+
 `npm run build` 只用于本地开发验证，不作为正式 Release 资产来源。日常源码验收使用：
 
 ```bash
@@ -158,7 +195,7 @@ npm run headless:test
 npm run headless:package
 ```
 
-将 `dist/rcodexmanager-linux-<arch>.tar.gz` 上传到服务器并解压后：
+将 `dist/rCodexManager_<version>_linux-<arch>.tar.gz` 上传到服务器并解压后：
 
 ```bash
 ./install.sh

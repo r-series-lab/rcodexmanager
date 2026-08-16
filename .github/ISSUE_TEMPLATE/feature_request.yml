@@ -1,0 +1,29 @@
+name: Feature request
+description: Propose a focused improvement
+title: "[Feature]: "
+labels: ["enhancement", "needs-triage"]
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem
+      description: Describe the workflow and safety problem.
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed behavior
+    validations:
+      required: true
+  - type: textarea
+    id: safety
+    attributes:
+      label: Authentication, remote-write, and rollback considerations
+  - type: dropdown
+    id: surface
+    attributes:
+      label: Primary surface
+      options: [Profiles, Sessions, Authentication, Channels, Model routing, Linux nodes, CLI or AI, Other]
+    validations:
+      required: true

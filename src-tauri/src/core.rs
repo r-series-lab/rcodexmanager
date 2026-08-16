@@ -721,6 +721,32 @@ pub struct ProfileReport {
     pub archived_profiles: Vec<ProfileInfo>,
 }
 
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ProfileRuntimeTarget {
+    pub name: String,
+    pub codex_home: String,
+    pub user_data_dir: String,
+    pub launcher_kind: ProfileLauncherKind,
+    pub is_default: bool,
+}
+
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct ProfileRuntimeInfo {
+    pub name: String,
+    pub is_running: bool,
+    pub running_pids: Vec<u32>,
+    pub running_process_count: usize,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ProfileRuntimeReport {
+    pub generated_at: String,
+    pub profiles: Vec<ProfileRuntimeInfo>,
+}
+
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ProfileSessionReport {
@@ -1221,6 +1247,25 @@ pub fn list_profiles(context: &ProfileContext) -> Result<ProfileReport, String> 
         archived_count: archived_profiles.len(),
         profiles,
         archived_profiles,
+    })
+}
+
+pub fn list_profile_runtime_statuses(
+    context: &ProfileContext,
+    targets: Vec<ProfileRuntimeTarget>,
+) -> Result<ProfileRuntimeReport, String> {
+    if targets.len() > 256 {
+        return Err("too many profile runtime targets; maximum is 256".to_string());
+    }
+    for target in &targets {
+        validate_profile_selector_name(&target.name)?;
+    }
+
+    let running_processes = running_codex_processes()?;
+    let profiles = profile_runtime_statuses_from_processes(context, targets, &running_processes);
+    Ok(ProfileRuntimeReport {
+        generated_at: now_iso(),
+        profiles,
     })
 }
 
@@ -6137,6 +6182,39 @@ fn matching_default_profile_pids(
         .collect()
 }
 
+fn profile_runtime_statuses_from_processes(
+    context: &ProfileContext,
+    targets: Vec<ProfileRuntimeTarget>,
+    processes: &[RunningCodexProcess],
+) -> Vec<ProfileRuntimeInfo> {
+    targets
+        .into_iter()
+        .map(|target| {
+            let codex_home = PathBuf::from(&target.codex_home);
+            let user_data_dir = PathBuf::from(&target.user_data_dir);
+            let mut running_pids = if target.is_default {
+                matching_default_profile_pids(processes, &codex_home, &user_data_dir)
+            } else {
+                matching_profile_pids(processes, &codex_home, &user_data_dir)
+            };
+            if target.launcher_kind == ProfileLauncherKind::Server {
+                if let Some(pid) = server_profile_tmux_pid(context, &target.name) {
+                    running_pids.push(pid);
+                }
+            }
+            running_pids.sort_unstable();
+            running_pids.dedup();
+
+            ProfileRuntimeInfo {
+                name: target.name,
+                is_running: !running_pids.is_empty(),
+                running_process_count: running_pids.len(),
+                running_pids,
+            }
+        })
+        .collect()
+}
+
 #[cfg(target_os = "linux")]
 fn read_process_codex_home(pid: u32) -> Option<PathBuf> {
     let environ = fs::read(format!("/proc/{pid}/environ")).ok()?;
@@ -7378,7 +7456,9 @@ fn fetch_usage_json(
 }
 
 fn resolve_quota_proxy_url(context: &ProfileContext) -> Option<String> {
-    proxy_url_from_environment().or_else(|| proxy_url_from_codex_wrapper(context))
+    proxy_url_from_environment()
+        .or_else(|| proxy_url_from_codex_wrapper(context))
+        .or_else(proxy_url_from_system_settings)
 }
 
 fn proxy_url_from_environment() -> Option<String> {
@@ -7411,6 +7491,25 @@ fn proxy_url_from_codex_wrapper(context: &ProfileContext) -> Option<String> {
         let contents = fs::read_to_string(path).ok()?;
         proxy_url_from_shell_script(&contents)
     })
+}
+
+#[cfg(target_os = "macos")]
+fn proxy_url_from_system_settings() -> Option<String> {
+    let proxy = detect_system_proxy_env().ok()?;
+    preferred_quota_proxy_url(&proxy)
+}
+
+#[cfg(not(target_os = "macos"))]
+fn proxy_url_from_system_settings() -> Option<String> {
+    None
+}
+
+fn preferred_quota_proxy_url(proxy: &ProxyEnvSettings) -> Option<String> {
+    proxy
+        .https_proxy
+        .as_deref()
+        .or(proxy.http_proxy.as_deref())
+        .and_then(normalize_http_proxy_url)
 }
 
 fn proxy_url_from_shell_script(contents: &str) -> Option<String> {
@@ -11352,16 +11451,17 @@ mod tests {
         clear_model_route_proxy_diagnostic, clear_model_route_proxy_logs,
         command_has_user_data_dir, feishu_remote_paths, is_codex_main_process,
         matching_profile_pids, model_route_proxy_check_result, model_route_responses_endpoint,
-        parse_codex_home_from_environ, parse_node_major_version, proxy_url_from_codex_wrapper,
-        proxy_url_from_shell_script, read_model_route_proxy_status,
+        parse_codex_home_from_environ, parse_node_major_version, preferred_quota_proxy_url,
+        profile_runtime_statuses_from_processes, proxy_env_from_scutil,
+        proxy_url_from_codex_wrapper, proxy_url_from_shell_script, read_model_route_proxy_status,
         read_recent_session_index_summaries, read_session_file_details,
         record_model_route_proxy_diagnostic, responses_to_chat_completions_minimal,
         responses_to_chat_completions_with_context, sanitize_external_command_output,
         server_profile_launch_command, start_model_route_proxy, stop_model_route_proxy,
         terminate_wechat_bridge_pids, wechat_runtime_path_entries, CodexAuthMaterial,
         ModelRouteStreamState, ModelRouteToolContext, ProfileAuthStatus, ProfileContext,
-        RunningCodexProcess, MODEL_ROUTE_PROXY_PORT, SESSION_DETAIL_HEAD_BYTES,
-        SESSION_DETAIL_TAIL_BYTES,
+        ProfileLauncherKind, ProfileRuntimeTarget, RunningCodexProcess, MODEL_ROUTE_PROXY_PORT,
+        SESSION_DETAIL_HEAD_BYTES, SESSION_DETAIL_TAIL_BYTES,
     };
 
     static MODEL_ROUTE_PROXY_TEST_LOCK: Mutex<()> = Mutex::new(());
@@ -11484,6 +11584,60 @@ mod tests {
     }
 
     #[test]
+    fn runtime_statuses_match_targets_and_normalize_pids() {
+        let temp = tempfile::tempdir().unwrap();
+        let context = ProfileContext {
+            home_dir: temp.path().to_path_buf(),
+            zshrc_path: temp.path().join(".zshrc"),
+        };
+        let codex_home = temp.path().join(".codex-a");
+        let user_data_dir = temp.path().join("Codex-A");
+        let processes = vec![
+            RunningCodexProcess {
+                pid: 90,
+                command: format!(
+                    "/Applications/Codex.app/Contents/MacOS/Codex --user-data-dir={}",
+                    user_data_dir.display()
+                ),
+                codex_home: None,
+            },
+            RunningCodexProcess {
+                pid: 12,
+                command: "/usr/local/bin/codex".to_string(),
+                codex_home: Some(codex_home.clone()),
+            },
+        ];
+        let statuses = profile_runtime_statuses_from_processes(
+            &context,
+            vec![
+                ProfileRuntimeTarget {
+                    name: "codex-a".to_string(),
+                    codex_home: codex_home.to_string_lossy().into_owned(),
+                    user_data_dir: user_data_dir.to_string_lossy().into_owned(),
+                    launcher_kind: ProfileLauncherKind::Desktop,
+                    is_default: false,
+                },
+                ProfileRuntimeTarget {
+                    name: "codex-b".to_string(),
+                    codex_home: temp.path().join(".codex-b").to_string_lossy().into_owned(),
+                    user_data_dir: temp.path().join("Codex-B").to_string_lossy().into_owned(),
+                    launcher_kind: ProfileLauncherKind::Desktop,
+                    is_default: false,
+                },
+            ],
+            &processes,
+        );
+
+        assert_eq!(statuses[0].name, "codex-a");
+        assert_eq!(statuses[0].running_pids, vec![12, 90]);
+        assert_eq!(statuses[0].running_process_count, 2);
+        assert!(statuses[0].is_running);
+        assert_eq!(statuses[1].name, "codex-b");
+        assert!(statuses[1].running_pids.is_empty());
+        assert!(!statuses[1].is_running);
+    }
+
+    #[test]
     fn server_launch_command_quotes_profile_paths_and_proxy_values() {
         let command = server_profile_launch_command(
             "/home/demo/codex profile",
@@ -11526,6 +11680,26 @@ exec /usr/local/bin/codex "$@"
         assert_eq!(
             proxy_url_from_codex_wrapper(&context).as_deref(),
             Some("http://127.0.0.1:7890")
+        );
+    }
+
+    #[test]
+    fn quota_proxy_uses_the_enabled_macos_https_proxy() {
+        let settings = proxy_env_from_scutil(
+            r#"
+  HTTPEnable : 1
+  HTTPPort : 7897
+  HTTPProxy : 127.0.0.1
+  HTTPSEnable : 1
+  HTTPSPort : 7897
+  HTTPSProxy : 127.0.0.1
+"#,
+        )
+        .expect("system proxy settings");
+
+        assert_eq!(
+            preferred_quota_proxy_url(&settings).as_deref(),
+            Some("http://127.0.0.1:7897")
         );
     }
 

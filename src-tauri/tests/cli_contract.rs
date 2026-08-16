@@ -98,7 +98,7 @@ fn info_json_returns_family_metadata() {
     assert_eq!(payload["command"], "info");
     assert_eq!(payload["data"]["name"], "rCodexManager");
     assert_eq!(payload["data"]["binary"], "rcodexmanager");
-    assert_eq!(payload["data"]["architecture"], "simple-tool");
+    assert_eq!(payload["data"]["architecture"], "modular-workbench");
 }
 
 #[test]
@@ -130,6 +130,21 @@ fn capabilities_json_lists_profile_commands() {
     assert!(commands.iter().any(|item| item["command"] == "wechat"));
     assert!(commands.iter().any(|item| item["command"] == "feishu"));
     assert!(commands.iter().any(|item| item["command"] == "model-route"));
+
+    for command in commands.iter().filter(|item| item["jsonSupported"] == true) {
+        for example in command["examples"]
+            .as_array()
+            .expect("capability examples should be an array")
+        {
+            assert!(
+                example
+                    .as_str()
+                    .expect("capability example should be text")
+                    .starts_with("rcodexmanager --json "),
+                "JSON capability example must place the global flag before the command: {example}"
+            );
+        }
+    }
 }
 
 #[test]

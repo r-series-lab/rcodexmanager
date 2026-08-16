@@ -170,6 +170,18 @@ async fn list_profiles_command() -> Result<core::ProfileReport, String> {
 }
 
 #[tauri::command]
+async fn list_profile_runtime_statuses_command(
+    targets: Vec<core::ProfileRuntimeTarget>,
+) -> Result<core::ProfileRuntimeReport, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let context = core::ProfileContext::from_options(None, None)?;
+        core::list_profile_runtime_statuses(&context, targets)
+    })
+    .await
+    .map_err(|error| error.to_string())?
+}
+
+#[tauri::command]
 async fn list_profile_sessions_command(
     input: core::ListProfileSessionsInput,
 ) -> Result<core::ProfileSessionReport, String> {
@@ -722,6 +734,7 @@ pub fn run() {
             open_auth_login_url_command,
             run_doctor_command,
             list_profiles_command,
+            list_profile_runtime_statuses_command,
             list_profile_sessions_command,
             read_profile_session_detail_command,
             list_auth_vault_command,
