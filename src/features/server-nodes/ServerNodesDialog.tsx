@@ -607,6 +607,28 @@ export function ServerNodesDialog({
     }
   }
 
+  function rememberProbeFailure(
+    nodeId: string,
+    message: string,
+    startedAt: string,
+    started: number,
+  ) {
+    setTaskHistory((current) => appendServerNodeTask(current, {
+      nodeId,
+      operationId: `node-probe-${Date.now()}`,
+      startedAt,
+      generatedAt: new Date().toISOString(),
+      status: "failed",
+      label: "检查服务器连接",
+      command: "probe",
+      durationMs: Math.round(performance.now() - started),
+      timeoutSeconds: null,
+      outputTruncated: false,
+      error: redactServerNodeText(message),
+      retryOperation: null,
+    }));
+  }
+
   async function copyTaskDiagnostic(task: ServerNodeTaskEntry | null = latestTask) {
     if (!selectedNode) return;
     try {
@@ -968,17 +990,21 @@ export function ServerNodesDialog({
 
   async function refreshSelectedNode(nodeId = selectedNodeId) {
     if (!nodeId) return;
+    const startedAt = new Date().toISOString();
+    const started = performance.now();
     setAction("refresh");
     setError(null);
     try {
       const nextProbe = await probeServerNode(nodeId);
       if (nodeId !== selectedNodeIdRef.current) return;
       setProbe(nextProbe);
-      writeServerNodeCache(serverNodeCacheKey(nodeId, "probe"), nextProbe);
       if (!nextProbe.status.reachable) {
-        setError(nextProbe.status.error || t("无法通过 SSH 连接服务器节点"));
+        const message = nextProbe.status.error || t("无法通过 SSH 连接服务器节点");
+        rememberProbeFailure(nodeId, message, startedAt, started);
+        setError(message);
         return;
       }
+      writeServerNodeCache(serverNodeCacheKey(nodeId, "probe"), nextProbe);
       if (nextProbe.status.reachable && nextProbe.status.cliInstalled) {
         const result = await executeRemote<ProfileReport>({ kind: "list-profiles" }, nodeId);
         if (!result.ok || !result.data) {
@@ -995,7 +1021,9 @@ export function ServerNodesDialog({
         );
       }
     } catch (refreshError) {
-      setError(messageOf(refreshError, t("服务器连接检查失败")));
+      const message = messageOf(refreshError, t("服务器连接检查失败"));
+      rememberProbeFailure(nodeId, message, startedAt, started);
+      setError(message);
     } finally {
       setAction(null);
     }

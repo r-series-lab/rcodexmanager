@@ -25,6 +25,9 @@ const SSH_DETAIL_TIMEOUT: Duration = Duration::from_secs(120);
 const SSH_WRITE_TIMEOUT: Duration = Duration::from_secs(120);
 const SSH_NETWORK_TIMEOUT: Duration = Duration::from_secs(180);
 const SSH_CHANNEL_TIMEOUT: Duration = Duration::from_secs(180);
+const SSH_PROBE_RETRY_ATTEMPTS: usize = 3;
+const SSH_READ_RETRY_ATTEMPTS: usize = 2;
+const SSH_RETRY_DELAY: Duration = Duration::from_millis(650);
 const SSH_STDOUT_LIMIT: usize = 8 * 1024 * 1024;
 const SSH_STDERR_LIMIT: usize = 512 * 1024;
 
@@ -256,6 +259,7 @@ struct ProcessOutput {
     stdout_truncated: bool,
     stderr_truncated: bool,
     duration_ms: u128,
+    attempts: usize,
 }
 
 struct BoundedOutput {
@@ -532,6 +536,7 @@ pub fn sync_server_profile_with_ssh(
         &node,
         &create_arguments,
         SSH_WRITE_TIMEOUT,
+        1,
         format!("{operation_id}-create"),
         Utc::now().to_rfc3339(),
     )?;
@@ -575,6 +580,7 @@ pub fn sync_server_profile_with_ssh(
         &node,
         &["list".to_string()],
         SSH_READ_TIMEOUT,
+        1,
         format!("{operation_id}-verify"),
         Utc::now().to_rfc3339(),
     )?;
@@ -627,14 +633,24 @@ pub fn probe_server_node_with_ssh(
          if command -v codex >/dev/null 2>&1; then echo '__RCM_CODEX__=1'; else echo '__RCM_CODEX__=0'; fi; \
          if command -v {binary} >/dev/null 2>&1 || test -x {binary}; then echo '__RCM_CLI__=1'; else echo '__RCM_CLI__=0'; fi"
     );
-    let output = run_ssh(ssh_binary, &node, &script, SSH_PROBE_TIMEOUT)?;
+    let output = run_ssh_with_retries(
+        ssh_binary,
+        &node,
+        &script,
+        SSH_PROBE_TIMEOUT,
+        SSH_PROBE_RETRY_ATTEMPTS,
+    )?;
     let reachable = output.exit_code == 0;
     let cli_installed = marker(&output.stdout, "__RCM_CLI__") == Some("1");
     let mut cli_version = None;
     let mut error = if reachable {
         None
     } else {
-        Some(compact_error(&output.stderr, "SSH connection failed"))
+        Some(ssh_transport_diagnostic(
+            &output,
+            &output.stderr,
+            "SSH connection failed",
+        ))
     };
 
     if reachable && cli_installed {
@@ -643,6 +659,7 @@ pub fn probe_server_node_with_ssh(
             &node,
             &["info".to_string()],
             SSH_READ_TIMEOUT,
+            SSH_READ_RETRY_ATTEMPTS,
             next_server_node_operation_id(),
             Utc::now().to_rfc3339(),
         ) {
@@ -711,6 +728,7 @@ pub fn run_server_node_operation_with_ssh(
         &node,
         &arguments,
         timeout,
+        if is_write { 1 } else { SSH_READ_RETRY_ATTEMPTS },
         operation_id.clone(),
         started_at,
     )
@@ -957,6 +975,7 @@ fn run_remote_cli(
     node: &ServerNodeConfig,
     arguments: &[String],
     timeout: Duration,
+    retry_attempts: usize,
     operation_id: String,
     started_at: String,
 ) -> Result<ServerNodeOperationReport, String> {
@@ -967,7 +986,7 @@ fn run_remote_cli(
         .map(|value| shell_quote(value))
         .collect::<Vec<_>>()
         .join(" ");
-    let output = run_ssh(ssh_binary, node, &remote_command, timeout)?;
+    let output = run_ssh_with_retries(ssh_binary, node, &remote_command, timeout, retry_attempts)?;
     remote_cli_report_from_output(node, output, timeout, operation_id, started_at)
 }
 
@@ -985,7 +1004,8 @@ fn remote_cli_report_from_output(
         ));
     }
     let stdout = output.stdout.trim();
-    let diagnostic = compact_error(
+    let diagnostic = ssh_transport_diagnostic(
+        &output,
         &output.stderr,
         "the SSH transport ended before any JSON was returned",
     );
@@ -1036,13 +1056,84 @@ fn server_operation_error(report: &ServerNodeOperationReport, fallback: &str) ->
         .to_string()
 }
 
-fn run_ssh(
+fn run_ssh_with_retries(
     ssh_binary: &Path,
     node: &ServerNodeConfig,
     remote_command: &str,
     timeout: Duration,
+    retry_attempts: usize,
 ) -> Result<ProcessOutput, String> {
-    run_ssh_with_input(ssh_binary, node, remote_command, timeout, None)
+    let started = Instant::now();
+    let attempts = retry_attempts.max(1);
+    let mut last_error = None;
+
+    for attempt in 1..=attempts {
+        let elapsed = started.elapsed();
+        if elapsed >= timeout {
+            break;
+        }
+        let remaining = timeout.saturating_sub(elapsed);
+        let attempt_timeout = retry_attempt_timeout(remaining, attempts - attempt + 1);
+        match run_ssh_with_input(ssh_binary, node, remote_command, attempt_timeout, None) {
+            Ok(mut output) => {
+                output.duration_ms = started.elapsed().as_millis();
+                output.attempts = attempt;
+                if output.exit_code == 0
+                    || attempt == attempts
+                    || !is_retryable_ssh_transport(&output.stderr)
+                {
+                    return Ok(output);
+                }
+                last_error = Some(compact_error(&output.stderr, "SSH connection failed"));
+            }
+            Err(error) => {
+                if !is_retryable_ssh_transport(&error) {
+                    return Err(error);
+                }
+                if attempt == attempts {
+                    return Err(format!(
+                        "SSH transport did not respond after {attempt} safe read-only attempt(s): {error}"
+                    ));
+                }
+                last_error = Some(error);
+            }
+        }
+
+        if SSH_RETRY_DELAY >= timeout.saturating_sub(started.elapsed()) {
+            break;
+        }
+        thread::sleep(SSH_RETRY_DELAY);
+    }
+
+    let detail = last_error.unwrap_or_else(|| "the remote command did not finish".to_string());
+    Err(format!(
+        "SSH transport did not respond after {attempts} safe read-only attempt(s): {detail}"
+    ))
+}
+
+fn retry_attempt_timeout(remaining: Duration, attempts_left: usize) -> Duration {
+    let attempts_left = attempts_left.max(1) as u128;
+    let millis = remaining.as_millis().saturating_div(attempts_left).max(1);
+    Duration::from_millis(millis.min(u64::MAX as u128) as u64)
+}
+
+fn is_retryable_ssh_transport(message: &str) -> bool {
+    let value = message.to_ascii_lowercase();
+    [
+        "timed out",
+        "timeout",
+        "connection reset",
+        "connection closed",
+        "connection refused",
+        "connection lost",
+        "broken pipe",
+        "kex_exchange",
+        "ssh_exchange",
+        "no route to host",
+        "network is unreachable",
+    ]
+    .iter()
+    .any(|needle| value.contains(needle))
 }
 
 fn run_ssh_with_input(
@@ -1111,6 +1202,7 @@ fn run_ssh_with_input(
                 stdout_truncated: stdout.truncated,
                 stderr_truncated: stderr.truncated,
                 duration_ms: started.elapsed().as_millis(),
+                attempts: 1,
             });
         }
         if started.elapsed() >= timeout {
@@ -1537,7 +1629,7 @@ fn compact_error(stderr: &str, fallback: &str) -> String {
     let compact = stderr
         .lines()
         .map(str::trim)
-        .filter(|line| !line.is_empty())
+        .filter(|line| !line.is_empty() && !is_expected_ssh_tls_noise(line))
         .take(4)
         .collect::<Vec<_>>()
         .join(" ");
@@ -1546,6 +1638,29 @@ fn compact_error(stderr: &str, fallback: &str) -> String {
     } else {
         compact.chars().take(600).collect()
     }
+}
+
+fn ssh_transport_diagnostic(output: &ProcessOutput, stderr: &str, fallback: &str) -> String {
+    let diagnostic = compact_error(stderr, fallback);
+    if output.attempts > 1 {
+        format!(
+            "{diagnostic} after {} safe read-only attempt(s)",
+            output.attempts
+        )
+    } else {
+        diagnostic
+    }
+}
+
+fn is_expected_ssh_tls_noise(line: &str) -> bool {
+    line == "depth=0 CN = ssh-tls"
+        || line == "verify error:num=18:self signed certificate"
+        || line == "verify return:1"
+        || line.starts_with(
+            "** WARNING: connection is not using a post-quantum key exchange algorithm.",
+        )
+        || line.starts_with("** This session may be vulnerable to ")
+        || line.starts_with("** The server may need to be upgraded.")
 }
 
 fn slug_fragment(value: &str) -> String {
@@ -1748,6 +1863,24 @@ mod tests {
     }
 
     #[test]
+    fn compact_error_filters_expected_ssh_tls_noise() {
+        let stderr = [
+            "depth=0 CN = ssh-tls",
+            "verify error:num=18:self signed certificate",
+            "verify return:1",
+            "** WARNING: connection is not using a post-quantum key exchange algorithm.",
+            "** This session may be vulnerable to \"store now, decrypt later\" attacks.",
+            "** The server may need to be upgraded. See https://openssh.com/pq.html",
+        ]
+        .join("\n");
+
+        assert_eq!(
+            compact_error(&stderr, "the remote command did not finish"),
+            "the remote command did not finish"
+        );
+    }
+
+    #[test]
     fn empty_remote_cli_stdout_is_reported_as_transport_interruption() {
         let node = ServerNodeConfig {
             id: "node-1".to_string(),
@@ -1766,6 +1899,7 @@ mod tests {
                 stdout_truncated: false,
                 stderr_truncated: false,
                 duration_ms: 30_000,
+                attempts: 3,
             },
             SSH_READ_TIMEOUT,
             "node-op-1".to_string(),
@@ -1775,6 +1909,7 @@ mod tests {
 
         assert!(error.contains("SSH transport ended"));
         assert!(error.contains("Timeout"));
+        assert!(error.contains("after 3 safe read-only attempt(s)"));
         assert!(!error.contains("invalid JSON"));
     }
 
@@ -1797,6 +1932,7 @@ mod tests {
                 stdout_truncated: false,
                 stderr_truncated: false,
                 duration_ms: 30_000,
+                attempts: 1,
             },
             SSH_READ_TIMEOUT,
             "node-op-1".to_string(),

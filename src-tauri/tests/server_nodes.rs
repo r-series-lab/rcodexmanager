@@ -115,6 +115,47 @@ esac
 }
 
 #[cfg(unix)]
+fn flaky_probe_ssh(home: &tempfile::TempDir) -> std::path::PathBuf {
+    let path = home.path().join("flaky-probe-ssh");
+    let first_probe = home.path().join("first-probe");
+    let script = format!(
+        r#"#!/bin/sh
+for arg in "$@"; do remote="$arg"; done
+case "$remote" in
+  *"__RCM_HOST__"*)
+    if [ ! -f "{first_probe}" ]; then
+      touch "{first_probe}"
+      echo 'Timeout, server demo-server not responding.' >&2
+      exit 255
+    fi
+    printf '%s\n' \
+      '__RCM_HOST__=node-one' \
+      '__RCM_USER__=admin' \
+      '__RCM_OS__=ubuntu 24.04' \
+      '__RCM_ARCH__=x86_64' \
+      '__RCM_SHELL__=/bin/bash' \
+      '__RCM_CODEX__=1' \
+      '__RCM_CLI__=1'
+    ;;
+  *"'info'"*)
+    printf '%s\n' '{{"ok":true,"command":"info","data":{{"version":"0.1.0","desktopAvailable":false}}}}'
+    ;;
+  *)
+    printf '%s\n' '{{"ok":false,"error":{{"code":"unsupported","message":"unsupported fake command"}}}}'
+    exit 2
+    ;;
+esac
+"#,
+        first_probe = first_probe.display(),
+    );
+    std::fs::write(&path, script).expect("flaky probe ssh");
+    let mut permissions = std::fs::metadata(&path).expect("metadata").permissions();
+    permissions.set_mode(0o755);
+    std::fs::set_permissions(&path, permissions).expect("permissions");
+    path
+}
+
+#[cfg(unix)]
 fn large_output_ssh(home: &tempfile::TempDir) -> std::path::PathBuf {
     let path = home.path().join("large-output-ssh");
     std::fs::write(
@@ -214,6 +255,36 @@ fn node_store_probe_and_remote_list_form_one_json_contract() {
 
     let stored = list_server_nodes(&context).expect("stored nodes");
     assert_eq!(stored.nodes.len(), 1);
+}
+
+#[cfg(unix)]
+#[test]
+fn read_only_probe_retries_a_transient_ssh_timeout() {
+    let home = tempfile::tempdir().expect("home");
+    let context = context(&home);
+    let node = upsert_server_node(
+        &context,
+        UpsertServerNodeInput {
+            id: None,
+            name: "Flaky node".to_string(),
+            ssh_target: "flaky-node".to_string(),
+            remote_binary: None,
+        },
+    )
+    .expect("node")
+    .nodes
+    .remove(0);
+
+    let probe = probe_server_node_with_ssh(
+        &context,
+        ProbeServerNodeInput { node_id: node.id },
+        &flaky_probe_ssh(&home),
+    )
+    .expect("transient timeout should recover");
+
+    assert!(probe.status.reachable);
+    assert_eq!(probe.status.hostname.as_deref(), Some("node-one"));
+    assert_eq!(probe.status.cli_version.as_deref(), Some("0.1.0"));
 }
 
 #[test]

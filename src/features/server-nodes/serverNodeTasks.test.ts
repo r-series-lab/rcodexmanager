@@ -36,6 +36,8 @@ describe("serverNodeTasks", () => {
   it("turns transport failures into actionable guidance", () => {
     expect(classifyServerNodeError("Permission denied (publickey)").code).toBe("ssh-auth");
     expect(classifyServerNodeError("SSH operation timed out after 30 seconds").code).toBe("timeout");
+    expect(classifyServerNodeError("depth=0 CN = ssh-tls verify error:num=18:self signed certificate verify return:1").code).toBe("timeout");
+    expect(classifyServerNodeError("SSH transport ended before the server node returned JSON").code).toBe("timeout");
     expect(classifyServerNodeError("another write operation is already running").code).toBe("busy");
   });
 

@@ -11439,8 +11439,7 @@ fn escape_toml_string(value: &str) -> String {
 
 #[cfg(test)]
 mod tests {
-    use std::io::{Read, Write};
-    use std::net::TcpStream;
+    use std::io::Write;
     use std::path::Path;
     use std::sync::Mutex;
 
@@ -11453,15 +11452,16 @@ mod tests {
         matching_profile_pids, model_route_proxy_check_result, model_route_responses_endpoint,
         parse_codex_home_from_environ, parse_node_major_version, preferred_quota_proxy_url,
         profile_runtime_statuses_from_processes, proxy_env_from_scutil,
-        proxy_url_from_codex_wrapper, proxy_url_from_shell_script, read_model_route_proxy_status,
+        proxy_url_from_codex_wrapper, proxy_url_from_shell_script,
+        read_model_route_proxy_http_endpoint, read_model_route_proxy_status,
         read_recent_session_index_summaries, read_session_file_details,
         record_model_route_proxy_diagnostic, responses_to_chat_completions_minimal,
         responses_to_chat_completions_with_context, sanitize_external_command_output,
         server_profile_launch_command, start_model_route_proxy, stop_model_route_proxy,
         terminate_wechat_bridge_pids, wechat_runtime_path_entries, CodexAuthMaterial,
         ModelRouteStreamState, ModelRouteToolContext, ProfileAuthStatus, ProfileContext,
-        ProfileLauncherKind, ProfileRuntimeTarget, RunningCodexProcess, MODEL_ROUTE_PROXY_PORT,
-        SESSION_DETAIL_HEAD_BYTES, SESSION_DETAIL_TAIL_BYTES,
+        ProfileLauncherKind, ProfileRuntimeTarget, RunningCodexProcess, SESSION_DETAIL_HEAD_BYTES,
+        SESSION_DETAIL_TAIL_BYTES,
     };
 
     static MODEL_ROUTE_PROXY_TEST_LOCK: Mutex<()> = Mutex::new(());
@@ -12522,15 +12522,7 @@ exec /usr/local/bin/codex "$@"
 
         let mut response = String::new();
         for _ in 0..8 {
-            let mut stream = TcpStream::connect(("127.0.0.1", MODEL_ROUTE_PROXY_PORT))
-                .expect("proxy connection");
-            stream
-                .write_all(b"GET /health HTTP/1.1\r\nHost: 127.0.0.1\r\nConnection: close\r\n\r\n")
-                .expect("health request");
-            response.clear();
-            stream
-                .read_to_string(&mut response)
-                .expect("health response");
+            response = read_model_route_proxy_http_endpoint("/health").unwrap_or_default();
             if response.contains("200 OK") {
                 break;
             }

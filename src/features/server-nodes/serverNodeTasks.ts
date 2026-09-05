@@ -163,6 +163,13 @@ export function classifyServerNodeError(message: string): ServerNodeErrorGuide {
       description: "请先确认 Mac 终端能通过该 SSH Host 免交互连接，再重新检查节点。",
     };
   }
+  if (/ssh-tls|self signed certificate verify|self signed certificate|ssh transport ended|remote command did not finish/.test(value)) {
+    return {
+      code: "timeout",
+      title: "SSH-over-TLS 通道未完成",
+      description: "服务器通道可用但本次握手或远程输出没有完整结束。只读任务可以安全重试。",
+    };
+  }
   if (/could not resolve|name or service not known|no route to host|connection refused|connection reset|ssh connection failed/.test(value)) {
     return {
       code: "unreachable",
