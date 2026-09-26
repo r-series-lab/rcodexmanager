@@ -5,19 +5,12 @@ test.beforeEach(async ({ page }) => {
   await page.evaluate(() => {
     localStorage.removeItem("rcodexmanager-profile-sort");
     localStorage.removeItem("rcodexmanager-active-profile");
-    localStorage.removeItem("rcodexmanager-server-profile-sort");
-    localStorage.removeItem("rcodexmanager-selected-server-node");
-    for (const key of Object.keys(localStorage)) {
-      if (key.startsWith("rcodexmanager-selected-server-profile:")) {
-        localStorage.removeItem(key);
-      }
-    }
   });
   await page.reload();
   await expect(page.locator(".profile-card").first()).toBeVisible();
 });
 
-test("remembers local and server profile sorting and selection", async ({ page }, testInfo) => {
+test("remembers local profile sorting and selection", async ({ page }, testInfo) => {
   const localSort = page.getByRole("combobox", { name: "Profile 排序" });
   await expect(localSort).toContainText("智能排序");
   await expect(page.locator(".profile-card").first()).toContainText("codex-b");
@@ -31,28 +24,35 @@ test("remembers local and server profile sorting and selection", async ({ page }
     animations: "disabled",
   });
 
-  await page.getByRole("button", { name: /服务器节点/ }).click();
-  const serverDialog = page.getByRole("dialog", { name: /服务器节点/ });
-  await expect(serverDialog).toBeVisible();
-  await serverDialog.getByRole("tab", { name: /Profiles/ }).click();
-  const serverSort = serverDialog.getByRole("combobox", { name: "服务器 Profile 排序" });
-  await expect(serverSort).toContainText("智能排序");
-  await serverSort.click();
-  await page.getByRole("option", { name: "最近使用" }).click();
-  await serverDialog.locator(".server-profile-row").filter({ hasText: "codex-q" }).click();
-  await page.screenshot({
-    path: `test-results/playwright/${testInfo.project.name}-profile-sorting-server.png`,
-    animations: "disabled",
-  });
-
   await page.reload();
   await expect(page.locator(".profile-card").first()).toBeVisible();
   await expect(page.getByRole("combobox", { name: "Profile 排序" })).toContainText("最近使用");
   await expect(page.locator(".profile-card.selected")).toContainText("codex-g");
 
-  await page.getByRole("button", { name: /服务器节点/ }).click();
-  const reopenedServerDialog = page.getByRole("dialog", { name: /服务器节点/ });
-  await reopenedServerDialog.getByRole("tab", { name: /Profiles/ }).click();
-  await expect(reopenedServerDialog.getByRole("combobox", { name: "服务器 Profile 排序" })).toContainText("最近使用");
-  await expect(reopenedServerDialog.locator(".server-profile-row.selected")).toContainText("codex-q");
+});
+
+test("sorts category and usage columns in both directions", async ({ page }) => {
+  const categorySort = page.getByRole("button", { name: "分类 升序" });
+  await categorySort.click();
+  await expect(page.getByRole("button", { name: "分类 升序" })).toBeVisible();
+  await expect(page.locator('[role="columnheader"]').filter({ has: page.getByRole("button", { name: "分类 升序" }) }))
+    .toHaveAttribute("aria-sort", "ascending");
+
+  await page.getByRole("button", { name: "分类 升序" }).click();
+  await expect(page.getByRole("button", { name: "分类 降序" })).toBeVisible();
+  await expect(page.locator('[role="columnheader"]').filter({ has: page.getByRole("button", { name: "分类 降序" }) }))
+    .toHaveAttribute("aria-sort", "descending");
+
+  await page.getByRole("button", { name: "查询当前列表额度" }).click();
+  await expect(page.locator(".profile-quota-values").first()).toBeVisible();
+  const usageSort = page.getByRole("button", { name: "额度 升序" });
+  await usageSort.click();
+  await expect(page.getByRole("button", { name: "额度 升序" })).toBeVisible();
+  await expect(page.locator('[role="columnheader"]').filter({ has: page.getByRole("button", { name: "额度 升序" }) }))
+    .toHaveAttribute("aria-sort", "ascending");
+
+  await page.getByRole("button", { name: "额度 升序" }).click();
+  await expect(page.getByRole("button", { name: "额度 降序" })).toBeVisible();
+  await expect(page.locator('[role="columnheader"]').filter({ has: page.getByRole("button", { name: "额度 降序" }) }))
+    .toHaveAttribute("aria-sort", "descending");
 });

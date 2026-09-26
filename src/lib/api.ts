@@ -10,18 +10,14 @@ import {
   createMockProfileReport,
   createMockProfileSessionDetail,
   createMockProfileSessionReport,
-  createMockServerNodeOperation,
-  createMockServerNodeProbe,
-  createMockServerNodeReport,
   createMockWechatBridgeReport,
+  renameMockProfile,
   setMockProfileArchived,
 } from "./mock-data";
 import type {
   ApplyAuthBackupInput,
   ApplyModelRouteInput,
-  AuthLoginMode,
   AuthLoginSessionReport,
-  AuthLoginTargetKind,
   AuthBackupImportPreview,
   AuthBackupExportReport,
   AuthBatchBackupResult,
@@ -67,213 +63,40 @@ import type {
   StopWechatBridgeInput,
   UnbindWechatBridgeInput,
   UpdateAuthBackupInput,
+  UpdateProfileLauncherInput,
   UpdateProfileModelInput,
   WechatBridgeLogReport,
   WechatBridgeReport,
-  RunServerNodeOperationInput,
-  ServerNodeOperationReport,
-  ServerNodeProbeReport,
-  ServerNodeReport,
-  SshHostReport,
-  SyncServerProfileInput,
-  SyncServerProfileReport,
-  UpsertServerNodeInput,
 } from "./types";
 
 const mockAuthLoginSessions = new Map<string, { report: AuthLoginSessionReport; polls: number }>();
 
 function createMockAuthLoginSession(
-  targetKind: AuthLoginTargetKind,
-  targetId: string | null,
   profileName: string,
-  mode: AuthLoginMode,
 ): AuthLoginSessionReport {
   const now = new Date();
   const report: AuthLoginSessionReport = {
     sessionId: `auth-login-mock-${Date.now()}`,
-    targetKind,
-    targetId,
+    targetKind: "local-profile",
     profileName,
-    mode,
+    mode: "browser-oauth",
     status: "waiting",
-    verificationUrl: mode === "device-code"
-      ? "https://auth.openai.com/codex/device"
-      : "https://auth.openai.com/oauth/authorize?state=mock",
-    userCode: mode === "device-code" ? "DEMO-CODE1" : null,
+    verificationUrl: "https://auth.openai.com/oauth/authorize?state=mock",
+    userCode: null,
     startedAt: now.toISOString(),
-    expiresAt: new Date(now.getTime() + (mode === "device-code" ? 15 : 10) * 60_000).toISOString(),
-    message: mode === "device-code"
-      ? "设备码已就绪，正在等待服务器完成登录。"
-      : "授权页已就绪，正在等待浏览器完成登录。",
+    expiresAt: new Date(now.getTime() + 10 * 60_000).toISOString(),
+    message: "授权页已就绪，正在等待浏览器完成登录。",
   };
   mockAuthLoginSessions.set(report.sessionId, { report, polls: 0 });
   return report;
 }
 
-export async function listServerNodes(): Promise<ServerNodeReport> {
-  if (!isTauriRuntime()) return createMockServerNodeReport();
-  return invoke<ServerNodeReport>("list_server_nodes_command");
-}
-
-export async function listSshHosts(): Promise<SshHostReport> {
-  if (!isTauriRuntime()) {
-    return {
-      generatedAt: new Date().toISOString(),
-      configPath: "~/.ssh/config",
-      configExists: true,
-      hosts: [
-        {
-          alias: "demo-server",
-          hostname: "203.0.113.10",
-          user: "admin",
-          port: 22,
-          sourcePath: "~/.ssh/config",
-        },
-      ],
-    };
-  }
-  return invoke<SshHostReport>("list_ssh_hosts_command");
-}
-
-export async function upsertServerNode(input: UpsertServerNodeInput): Promise<ServerNodeReport> {
-  if (!isTauriRuntime()) return createMockServerNodeReport();
-  return invoke<ServerNodeReport>("upsert_server_node_command", { input });
-}
-
-export async function deleteServerNode(nodeId: string): Promise<ServerNodeReport> {
-  if (!isTauriRuntime()) return { ...createMockServerNodeReport(), nodes: [] };
-  return invoke<ServerNodeReport>("delete_server_node_command", { input: { nodeId } });
-}
-
-export async function probeServerNode(nodeId: string): Promise<ServerNodeProbeReport> {
-  if (!isTauriRuntime()) {
-    const report = createMockServerNodeProbe();
-    const scenario = serverNodeMockScenario();
-    if (scenario === "ssh-auth") {
-      return {
-        ...report,
-        status: {
-          ...report.status,
-          reachable: false,
-          latencyMs: 18,
-          hostname: null,
-          user: null,
-          cliInstalled: false,
-          cliVersion: null,
-          error: "Permission denied (publickey)",
-        },
-      };
-    }
-    if (scenario === "cli-missing") {
-      return {
-        ...report,
-        status: {
-          ...report.status,
-          cliInstalled: false,
-          cliVersion: null,
-        },
-      };
-    }
-    if (scenario === "cli-old") {
-      return {
-        ...report,
-        status: {
-          ...report.status,
-          cliVersion: "0.1.1",
-        },
-      };
-    }
-    return report;
-  }
-  return invoke<ServerNodeProbeReport>("probe_server_node_command", { input: { nodeId } });
-}
-
-export async function runServerNodeOperation<T = unknown>(
-  input: RunServerNodeOperationInput,
-): Promise<ServerNodeOperationReport<T>> {
-  if (!isTauriRuntime()) {
-    const scenario = serverNodeMockScenario();
-    if (scenario === "timeout" && input.operation.kind === "doctor") {
-      throw new Error(`node-op-${Date.now()}-mock: SSH operation timed out after 30 seconds`);
-    }
-    const report = createMockServerNodeOperation(input.operation);
-    if (scenario === "write-busy" && input.operation.kind === "launch-profile") {
-      return {
-        ...report,
-        ok: false,
-        exitCode: 1,
-        data: null,
-        error: {
-          code: "node_busy",
-          message: "another write operation is already running on this server node; wait for it to finish",
-        },
-      } as ServerNodeOperationReport<T>;
-    }
-    if (scenario === "auth-network" && input.operation.kind === "check-profile-auth") {
-      return {
-        ...report,
-        ok: false,
-        exitCode: 1,
-        data: null,
-        error: {
-          code: "operation_failed",
-          message: "usage request failed: error sending request for url",
-        },
-      } as ServerNodeOperationReport<T>;
-    }
-    return report as ServerNodeOperationReport<T>;
-  }
-  return invoke<ServerNodeOperationReport<T>>("run_server_node_operation_command", { input });
-}
-
-export async function syncServerProfile(
-  input: SyncServerProfileInput,
-): Promise<SyncServerProfileReport> {
-  if (!isTauriRuntime()) {
-    const source = createMockProfileReport().profiles.find((profile) => profile.name === input.sourceProfileName)
-      ?? createMockProfileReport().profiles[0];
-    return {
-      nodeId: input.nodeId,
-      operationId: `node-sync-${Date.now()}-mock`,
-      generatedAt: new Date().toISOString(),
-      sourceProfileName: source.name,
-      targetProfileName: input.targetProfileName,
-      authSynced: input.syncAuth,
-      sourceAccount: source.account,
-      profile: {
-        ...source,
-        name: input.targetProfileName,
-        codexHome: `/home/demo/.${input.targetProfileName}`,
-        userDataDir: `/home/demo/.local/share/rcodexmanager/profiles/${input.targetProfileName}`,
-        configPath: `/home/demo/.${input.targetProfileName}/config.toml`,
-        launcherKind: "server",
-        isRunning: false,
-        runningPids: [],
-        runningProcessCount: 0,
-      },
-    };
-  }
-  return invoke<SyncServerProfileReport>("sync_server_profile_command", { input });
-}
-
 export async function startLocalProfileLogin(profileName: string): Promise<AuthLoginSessionReport> {
   if (!isTauriRuntime()) {
-    return createMockAuthLoginSession("local-profile", null, profileName, "browser-oauth");
+    return createMockAuthLoginSession(profileName);
   }
   return invoke<AuthLoginSessionReport>("start_local_profile_login_command", {
     input: { profileName },
-  });
-}
-
-export async function startServerProfileLogin(
-  nodeId: string,
-  profileName: string,
-): Promise<AuthLoginSessionReport> {
-  if (!isTauriRuntime()) {
-    return createMockAuthLoginSession("server-profile", nodeId, profileName, "device-code");
-  }
-  return invoke<AuthLoginSessionReport>("start_server_profile_login_command", {
-    input: { nodeId, profileName },
   });
 }
 
@@ -326,10 +149,6 @@ export async function openAuthLoginUrl(url: string): Promise<void> {
 
 function isTauriRuntime(): boolean {
   return "__TAURI_INTERNALS__" in window;
-}
-
-function serverNodeMockScenario(): string | null {
-  return new URLSearchParams(window.location.search).get("serverNodeMock");
 }
 
 export async function runDoctor(): Promise<DoctorReport> {
@@ -798,6 +617,14 @@ export async function updateProfileMetadata(input: ProfileMetadataInput): Promis
     return createMockActionReport("update", input.name);
   }
   return invoke<ProfileActionReport>("update_profile_metadata_command", { input });
+}
+
+export async function updateProfileLauncher(input: UpdateProfileLauncherInput): Promise<ProfileActionReport> {
+  if (!isTauriRuntime()) {
+    renameMockProfile(input.profileName, input.newProfileName);
+    return createMockActionReport("launcher-update", input.newProfileName);
+  }
+  return invoke<ProfileActionReport>("update_profile_launcher_command", { input });
 }
 
 export async function updateProfileModel(input: UpdateProfileModelInput): Promise<ProfileActionReport> {

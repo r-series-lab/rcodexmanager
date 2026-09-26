@@ -14,7 +14,7 @@ test.beforeEach(async ({ page }) => {
     localStorage.removeItem("rcodexmanager-active-profile");
   });
   await page.goto("/");
-  await expect(page.locator(".product-brand-name")).toHaveText("rCodexManager");
+  await expect(page.getByRole("main")).toBeVisible();
 });
 
 async function capture(locator: Locator, fileName: string) {
@@ -60,9 +60,4 @@ test("capture public product interface", async ({ page }) => {
   await capture(routes, "model-routing.png");
   await routes.getByRole("button", { name: "关闭", exact: true }).click();
 
-  const server = await openManager(page, "服务器节点");
-  await server.getByRole("tab", { name: /Profiles/ }).click();
-  await server.locator(".server-profile-row").filter({ hasText: "codex-o" }).click();
-  await expect(server.locator(".server-profile-inspector")).toBeVisible();
-  await capture(server, "server-nodes.png");
 });

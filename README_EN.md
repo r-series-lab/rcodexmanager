@@ -6,7 +6,7 @@ English | [中文](README.md)
 
 > **Independent project notice:** rCodexManager is an independently maintained community open-source project. It is not affiliated with, sponsored by, or endorsed by OpenAI. Codex and OpenAI are trademarks of their respective owner. The `0.1.x` line is a Public Preview; see the [release workflow](docs/RELEASE_WORKFLOW_EN.md) for package-signing status.
 
-`rCodexManager` is a local-first workbench for multiple isolated Codex profiles. It manages profile lifecycle, session history, authorized login-state backups, remote messaging channels, third-party model routing, and headless Linux Codex nodes through one desktop app and JSON CLI.
+`rCodexManager` is a local-first workbench for multiple isolated Codex profiles. It manages profile lifecycle, session history, authorized login-state backups, remote messaging channels, and third-party model routing through one desktop app and JSON CLI.
 
 Typical uses include keeping development, research, plugin testing, and server work in separate `CODEX_HOME` directories; inspecting profile health; safely moving authorized login state between stopped profiles; and operating Codex on a Linux server through an existing SSH configuration.
 
@@ -20,10 +20,13 @@ Stack: `Tauri 2 + Rust + React 19 + TypeScript + Material UI`.
 - **Authentication Vault** backs up, previews, imports, applies, and rolls back authorized login state with recovery copies and explicit confirmation.
 - **Remote Channels** manages a profile-specific WeChat bridge and an explicitly installed Feishu runtime without absorbing third-party credentials into rCodexManager.
 - **Model Routing** previews, tests, applies, and restores Qwen, GLM, local OpenAI-compatible, or custom Responses routes without modifying `auth.json`.
-- **Linux Nodes** use SSH and a headless CLI to manage remote profiles without opening an additional management port.
+
+The Session Center defaults to 10 entries per page and supports `10/50/100`. CLI callers can use `sessions list --limit 1..100`.
+
+The WeChat bridge currently uses `wechat-acp@0.10.0` and `@agentclientprotocol/codex-acp@1.12.0`; the Feishu bridge remains an explicitly installed `codex-remote-feishu` runtime.
 
 The desktop window defaults to and is constrained to a minimum of `1000×800`.
-Profile rows keep launch, archive, and delete actions visible. Double-clicking a row opens the full profile editor; authentication, quota, path, and session actions remain in the compact overflow menu.
+Profile rows keep lifecycle, quota, and overflow actions visible; archived rows surface restore and delete. Authentication, editing, archiving, and deletion remain in the compact overflow menu, while double-clicking a row opens the full profile editor.
 
 ## Interface Preview
 
@@ -39,9 +42,7 @@ Public screenshots are generated from repository mock data and contain only `exa
 | --- | --- |
 | ![Remote channels](docs/assets/screenshots/remote-channels.png) | ![Model routing](docs/assets/screenshots/model-routing.png) |
 
-![Linux server nodes](docs/assets/screenshots/server-nodes.png)
-
-See the [interface and feature guide](docs/interface_EN.md) for the five management centers, loading behavior, sign-in, settings, and safety boundaries.
+See the [interface and feature guide](docs/interface_EN.md) for the four management centers, loading behavior, sign-in, settings, and safety boundaries.
 
 ## Profile Boundary
 
@@ -86,7 +87,7 @@ npm run rust-check
 npm run rust-test
 ```
 
-## Headless Linux Node
+## Headless Linux CLI
 
 Build and test the server archive:
 
@@ -121,6 +122,8 @@ rcodexmanager --json doctor
 rcodexmanager --json list
 rcodexmanager --json quota --name codex-g
 ```
+
+Custom model quota providers are configured in `~/.rcodexmanager/quota-providers.toml`. A custom Profile without a matching provider reports `unsupported` instead of falling back to the official ChatGPT usage endpoint.
 
 Sessions and authentication:
 
@@ -163,13 +166,13 @@ Important locations include:
 
 | Data | Default location |
 | --- | --- |
-| Server node metadata | `~/.rcodexmanager/server-nodes.json` |
 | Profile metadata | `~/.rcodexmanager/profile-metadata.json` |
 | Default Codex profile | `~/.codex` |
 | Custom profile homes | `~/.codex-<suffix>` |
 | Codex configuration and login state | `<CODEX_HOME>/config.toml`, `<CODEX_HOME>/auth.json` |
 | Session index and transcripts | `<CODEX_HOME>/session_index.jsonl`, `<CODEX_HOME>/sessions/**/*.jsonl` |
 | Authentication vault | `~/.rcodexmanager/auth-vault.json`, `auth-vault/*.auth.json` |
+| Custom quota providers | `~/.rcodexmanager/quota-providers.toml` |
 
 Security rules:
 
@@ -186,4 +189,4 @@ Security rules:
 
 MIT
 
-This overview is the maintained English documentation for version `0.1.2`.
+This overview is the maintained English documentation for version `0.1.6`.

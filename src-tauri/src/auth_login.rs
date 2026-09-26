@@ -10,7 +10,6 @@ use std::time::{Duration, Instant};
 
 const AUTH_LOGIN_START_TIMEOUT: Duration = Duration::from_secs(10);
 const AUTH_LOGIN_BROWSER_TTL_SECONDS: i64 = 10 * 60;
-const AUTH_LOGIN_DEVICE_TTL_SECONDS: i64 = 15 * 60;
 const AUTH_LOGIN_OUTPUT_LIMIT: usize = 64 * 1024;
 const AUTH_LOGIN_FINISHED_RETENTION_SECONDS: i64 = 30 * 60;
 
@@ -21,14 +20,12 @@ static AUTH_LOGIN_SESSIONS: OnceLock<Mutex<BTreeMap<String, AuthLoginRuntime>>> 
 #[serde(rename_all = "kebab-case")]
 pub enum AuthLoginTargetKind {
     LocalProfile,
-    ServerProfile,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
 pub enum AuthLoginMode {
     BrowserOauth,
-    DeviceCode,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -46,7 +43,6 @@ pub enum AuthLoginStatus {
 pub struct AuthLoginSessionReport {
     pub session_id: String,
     pub target_kind: AuthLoginTargetKind,
-    pub target_id: Option<String>,
     pub profile_name: String,
     pub mode: AuthLoginMode,
     pub status: AuthLoginStatus,
@@ -60,13 +56,6 @@ pub struct AuthLoginSessionReport {
 #[derive(Debug, Clone, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct StartLocalProfileLoginInput {
-    pub profile_name: String,
-}
-
-#[derive(Debug, Clone, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct StartServerProfileLoginInput {
-    pub node_id: String,
     pub profile_name: String,
 }
 
@@ -93,7 +82,6 @@ struct AuthLoginRuntime {
 
 pub fn start_auth_login_process(
     target_kind: AuthLoginTargetKind,
-    target_id: Option<String>,
     profile_name: String,
     mode: AuthLoginMode,
     scope: String,
@@ -145,10 +133,7 @@ pub fn start_auth_login_process(
     };
 
     let now = Utc::now();
-    let ttl_seconds = match mode {
-        AuthLoginMode::BrowserOauth => AUTH_LOGIN_BROWSER_TTL_SECONDS,
-        AuthLoginMode::DeviceCode => AUTH_LOGIN_DEVICE_TTL_SECONDS,
-    };
+    let ttl_seconds = AUTH_LOGIN_BROWSER_TTL_SECONDS;
     let expires_at = now + chrono::Duration::seconds(ttl_seconds);
     let session_id = format!(
         "auth-login-{}-{}",
@@ -158,7 +143,6 @@ pub fn start_auth_login_process(
     let report = AuthLoginSessionReport {
         session_id: session_id.clone(),
         target_kind,
-        target_id,
         profile_name,
         mode,
         status: AuthLoginStatus::Waiting,
@@ -166,10 +150,7 @@ pub fn start_auth_login_process(
         user_code: challenge.user_code,
         started_at: now.to_rfc3339(),
         expires_at: expires_at.to_rfc3339(),
-        message: match mode {
-            AuthLoginMode::BrowserOauth => "授权页已就绪，正在等待浏览器完成登录。".to_string(),
-            AuthLoginMode::DeviceCode => "设备码已就绪，正在等待服务器完成登录。".to_string(),
-        },
+        message: "授权页已就绪，正在等待浏览器完成登录。".to_string(),
     };
     let runtime = AuthLoginRuntime {
         scope,
@@ -390,16 +371,12 @@ struct AuthLoginChallenge {
     user_code: Option<String>,
 }
 
-fn parse_auth_login_challenge(mode: AuthLoginMode, output: &str) -> Option<AuthLoginChallenge> {
+fn parse_auth_login_challenge(_mode: AuthLoginMode, output: &str) -> Option<AuthLoginChallenge> {
     let clean = strip_ansi(output);
     let verification_url = clean
         .split_whitespace()
         .find(|part| {
-            part.starts_with("https://auth.openai.com/")
-                && match mode {
-                    AuthLoginMode::BrowserOauth => part.contains("/oauth/authorize?"),
-                    AuthLoginMode::DeviceCode => part.contains("/codex/device"),
-                }
+            part.starts_with("https://auth.openai.com/") && part.contains("/oauth/authorize?")
         })?
         .trim_matches(|character: char| {
             matches!(
@@ -408,31 +385,10 @@ fn parse_auth_login_challenge(mode: AuthLoginMode, output: &str) -> Option<AuthL
             )
         })
         .to_string();
-    let user_code = if mode == AuthLoginMode::DeviceCode {
-        clean
-            .lines()
-            .map(str::trim)
-            .find(|line| is_device_user_code(line))
-            .map(str::to_string)
-    } else {
-        None
-    };
-    if mode == AuthLoginMode::DeviceCode && user_code.is_none() {
-        return None;
-    }
     Some(AuthLoginChallenge {
         verification_url,
-        user_code,
+        user_code: None,
     })
-}
-
-fn is_device_user_code(value: &str) -> bool {
-    let length = value.len();
-    (9..=20).contains(&length)
-        && value.contains('-')
-        && value.chars().all(|character| {
-            character.is_ascii_uppercase() || character.is_ascii_digit() || character == '-'
-        })
 }
 
 fn sanitized_auth_login_detail(output: &str) -> String {
@@ -440,10 +396,7 @@ fn sanitized_auth_login_detail(output: &str) -> String {
         .lines()
         .filter_map(|line| {
             let trimmed = line.trim();
-            if trimmed.is_empty()
-                || trimmed.contains("https://auth.openai.com/")
-                || is_device_user_code(trimmed)
-            {
+            if trimmed.is_empty() || trimmed.contains("https://auth.openai.com/") {
                 None
             } else {
                 Some(trimmed)
@@ -499,22 +452,10 @@ mod tests {
     }
 
     #[test]
-    fn parses_ansi_device_code_challenge() {
-        let output = "\u{1b}[94mhttps://auth.openai.com/codex/device\u{1b}[0m\n\u{1b}[94mABCD-EFGHI\u{1b}[0m\n";
-        let challenge = parse_auth_login_challenge(AuthLoginMode::DeviceCode, output).unwrap();
-        assert_eq!(
-            challenge.verification_url,
-            "https://auth.openai.com/codex/device"
-        );
-        assert_eq!(challenge.user_code.as_deref(), Some("ABCD-EFGHI"));
-    }
-
-    #[test]
     fn sanitizes_authorization_challenges_from_errors() {
-        let output = "open https://auth.openai.com/codex/device\nABCD-EFGHI\nnetwork failed";
+        let output = "open https://auth.openai.com/oauth/authorize?state=test\nnetwork failed";
         let detail = sanitized_auth_login_detail(output);
         assert_eq!(detail, "network failed");
-        assert!(!detail.contains("ABCD"));
         assert_eq!(strip_ansi("\u{1b}[90mtext\u{1b}[0m"), "text");
     }
 
@@ -524,19 +465,18 @@ mod tests {
         let mut command = Command::new("sh");
         command.args([
             "-c",
-            "printf 'https://auth.openai.com/codex/device\\nTEST-CODE1\\n'; sleep 0.1",
+            "printf 'https://auth.openai.com/oauth/authorize?state=test\\n'; sleep 0.1",
         ]);
         let started = start_auth_login_process(
-            AuthLoginTargetKind::ServerProfile,
-            Some("test-node".to_string()),
+            AuthLoginTargetKind::LocalProfile,
             "codex-test".to_string(),
-            AuthLoginMode::DeviceCode,
+            AuthLoginMode::BrowserOauth,
             format!("test-scope-{}", std::process::id()),
             command,
         )
         .expect("start login session");
         assert_eq!(started.status, AuthLoginStatus::Waiting);
-        assert_eq!(started.user_code.as_deref(), Some("TEST-CODE1"));
+        assert!(started.user_code.is_none());
 
         thread::sleep(Duration::from_millis(180));
         let completed = read_auth_login_session(AuthLoginSessionInput {

@@ -1,6 +1,6 @@
 [package]
 name = "rcodexmanager-headless"
-version = "0.1.5"
+version = "0.1.6"
 description = "Headless Linux CLI node for rCodexManager"
 authors = ["r-series-lab contributors"]
 edition = "2021"

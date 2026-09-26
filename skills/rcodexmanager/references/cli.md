@@ -51,7 +51,7 @@ Manual installation when requested:
 ```bash
 uname -s
 uname -m
-tar -xzf rCodexManager_0.1.5_linux-x86_64.tar.gz
+tar -xzf rCodexManager_0.1.6_linux-x86_64.tar.gz
 ./install.sh
 ~/.local/bin/rcodexmanager --json info
 ~/.local/bin/rcodexmanager --json capabilities

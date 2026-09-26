@@ -1,87 +1,6 @@
 pub mod auth_login;
 pub mod cli;
 pub mod core;
-pub mod remote;
-
-#[tauri::command]
-async fn list_server_nodes_command() -> Result<remote::ServerNodeReport, String> {
-    tauri::async_runtime::spawn_blocking(|| {
-        let context = core::ProfileContext::from_options(None, None)?;
-        remote::list_server_nodes(&context)
-    })
-    .await
-    .map_err(|error| error.to_string())?
-}
-
-#[tauri::command]
-async fn list_ssh_hosts_command() -> Result<remote::SshHostReport, String> {
-    tauri::async_runtime::spawn_blocking(|| {
-        let context = core::ProfileContext::from_options(None, None)?;
-        remote::list_ssh_hosts(&context)
-    })
-    .await
-    .map_err(|error| error.to_string())?
-}
-
-#[tauri::command]
-async fn upsert_server_node_command(
-    input: remote::UpsertServerNodeInput,
-) -> Result<remote::ServerNodeReport, String> {
-    tauri::async_runtime::spawn_blocking(move || {
-        let context = core::ProfileContext::from_options(None, None)?;
-        remote::upsert_server_node(&context, input)
-    })
-    .await
-    .map_err(|error| error.to_string())?
-}
-
-#[tauri::command]
-async fn delete_server_node_command(
-    input: remote::DeleteServerNodeInput,
-) -> Result<remote::ServerNodeReport, String> {
-    tauri::async_runtime::spawn_blocking(move || {
-        let context = core::ProfileContext::from_options(None, None)?;
-        remote::delete_server_node(&context, input)
-    })
-    .await
-    .map_err(|error| error.to_string())?
-}
-
-#[tauri::command]
-async fn probe_server_node_command(
-    input: remote::ProbeServerNodeInput,
-) -> Result<remote::ServerNodeProbeReport, String> {
-    tauri::async_runtime::spawn_blocking(move || {
-        let context = core::ProfileContext::from_options(None, None)?;
-        remote::probe_server_node(&context, input)
-    })
-    .await
-    .map_err(|error| error.to_string())?
-}
-
-#[tauri::command]
-async fn run_server_node_operation_command(
-    input: remote::RunServerNodeOperationInput,
-) -> Result<remote::ServerNodeOperationReport, String> {
-    tauri::async_runtime::spawn_blocking(move || {
-        let context = core::ProfileContext::from_options(None, None)?;
-        remote::run_server_node_operation(&context, input)
-    })
-    .await
-    .map_err(|error| error.to_string())?
-}
-
-#[tauri::command]
-async fn sync_server_profile_command(
-    input: remote::SyncServerProfileInput,
-) -> Result<remote::SyncServerProfileReport, String> {
-    tauri::async_runtime::spawn_blocking(move || {
-        let context = core::ProfileContext::from_options(None, None)?;
-        remote::sync_server_profile(&context, input)
-    })
-    .await
-    .map_err(|error| error.to_string())?
-}
 
 #[tauri::command]
 async fn start_local_profile_login_command(
@@ -93,32 +12,9 @@ async fn start_local_profile_login_command(
         let command = core::profile_login_command(&context, &profile_name, false)?;
         auth_login::start_auth_login_process(
             auth_login::AuthLoginTargetKind::LocalProfile,
-            None,
             profile_name.clone(),
             auth_login::AuthLoginMode::BrowserOauth,
             format!("local:{profile_name}"),
-            command,
-        )
-    })
-    .await
-    .map_err(|error| error.to_string())?
-}
-
-#[tauri::command]
-async fn start_server_profile_login_command(
-    input: auth_login::StartServerProfileLoginInput,
-) -> Result<auth_login::AuthLoginSessionReport, String> {
-    tauri::async_runtime::spawn_blocking(move || {
-        let context = core::ProfileContext::from_options(None, None)?;
-        let node_id = input.node_id.trim().to_string();
-        let profile_name = input.profile_name.trim().to_string();
-        let command = remote::server_profile_login_command(&context, &node_id, &profile_name)?;
-        auth_login::start_auth_login_process(
-            auth_login::AuthLoginTargetKind::ServerProfile,
-            Some(node_id.clone()),
-            profile_name.clone(),
-            auth_login::AuthLoginMode::DeviceCode,
-            format!("server:{node_id}:{profile_name}"),
             command,
         )
     })
@@ -641,6 +537,18 @@ async fn update_profile_metadata_command(
 }
 
 #[tauri::command]
+async fn update_profile_launcher_command(
+    input: core::UpdateProfileLauncherInput,
+) -> Result<core::ProfileActionReport, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let context = core::ProfileContext::from_options(None, None)?;
+        core::update_profile_launcher(&context, input)
+    })
+    .await
+    .map_err(|error| error.to_string())?
+}
+
+#[tauri::command]
 async fn update_profile_model_command(
     input: core::UpdateProfileModelInput,
 ) -> Result<core::ProfileActionReport, String> {
@@ -720,15 +628,7 @@ fn open_cc_switch_command() -> Result<String, String> {
 pub fn run() {
     tauri::Builder::default()
         .invoke_handler(tauri::generate_handler![
-            list_server_nodes_command,
-            list_ssh_hosts_command,
-            upsert_server_node_command,
-            delete_server_node_command,
-            probe_server_node_command,
-            run_server_node_operation_command,
-            sync_server_profile_command,
             start_local_profile_login_command,
-            start_server_profile_login_command,
             read_auth_login_session_command,
             cancel_auth_login_session_command,
             open_auth_login_url_command,
@@ -776,6 +676,7 @@ pub fn run() {
             archive_profile_command,
             restore_archived_profile_command,
             update_profile_metadata_command,
+            update_profile_launcher_command,
             update_profile_model_command,
             reset_profile_command,
             launch_profile_command,

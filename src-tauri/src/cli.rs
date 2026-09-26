@@ -161,7 +161,7 @@ pub enum Commands {
         #[arg(long)]
         name: String,
     },
-    /// Fetch the selected profile's read-only usage snapshot.
+    /// Fetch the selected profile's read-only usage snapshot, including configured custom providers.
     Quota {
         #[arg(long)]
         name: String,
@@ -323,7 +323,7 @@ pub enum AuthCommands {
 
 #[derive(Debug, Subcommand)]
 pub enum SessionCommands {
-    /// List a bounded page of session index entries.
+    /// List a bounded page of session index entries (default 10, maximum 100).
     List {
         #[arg(long)]
         profile: Option<String>,
@@ -333,7 +333,11 @@ pub enum SessionCommands {
         query: Option<String>,
         #[arg(long, default_value_t = 0)]
         offset: usize,
-        #[arg(long, default_value_t = 20)]
+        #[arg(
+            long,
+            default_value_t = 10,
+            help = "Page size (1-100; the desktop presets are 10, 50, and 100)"
+        )]
         limit: usize,
     },
     /// Read the bounded summary/source detail for one session.
@@ -778,7 +782,7 @@ fn capability_manifest(desktop_available: bool) -> CapabilityManifest {
             },
             CapabilityInfo {
                 command: "quota",
-                description: "Read a profile auth.json and fetch a read-only ChatGPT usage snapshot without storing tokens.",
+                description: "Read a profile usage snapshot without storing tokens; custom model profiles use ~/.rcodexmanager/quota-providers.toml and report unsupported when no provider is configured.",
                 json_supported: true,
                 reads_files: true,
                 writes_files: false,
@@ -821,7 +825,7 @@ fn capability_manifest(desktop_available: bool) -> CapabilityManifest {
             },
             CapabilityInfo {
                 command: "wechat",
-                description: "Manage server-friendly WeChat bridges: status, start, stop, restart, recoverable unbind, logs, switching, and systemd services.",
+                description: "Manage server-friendly WeChat ACP bridges using wechat-acp@0.10.0 and @agentclientprotocol/codex-acp@1.12.0: status, start, stop, restart, recoverable unbind, logs, switching, and systemd services.",
                 json_supported: true,
                 reads_files: true,
                 writes_files: true,

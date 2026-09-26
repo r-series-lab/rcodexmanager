@@ -33,6 +33,7 @@ import {
   EmptyState,
   ErrorState,
   ManagerDialogShell,
+  ManagerPagination,
   MasterDetailLayout,
   SensitiveActionConfirmDialog,
   StatusBadge,
@@ -151,6 +152,8 @@ export function AuthVaultDialog({
   const [importPreviewLoading, setImportPreviewLoading] = useState(false);
   const [confirmAction, setConfirmAction] = useState<ConfirmAction | null>(null);
   const [edit, setEdit] = useState({ label: "", note: "", pinned: false });
+  const [page, setPage] = useState(1);
+  const [pageSize, setPageSize] = useState(100);
   const importRef = useRef<HTMLInputElement | null>(null);
 
   const profiles = report?.profiles ?? [];
@@ -164,11 +167,24 @@ export function AuthVaultDialog({
     if (!value) return backups;
     return backups.filter((backup) => [backup.label, backup.note, backup.sourceProfileName, accountLabel(backup, t("未识别账号"))].join(" ").toLowerCase().includes(value));
   }, [backups, query, t]);
+  const pageCount = Math.max(1, Math.ceil(filteredBackups.length / pageSize));
+  const paginatedBackups = useMemo(
+    () => filteredBackups.slice((page - 1) * pageSize, page * pageSize),
+    [filteredBackups, page, pageSize],
+  );
 
   useEffect(() => {
     if (!selectedBackup) return;
     setEdit({ label: selectedBackup.label, note: selectedBackup.note ?? "", pinned: selectedBackup.pinned });
   }, [selectedBackup?.id]);
+
+  useEffect(() => {
+    setPage(1);
+  }, [query]);
+
+  useEffect(() => {
+    setPage((current) => Math.min(current, pageCount));
+  }, [pageCount]);
 
   useEffect(() => {
     if (!open) {
@@ -218,8 +234,8 @@ export function AuthVaultDialog({
     <EmptyState icon={<ArchiveRoundedIcon />} title="没有认证备份" description="从一个已登录 profile 创建首份备份。" />
   ) : (
     <Box className="feature-list-items">
-      {filteredBackups.map((backup) => (
-        <button key={backup.id} type="button" className={`feature-list-item auth-backup-list-item ${backup.id === selectedBackup?.id ? "active" : ""}`} onClick={() => onBackupSelect(backup.id)}>
+      {paginatedBackups.map((backup) => (
+        <button key={backup.id} type="button" className={`feature-list-item auth-backup-list-item ${backup.id === selectedBackup?.id ? "active" : ""}`} aria-current={backup.id === selectedBackup?.id ? "true" : undefined} onClick={() => onBackupSelect(backup.id)}>
           <Stack direction="row" spacing={1} className="auth-backup-list-layout">
             <SecurityRoundedIcon className="feature-list-leading-icon" />
             <Box sx={{ minWidth: 0, flex: 1 }}>
@@ -316,15 +332,16 @@ export function AuthVaultDialog({
         onClose={onClose}
         className="auth-vault-v2"
         actions={
-          <>
-            <Button size="small" color="error" startIcon={<DeleteOutlineRoundedIcon />} disabled={!selectedBackup || busy} onClick={() => selectedBackup && setConfirmAction({ kind: "delete", backup: selectedBackup })}>{t("删除备份")}</Button>
+          <Box className="manager-action-layout">
+            <ManagerPagination page={page} pageCount={pageCount} pageSize={pageSize} total={filteredBackups.length} onPageChange={setPage} onPageSizeChange={(size) => { setPageSize(size); setPage(1); }} />
             <Stack direction="row" spacing={0.75}>
+              <Button size="small" color="error" startIcon={<DeleteOutlineRoundedIcon />} disabled={!selectedBackup || busy} onClick={() => selectedBackup && setConfirmAction({ kind: "delete", backup: selectedBackup })}>{t("删除备份")}</Button>
               <TextField select size="small" value={selectedTarget?.profileName ?? ""} onChange={(event) => onProfileChange(event.target.value)} sx={{ width: 190 }}>
                 {profiles.map((profile) => <MenuItem key={profile.profileName} value={profile.profileName}>{profileLabel(profile)}{profile.profileName === activeProfileName ? ` · ${t("当前")}` : ""}</MenuItem>)}
               </TextField>
               <Button size="small" variant="contained" disabled={!canApply} onClick={() => selectedBackup && selectedTarget && setConfirmAction({ kind: "apply", backup: selectedBackup, target: selectedTarget })}>{t("应用到 profile")}</Button>
             </Stack>
-          </>
+          </Box>
         }
       >
         <DialogToolbar>

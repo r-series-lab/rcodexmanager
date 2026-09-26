@@ -28,6 +28,7 @@ import {
   EmptyState,
   ErrorState,
   ManagerDialogShell,
+  ManagerPagination,
   MasterDetailLayout,
   SensitiveActionConfirmDialog,
   StatusBadge,
@@ -136,6 +137,8 @@ export function WechatBridgeDialog({
   const [feishuTab, setFeishuTab] = useState("overview");
   const [binaryPath, setBinaryPath] = useState("");
   const [confirmUnbind, setConfirmUnbind] = useState(false);
+  const [page, setPage] = useState(1);
+  const [pageSize, setPageSize] = useState(100);
   const bridges = report?.bridges ?? [];
   const profiles = bridges.map((bridge) => ({ name: bridge.profileName, label: bridge.profileLabel, authExists: bridge.authExists }));
   const selected = selectedProfileName ? bridges.find((bridge) => bridge.profileName === selectedProfileName) ?? null : null;
@@ -144,6 +147,11 @@ export function WechatBridgeDialog({
     if (!value) return bridges;
     return bridges.filter((bridge) => [bridge.profileName, bridge.profileLabel, bridge.profileCategory, bridge.instance, accountLabel(bridge, t("未登录"))].join(" ").toLowerCase().includes(value));
   }, [bridges, query, t]);
+  const pageCount = Math.max(1, Math.ceil(filtered.length / pageSize));
+  const paginatedBridges = useMemo(
+    () => filtered.slice((page - 1) * pageSize, page * pageSize),
+    [filtered, page, pageSize],
+  );
 
   useEffect(() => {
     if (!open) {
@@ -153,6 +161,14 @@ export function WechatBridgeDialog({
       setConfirmUnbind(false);
     }
   }, [open]);
+
+  useEffect(() => {
+    setPage(1);
+  }, [query, channel]);
+
+  useEffect(() => {
+    setPage((current) => Math.min(current, pageCount));
+  }, [pageCount]);
 
   useEffect(() => {
     if (feishuReport?.binaryPath) setBinaryPath(feishuReport.binaryPath);
@@ -170,10 +186,10 @@ export function WechatBridgeDialog({
     <EmptyState icon={<QrCodeScannerRoundedIcon />} title="没有匹配的实例" />
   ) : (
     <Box className="feature-list-items">
-      {filtered.map((bridge) => {
+      {paginatedBridges.map((bridge) => {
         const status = connectionPresentation(bridge);
         return (
-          <button key={bridge.profileName} type="button" className={`feature-list-item ${bridge.profileName === selected?.profileName ? "active" : ""}`} onClick={() => onProfileChange(bridge.profileName)}>
+          <button key={bridge.profileName} type="button" className={`feature-list-item ${bridge.profileName === selected?.profileName ? "active" : ""}`} aria-current={bridge.profileName === selected?.profileName ? "true" : undefined} onClick={() => onProfileChange(bridge.profileName)}>
             <Stack direction="row" spacing={1} sx={{ alignItems: "flex-start" }}>
               <QrCodeScannerRoundedIcon className="feature-list-leading-icon" />
               <Box sx={{ minWidth: 0, flex: 1 }}>
@@ -331,23 +347,27 @@ export function WechatBridgeDialog({
   );
 
   const shellActions = channel === "wechat" && selectedIsExternal ? (
-    <StatusBadge label="外部服务 · 只读" tone="info" />
+    <Box className="manager-action-layout"><ManagerPagination page={page} pageCount={pageCount} pageSize={pageSize} total={filtered.length} onPageChange={setPage} onPageSizeChange={(size) => { setPageSize(size); setPage(1); }} /><StatusBadge label="外部服务 · 只读" tone="info" /></Box>
   ) : channel === "wechat" && selected ? (
-    <>
-      <Button size="small" color="error" startIcon={<LinkOffRoundedIcon />} disabled={busy || (!selected.tokenExists && !selected.running)} onClick={() => setConfirmUnbind(true)}>{t("解除绑定")}</Button>
+    <Box className="manager-action-layout">
+      <ManagerPagination page={page} pageCount={pageCount} pageSize={pageSize} total={filtered.length} onPageChange={setPage} onPageSizeChange={(size) => { setPageSize(size); setPage(1); }} />
       <Stack direction="row" spacing={0.75}>
+        <Button size="small" color="error" startIcon={<LinkOffRoundedIcon />} disabled={busy || (!selected.tokenExists && !selected.running)} onClick={() => setConfirmUnbind(true)}>{t("解除绑定")}</Button>
         {selected.running ? <Button size="small" startIcon={<StopCircleRoundedIcon />} disabled={busy} onClick={() => onStop(selected.profileName)}>{t("停止")}</Button> : null}
         {selected.tokenExists ? <Button size="small" startIcon={<RestartAltRoundedIcon />} disabled={busy || !selected.authExists} onClick={async () => { await onRestart(selected.profileName); setWechatTab("logs"); }}>{t("重启桥接")}</Button> : null}
         {!selected.running ? <Button size="small" variant="contained" startIcon={<PlayArrowRoundedIcon />} disabled={busy || !selected.authExists} onClick={async () => { setWechatTab("logs"); await onStart(selected.profileName); }}>{t("启动扫码")}</Button> : null}
       </Stack>
-    </>
+    </Box>
   ) : channel === "feishu" ? (
-    <>
+    <Box className="manager-action-layout">
+      <ManagerPagination page={page} pageCount={pageCount} pageSize={pageSize} total={filtered.length} onPageChange={setPage} onPageSizeChange={(size) => { setPageSize(size); setPage(1); }} />
+      <Stack direction="row" spacing={0.75}>
       {!feishuReport?.installed ? <Button size="small" startIcon={<OpenInNewRoundedIcon />} onClick={() => onOpenFeishuPage("project")}>{t("安装说明")}</Button> : null}
       {feishuReport?.running ? <Button size="small" startIcon={<StopCircleRoundedIcon />} disabled={busy} onClick={onStopFeishu}>{t("停止")}</Button> : null}
       {feishuReport?.running ? <Button size="small" startIcon={<RestartAltRoundedIcon />} disabled={busy} onClick={onRestartFeishu}>{t("重启")}</Button> : null}
       {feishuReport?.installed && !feishuReport.running ? <Button size="small" variant="contained" startIcon={<PlayArrowRoundedIcon />} disabled={busy || !feishuProfileName} onClick={() => onStartFeishu(feishuProfileName, binaryPath)}>{t("启动")}</Button> : null}
-    </>
+      </Stack>
+    </Box>
   ) : undefined;
 
   const runningCount = (report?.runningCount ?? 0) + (feishuReport?.running ? 1 : 0);

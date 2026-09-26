@@ -1,6 +1,8 @@
 import type { ReactElement, ReactNode } from "react";
 import ArrowBackRoundedIcon from "@mui/icons-material/ArrowBackRounded";
 import CloseRoundedIcon from "@mui/icons-material/CloseRounded";
+import KeyboardArrowLeftRoundedIcon from "@mui/icons-material/KeyboardArrowLeftRounded";
+import KeyboardArrowRightRoundedIcon from "@mui/icons-material/KeyboardArrowRightRounded";
 import RefreshRoundedIcon from "@mui/icons-material/RefreshRounded";
 import {
   Alert,
@@ -13,9 +15,11 @@ import {
   DialogContent,
   DialogTitle,
   IconButton,
+  MenuItem,
   Stack,
   Tab,
   Tabs,
+  TextField,
   Tooltip,
   Typography,
 } from "@mui/material";
@@ -149,6 +153,63 @@ export function DialogTabs({
 
 export function DialogActionBar({ children }: { children: ReactNode }) {
   return <DialogActions className="manager-action-bar">{children}</DialogActions>;
+}
+
+export function ManagerPagination({
+  page,
+  pageCount,
+  pageSize,
+  pageSizeOptions = [10, 50, 100],
+  total,
+  loading = false,
+  onPageChange,
+  onPageSizeChange,
+}: {
+  page: number;
+  pageCount: number;
+  pageSize: number;
+  pageSizeOptions?: number[];
+  total: number;
+  loading?: boolean;
+  onPageChange: (page: number) => void;
+  onPageSizeChange: (pageSize: number) => void;
+}) {
+  const { t } = useI18n();
+  const start = total ? (page - 1) * pageSize + 1 : 0;
+  const end = Math.min(page * pageSize, total);
+  return (
+    <Stack direction="row" spacing={0.75} className="manager-pagination">
+      <Tooltip title={t("上一页")}>
+        <span>
+          <IconButton size="small" onClick={() => onPageChange(page - 1)} disabled={loading || page <= 1}>
+            <KeyboardArrowLeftRoundedIcon />
+          </IconButton>
+        </span>
+      </Tooltip>
+      <Typography variant="caption">
+        {t("{range} · 第 {page} 页", { range: total ? `${start}-${end}` : t("0 条"), page })}
+      </Typography>
+      <Tooltip title={t("下一页")}>
+        <span>
+          <IconButton size="small" onClick={() => onPageChange(page + 1)} disabled={loading || page >= pageCount}>
+            <KeyboardArrowRightRoundedIcon />
+          </IconButton>
+        </span>
+      </Tooltip>
+      <TextField
+        select
+        size="small"
+        value={pageSize}
+        onChange={(event) => onPageSizeChange(Number(event.target.value))}
+        className="manager-pagination-size"
+        aria-label={t("每页数量")}
+      >
+        {pageSizeOptions.map((size) => (
+          <MenuItem key={size} value={size}>{t("{count} / 页", { count: size })}</MenuItem>
+        ))}
+      </TextField>
+    </Stack>
+  );
 }
 
 export function StatusBadge({ label, tone = "neutral", icon }: { label: string; tone?: StatusTone; icon?: ReactElement }) {

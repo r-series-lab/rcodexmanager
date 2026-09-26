@@ -42,14 +42,13 @@ export interface ProfileAuthState {
   refreshAvailable: boolean;
 }
 
-export type AuthLoginTargetKind = "local-profile" | "server-profile";
-export type AuthLoginMode = "browser-oauth" | "device-code";
+export type AuthLoginTargetKind = "local-profile";
+export type AuthLoginMode = "browser-oauth";
 export type AuthLoginStatus = "waiting" | "completed" | "failed" | "cancelled" | "expired";
 
 export interface AuthLoginSessionReport {
   sessionId: string;
   targetKind: AuthLoginTargetKind;
-  targetId: string | null;
   profileName: string;
   mode: AuthLoginMode;
   status: AuthLoginStatus;
@@ -127,139 +126,15 @@ export interface DoctorReport {
   checks: DoctorCheck[];
 }
 
-export interface ServerNodeConfig {
-  id: string;
-  name: string;
-  sshTarget: string;
-  remoteBinary: string;
-  createdAt: string;
-  updatedAt: string;
-}
-
-export interface ServerNodeReport {
-  generatedAt: string;
-  storePath: string;
-  nodes: ServerNodeConfig[];
-}
-
-export interface SshHostOption {
-  alias: string;
-  hostname: string | null;
-  user: string | null;
-  port: number | null;
-  sourcePath: string;
-}
-
-export interface SshHostReport {
-  generatedAt: string;
-  configPath: string;
-  configExists: boolean;
-  hosts: SshHostOption[];
-}
-
-export interface UpsertServerNodeInput {
-  id: string | null;
-  name: string;
-  sshTarget: string;
-  remoteBinary: string | null;
-}
-
-export interface ServerNodeStatus {
-  nodeId: string;
-  checkedAt: string;
-  reachable: boolean;
-  latencyMs: number;
-  hostname: string | null;
-  user: string | null;
-  os: string | null;
-  arch: string | null;
-  shell: string | null;
-  codexInstalled: boolean;
-  cliInstalled: boolean;
-  cliVersion: string | null;
-  error: string | null;
-}
-
-export interface ServerNodeProbeReport {
-  node: ServerNodeConfig;
-  status: ServerNodeStatus;
-}
-
-export type ServerNodeOperation =
-  | { kind: "doctor" }
-  | { kind: "list-profiles" }
-  | { kind: "list-sessions"; input: ListProfileSessionsInput }
-  | { kind: "read-session"; input: ReadProfileSessionDetailInput }
-  | { kind: "auth-status" }
-  | { kind: "check-profile-auth"; profileName: string }
-  | { kind: "wechat-status"; profileName: string | null }
-  | { kind: "feishu-status" }
-  | { kind: "feishu-start"; profileName: string }
-  | { kind: "feishu-stop" }
-  | { kind: "feishu-restart" }
-  | { kind: "model-route-status"; profileName: string | null }
-  | { kind: "model-route-preview"; input: PreviewModelRouteInput }
-  | { kind: "model-route-check"; profileName: string }
-  | { kind: "create-profile"; input: CreateProfileInput }
-  | { kind: "launch-profile"; profileName: string }
-  | { kind: "terminate-profile"; profileName: string }
-  | { kind: "update-profile-model"; input: UpdateProfileModelInput }
-  | { kind: "create-auth-backup"; profileName: string; label: string | null }
-  | {
-      kind: "apply-auth-backup";
-      backupId: string;
-      targetProfileName: string;
-      confirmSensitive: boolean;
-    }
-  | { kind: "wechat-start"; profileName: string }
-  | { kind: "wechat-stop"; profileName: string }
-  | { kind: "wechat-restart"; profileName: string }
-  | { kind: "model-route-apply"; input: ApplyModelRouteInput }
-  | { kind: "model-route-restore"; profileName: string; confirmSensitive: boolean };
-
 export interface UpdateProfileModelInput {
   profileName: string;
   model: string;
   reasoningEffort: string | null;
 }
 
-export interface RunServerNodeOperationInput {
-  nodeId: string;
-  operation: ServerNodeOperation;
-}
-
-export interface SyncServerProfileInput {
-  nodeId: string;
-  sourceProfileName: string;
-  targetProfileName: string;
-  syncAuth: boolean;
-  confirmSensitive: boolean;
-}
-
-export interface SyncServerProfileReport {
-  nodeId: string;
-  operationId: string;
-  generatedAt: string;
-  sourceProfileName: string;
-  targetProfileName: string;
-  authSynced: boolean;
-  sourceAccount: CodexAccountInfo | null;
-  profile: ProfileInfo;
-}
-
-export interface ServerNodeOperationReport<T = unknown> {
-  nodeId: string;
-  operationId: string;
-  startedAt: string;
-  generatedAt: string;
-  timeoutSeconds: number;
-  durationMs: number;
-  exitCode: number;
-  ok: boolean;
-  command: string;
-  outputTruncated: boolean;
-  data: T | null;
-  error: { code?: string; message?: string } | null;
+export interface UpdateProfileLauncherInput {
+  profileName: string;
+  newProfileName: string;
 }
 
 export interface ProfileReport {
@@ -542,6 +417,12 @@ export interface ProfileModelRouteState {
   baseUrl: string | null;
   wireApi: string | null;
   hasApiKey: boolean;
+  apiKeySource: string | null;
+  apiKeyEnv: string | null;
+  routeMode: string | null;
+  upstreamBaseUrl: string | null;
+  preset: ModelRoutePreset | null;
+  managedRoute: boolean;
   routeStatus: string;
   routeStatusLabel: string;
   readOnlyReason: string | null;

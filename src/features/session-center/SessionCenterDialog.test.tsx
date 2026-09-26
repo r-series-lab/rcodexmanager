@@ -1,5 +1,4 @@
 import { render, screen, waitFor } from "@testing-library/react";
-import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
 import { SessionCenterDialog } from "./SessionCenterDialog";
 import type { CodexSessionSummary, ProfileInfo, ProfileSessionReport } from "../../lib/types";
@@ -32,8 +31,7 @@ const report: ProfileSessionReport = {
 };
 
 describe("SessionCenterDialog", () => {
-  it("loads detail only after selecting a row", async () => {
-    const user = userEvent.setup();
+  it("selects the first row and loads its detail by default", async () => {
     const loadDetail = vi.fn(async () => ({ ...session, summary: "详情已读取" }));
     render(
       <SessionCenterDialog
@@ -61,8 +59,6 @@ describe("SessionCenterDialog", () => {
         onCopyReference={() => undefined}
       />,
     );
-    expect(loadDetail).not.toHaveBeenCalled();
-    await user.click(screen.getByRole("button", { name: /按需读取详情/ }));
     await waitFor(() => expect(loadDetail).toHaveBeenCalledOnce());
     expect(await screen.findByText("详情已读取")).toBeInTheDocument();
   });

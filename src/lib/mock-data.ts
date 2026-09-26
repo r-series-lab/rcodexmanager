@@ -15,165 +15,8 @@ import type {
   ProfileReport,
   ProfileSessionReport,
   ReadProfileSessionDetailInput,
-  ServerNodeOperation,
-  ServerNodeOperationReport,
-  ServerNodeProbeReport,
-  ServerNodeReport,
   WechatBridgeReport,
 } from "./types";
-
-const mockServerNode = {
-  id: "node-demo-server",
-  name: "阿里云 Codex",
-  sshTarget: "demo-server",
-  remoteBinary: "rcodexmanager",
-  createdAt: new Date().toISOString(),
-  updatedAt: new Date().toISOString(),
-};
-
-export function createMockServerNodeReport(): ServerNodeReport {
-  return {
-    generatedAt: new Date().toISOString(),
-    storePath: "/Users/demo/.rcodexmanager/server-nodes.json",
-    nodes: [mockServerNode],
-  };
-}
-
-export function createMockServerNodeProbe(): ServerNodeProbeReport {
-  return {
-    node: mockServerNode,
-    status: {
-      nodeId: mockServerNode.id,
-      checkedAt: new Date().toISOString(),
-      reachable: true,
-      latencyMs: 42,
-      hostname: "aliyun-codex",
-      user: "admin",
-      os: "ubuntu 24.04",
-      arch: "x86_64",
-      shell: "/bin/bash",
-      codexInstalled: true,
-      cliInstalled: true,
-      cliVersion: "0.1.2",
-      error: null,
-    },
-  };
-}
-
-export function createMockServerNodeOperation(
-  operation: ServerNodeOperation,
-): ServerNodeOperationReport {
-  let command: string = operation.kind;
-  let data: unknown = {};
-  if (operation.kind === "doctor") {
-    command = "doctor";
-    data = { ...createMockDoctorReport(), platform: "linux-x86_64" };
-  } else if (operation.kind === "list-profiles") {
-    command = "list";
-    const local = createMockProfileReport();
-    const profiles = local.profiles.slice(0, 4).map((profile, index) => ({
-      ...profile,
-      name: index === 0 ? "codex" : `codex-${String.fromCharCode(110 + index)}`,
-      alias: index === 0 ? "服务器默认" : profile.alias,
-      codexHome: index === 0 ? "/home/demo/.codex" : `/home/demo/.codex-${String.fromCharCode(110 + index)}`,
-      userDataDir: `/home/demo/.local/share/rcodexmanager/profiles/${profile.name}`,
-      configPath: index === 0 ? "/home/demo/.codex/config.toml" : `/home/demo/.codex-${String.fromCharCode(110 + index)}/config.toml`,
-      launcherKind: "server",
-      isRunning: index === 2,
-      runningPids: index === 2 ? [18420] : [],
-      runningProcessCount: index === 2 ? 1 : 0,
-      authState: index === 1
-        ? { status: "refresh-required", expiresAt: Math.floor(Date.now() / 1000) - 3600, refreshAvailable: true }
-        : { status: "valid", expiresAt: Math.floor(Date.now() / 1000) + 3600, refreshAvailable: true },
-    }));
-    data = { ...local, homeDir: "/home/demo", zshrcPath: "/home/demo/.bashrc", profiles, profileCount: profiles.length };
-  } else if (operation.kind === "list-sessions") {
-    command = "sessions-list";
-    data = createMockProfileSessionReport(operation.input);
-  } else if (operation.kind === "read-session") {
-    command = "sessions-detail";
-    data = createMockProfileSessionDetail(operation.input);
-  } else if (operation.kind === "auth-status" || operation.kind === "create-auth-backup" || operation.kind === "apply-auth-backup") {
-    command = operation.kind === "auth-status" ? "auth-list" : operation.kind;
-    data = createMockAuthVaultReport();
-  } else if (operation.kind === "check-profile-auth") {
-    command = "quota";
-    data = {
-      generatedAt: new Date().toISOString(),
-      profileName: operation.profileName,
-      account: null,
-      capturedAt: Math.floor(Date.now() / 1000),
-      endpoint: "mock://usage",
-      windows: [{
-        id: "primary",
-        label: "主窗口",
-        usedPercent: 38,
-        remainingPercent: 62,
-        windowMinutes: 300,
-        resetsAt: Math.floor(Date.now() / 1000) + 7200,
-        allowed: true,
-        limitReached: false,
-        status: "available",
-      }],
-    };
-  } else if (operation.kind === "model-route-status") {
-    command = "model-route-status";
-    data = createMockModelRouteReport();
-  } else if (operation.kind === "model-route-preview") {
-    command = "model-route-preview";
-    data = createMockModelRoutePreview(operation.input);
-  } else if (operation.kind === "model-route-check") {
-    command = "model-route-check";
-    data = {
-      generatedAt: new Date().toISOString(),
-      profileName: operation.profileName,
-      ok: true,
-      status: "ok",
-      statusLabel: "自检通过",
-      message: "服务器模型路由可访问。",
-      endpoint: "http://127.0.0.1:15721/v1/responses",
-      httpStatus: 200,
-      latencyMs: 48,
-      diagnosticCode: null,
-    };
-  } else if (operation.kind === "update-profile-model") {
-    command = "model-set";
-    data = {
-      generatedAt: new Date().toISOString(),
-      action: "model-update",
-      zshrcPath: "/home/demo/.bashrc",
-      profile: {
-        ...createMockProfileReport().profiles[1],
-        name: operation.input.profileName,
-        model: operation.input.model,
-        reasoningEffort: operation.input.reasoningEffort,
-        launcherKind: "server",
-      },
-      backups: [],
-      message: "model updated",
-    };
-  } else if (["wechat-status", "wechat-start", "wechat-stop", "wechat-restart"].includes(operation.kind)) {
-    command = operation.kind;
-    data = createMockWechatBridgeReport();
-  } else if (["feishu-status", "feishu-start", "feishu-stop", "feishu-restart"].includes(operation.kind)) {
-    command = operation.kind;
-    data = createMockFeishuRemoteReport();
-  }
-  return {
-    nodeId: mockServerNode.id,
-    operationId: `node-op-${Date.now()}-mock`,
-    startedAt: new Date().toISOString(),
-    generatedAt: new Date().toISOString(),
-    timeoutSeconds: operation.kind === "read-session" ? 60 : operation.kind === "model-route-check" ? 120 : 30,
-    durationMs: 38,
-    exitCode: 0,
-    ok: true,
-    command,
-    outputTruncated: false,
-    data,
-    error: null,
-  };
-}
 
 export function createMockDoctorReport(): DoctorReport {
   const checks: DoctorReport["checks"] = [
@@ -576,6 +419,19 @@ export function setMockProfileArchived(name: string, archived: boolean): void {
   }
 }
 
+export function renameMockProfile(currentName: string, newName: string): void {
+  const profile = mockProfiles.find((item) => item.name === currentName);
+  if (!profile) {
+    return;
+  }
+  const archivedAt = mockArchivedAtByName.get(currentName);
+  profile.name = newName;
+  if (archivedAt) {
+    mockArchivedAtByName.delete(currentName);
+    mockArchivedAtByName.set(newName, archivedAt);
+  }
+}
+
 export function createMockProfileReport(): ProfileReport {
   const allProfiles = mockProfiles.map((profile) => {
     const archivedAt = mockArchivedAtByName.get(profile.name) ?? null;
@@ -769,8 +625,8 @@ export function createMockWechatBridgeReport(): WechatBridgeReport {
     storePath: "/Users/demo/.rcodexmanager/wechat-bridges.json",
     bridgeCount: bridges.length,
     runningCount: bridges.filter((bridge) => bridge.running).length,
-    wechatAcpPackage: "wechat-acp@0.2.3",
-    codexAcpPackage: "@zed-industries/codex-acp@0.15.0",
+    wechatAcpPackage: "wechat-acp@0.10.0",
+    codexAcpPackage: "@agentclientprotocol/codex-acp@1.12.0",
     bridges,
   };
 }
@@ -931,6 +787,12 @@ function createMockModelRouteState(profile: ProfileInfo, index: number): Profile
     baseUrl: routed ? "http://127.0.0.1:15721/v1" : needsProxy ? "https://api.z.ai/api/paas/v4" : null,
     wireApi: routed ? "responses" : needsProxy ? "chat" : null,
     hasApiKey: routed || needsProxy,
+    apiKeySource: routed || needsProxy ? (index % 2 === 0 ? "inline" : "env:PROVIDER_API_KEY") : null,
+    apiKeyEnv: routed || needsProxy ? (index % 2 === 0 ? null : "PROVIDER_API_KEY") : null,
+    routeMode: routed ? "chat" : needsProxy ? "chat" : null,
+    upstreamBaseUrl: routed ? "https://open.bigmodel.cn/api/paas/v4" : needsProxy ? "https://api.z.ai/api/paas/v4" : null,
+    preset: routed ? "glm" : needsProxy ? "openai-chat" : null,
+    managedRoute: routed,
     routeStatus: readOnlyReason ? "readonly" : routed ? "routed" : needsProxy ? "needs-proxy" : "official",
     routeStatusLabel: readOnlyReason
       ? "不可修改"
@@ -996,7 +858,11 @@ export function createMockModelRoutePreview(input: PreviewModelRouteInput): Mode
       `name = "rCodexManager ${preset.label}"`,
       `base_url = "${baseUrl}"`,
       `wire_api = "responses"`,
-      apiKeySource ? `env_key = "${apiKeySource.replace("env:", "")}"` : "# api key 未配置",
+      (input.apiKey?.trim()
+        ? `experimental_bearer_token = "••••••••"`
+        : input.apiKeyEnv?.trim()
+          ? `env_key = "${input.apiKeyEnv.trim()}"`
+          : "# api key 未配置"),
     ].join("\n"),
     warnings: preset.requiresProxy
       ? ["这个预设是 Chat-only，上游地址不会直接写入 Codex；请确认外部代理可用。"]

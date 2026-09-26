@@ -1,6 +1,6 @@
 import { expect, test } from "@playwright/test";
 
-const dialogs = ["会话中心", "认证库", "远程渠道", "模型路由", "服务器节点"] as const;
+const dialogs = ["会话中心", "认证库", "远程渠道", "模型路由"] as const;
 
 test.beforeEach(async ({ page }, testInfo) => {
   const preference = testInfo.project.name.endsWith("-light")
@@ -22,50 +22,6 @@ for (const dialogName of dialogs) {
     if (dialogName === "远程渠道") {
       await dialog.getByRole("tab", { name: "飞书", exact: true }).click();
       await expect(dialog.getByText("飞书远程渠道", { exact: true })).toBeVisible();
-    }
-
-    if (dialogName === "服务器节点") {
-      await expect(dialog.getByText("可用", { exact: true }).first()).toBeVisible();
-      await dialog.getByRole("tab", { name: /Profiles/ }).click();
-      await expect(dialog.getByText("服务器默认", { exact: true }).first()).toBeVisible();
-      await dialog.getByRole("button", { name: "从本机同步" }).click();
-      const syncDialog = page.getByRole("dialog", { name: "从本机同步 Profile" });
-      await expect(syncDialog).toBeVisible();
-      await expect(syncDialog.getByLabel("本机 Profile")).toBeVisible();
-      await syncDialog.getByLabel("服务器 Profile 名称").fill("codex-e2e-sync");
-      await expect(syncDialog.getByRole("button", { name: "同步到服务器" })).toBeEnabled();
-      await syncDialog.getByRole("button", { name: "取消" }).click();
-      await expect(syncDialog).not.toBeVisible();
-      await dialog.locator(".server-profile-row").filter({ hasText: "codex-o" }).click();
-      await dialog.getByRole("button", { name: "配置模型" }).click();
-      const modelDialog = page.getByRole("dialog", { name: "配置服务器模型" });
-      await expect(modelDialog).toBeVisible();
-      await modelDialog.getByLabel("模型").fill("custom-server-model");
-      await modelDialog.getByRole("button", { name: "应用模型" }).click();
-      const modelConfirm = page.getByRole("dialog", { name: /更新 codex-/ });
-      await expect(modelConfirm).toContainText("custom-server-model");
-      await modelConfirm.getByRole("button", { name: "取消" }).click();
-      await page.screenshot({
-        path: `test-results/playwright/${testInfo.project.name}-服务器模型配置.png`,
-        animations: "disabled",
-      });
-      await modelDialog.getByRole("button", { name: "取消" }).click();
-      await dialog.getByRole("tab", { name: "会话", exact: true }).click();
-      await expect(dialog.getByText("rTerm", { exact: true }).first()).toBeVisible();
-      await dialog.getByRole("tab", { name: "认证", exact: true }).click();
-      await expect(dialog.getByText("服务器认证备份", { exact: true })).toBeVisible();
-      await dialog.getByRole("tab", { name: "路由", exact: true }).click();
-      await expect(dialog.getByLabel("Provider 预设")).toBeVisible();
-      await dialog.getByRole("tab", { name: "渠道", exact: true }).click();
-      await expect(dialog.getByText("微信桥接", { exact: true })).toBeVisible();
-      await dialog.getByRole("tab", { name: "诊断", exact: true }).click();
-      await expect(dialog.getByText(/服务器核心功能可用|服务器存在需要处理的问题/)).toBeVisible();
-      await expect(dialog.locator(".server-node-task-strip")).toContainText("运行服务器诊断");
-      await expect(dialog.locator(".server-node-task-strip code")).toContainText("任务");
-      await dialog.getByRole("button", { name: "查看最近任务" }).click();
-      await expect(dialog.locator(".server-node-task-history")).toBeVisible();
-      await expect(dialog.locator(".server-node-task-row")).toHaveCount(7);
-      await expect(dialog.getByRole("button", { name: "重试 运行服务器诊断" })).toBeVisible();
     }
 
     const layout = await page.locator(".manager-shell-paper").evaluate((node) => {

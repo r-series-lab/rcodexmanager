@@ -1,7 +1,9 @@
-import { type MouseEvent, type ReactNode, useEffect, useMemo, useRef, useState } from "react";
+import { type MouseEvent, type ReactNode, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import AccountCircleRoundedIcon from "@mui/icons-material/AccountCircleRounded";
 import AddRoundedIcon from "@mui/icons-material/AddRounded";
 import AltRouteRoundedIcon from "@mui/icons-material/AltRouteRounded";
+import ArrowDownwardRoundedIcon from "@mui/icons-material/ArrowDownwardRounded";
+import ArrowUpwardRoundedIcon from "@mui/icons-material/ArrowUpwardRounded";
 import ArchiveRoundedIcon from "@mui/icons-material/ArchiveRounded";
 import BarChartRoundedIcon from "@mui/icons-material/BarChartRounded";
 import CheckCircleOutlineRoundedIcon from "@mui/icons-material/CheckCircleOutlineRounded";
@@ -12,7 +14,6 @@ import ContentCopyRoundedIcon from "@mui/icons-material/ContentCopyRounded";
 import DarkModeRoundedIcon from "@mui/icons-material/DarkModeRounded";
 import DataUsageRoundedIcon from "@mui/icons-material/DataUsageRounded";
 import DeleteOutlineRoundedIcon from "@mui/icons-material/DeleteOutlineRounded";
-import DnsRoundedIcon from "@mui/icons-material/DnsRounded";
 import EditRoundedIcon from "@mui/icons-material/EditRounded";
 import ErrorOutlineRoundedIcon from "@mui/icons-material/ErrorOutlineRounded";
 import FactCheckRoundedIcon from "@mui/icons-material/FactCheckRounded";
@@ -20,6 +21,7 @@ import FileUploadRoundedIcon from "@mui/icons-material/FileUploadRounded";
 import FolderRoundedIcon from "@mui/icons-material/FolderRounded";
 import ForumRoundedIcon from "@mui/icons-material/ForumRounded";
 import HubRoundedIcon from "@mui/icons-material/HubRounded";
+import InfoOutlinedIcon from "@mui/icons-material/InfoOutlined";
 import KeyboardArrowDownRoundedIcon from "@mui/icons-material/KeyboardArrowDownRounded";
 import KeyboardArrowLeftRoundedIcon from "@mui/icons-material/KeyboardArrowLeftRounded";
 import KeyboardArrowRightRoundedIcon from "@mui/icons-material/KeyboardArrowRightRounded";
@@ -39,10 +41,12 @@ import StopCircleRoundedIcon from "@mui/icons-material/StopCircleRounded";
 import TerminalRoundedIcon from "@mui/icons-material/TerminalRounded";
 import TranslateRoundedIcon from "@mui/icons-material/TranslateRounded";
 import UnarchiveRoundedIcon from "@mui/icons-material/UnarchiveRounded";
+import UnfoldMoreRoundedIcon from "@mui/icons-material/UnfoldMoreRounded";
 import VpnKeyRoundedIcon from "@mui/icons-material/VpnKeyRounded";
 import WarningAmberRoundedIcon from "@mui/icons-material/WarningAmberRounded";
 import {
   Alert,
+  Autocomplete,
   Box,
   Button,
   Checkbox,
@@ -119,6 +123,7 @@ import {
   unbindWechatBridge,
   terminateProfile,
   updateProfileMetadata,
+  updateProfileLauncher,
   updateProfileModel,
   updateAuthBackup,
 } from "./lib/api";
@@ -151,7 +156,6 @@ import { SessionCenterDialog } from "./features/session-center/SessionCenterDial
 import { AuthVaultDialog } from "./features/auth-vault/AuthVaultDialog";
 import { WechatBridgeDialog } from "./features/wechat-bridge/WechatBridgeDialog";
 import { ModelRouteDialog } from "./features/model-route/ModelRouteDialog";
-import { ServerNodesDialog } from "./features/server-nodes/ServerNodesDialog";
 import {
   AuthLoginDialog,
   type AuthLoginTarget,
@@ -166,9 +170,12 @@ import {
 } from "./lib/profileSorting";
 import {
   compactQuotaWindowLabel,
+  formatQuotaDateTime,
   isProfileQuotaCacheFresh,
   mapWithConcurrency,
   PROFILE_QUOTA_BATCH_CONCURRENCY,
+  persistProfileQuotaCache,
+  readPersistedProfileQuotaCache,
   quotaRemainingPercent,
   quotaWindowsForList,
   type ProfileQuotaCacheState,
@@ -199,6 +206,7 @@ const actionKeys = {
   profileLifecycle: (name: string) => `profile.lifecycle:${name}`,
   profileDelete: (name: string) => `profile.delete:${name}`,
   profileReset: (name: string) => `profile.reset:${name}`,
+  profileLauncher: (name: string) => `profile.launcher:${name}`,
   profileImportAuth: (name: string) => `profile.import-auth:${name}`,
   authCreate: "auth.create",
   authImport: "auth.import",
@@ -229,12 +237,20 @@ type ProfileContextMenuState = {
 
 
 type ProfileEditDraft = {
+  name: string;
   alias: string;
   category: string;
   note: string;
   model: string;
   reasoningEffort: string;
 };
+
+type ProfileColumnSortKey = "category" | "usage";
+type ProfileColumnSortDirection = "asc" | "desc";
+type ProfileColumnSortState = {
+  key: ProfileColumnSortKey;
+  direction: ProfileColumnSortDirection;
+} | null;
 
 type SessionSourceProfile = Pick<ProfileInfo, "name" | "alias" | "category" | "isDefault">;
 
@@ -322,6 +338,164 @@ function profileLabel(profile: Pick<ProfileInfo, "name" | "alias">): string {
   return profile.alias || profile.name;
 }
 
+function profileColumnSortValue(
+  profile: ProfileInfo,
+  sortKey: ProfileColumnSortKey,
+  quotaByProfile: Record<string, ProfileQuotaCacheState>,
+): string | number | null {
+  if (sortKey === "category") {
+    return profile.category.trim() || null;
+  }
+  const remaining = quotaWindowsForList(quotaByProfile[profile.name]?.report ?? null)
+    .map(quotaRemainingPercent)
+    .filter((value): value is number => value !== null);
+  return remaining.length ? Math.min(...remaining) : null;
+}
+
+function sortProfilesByColumn(
+  profiles: readonly ProfileInfo[],
+  sortState: ProfileColumnSortState,
+  quotaByProfile: Record<string, ProfileQuotaCacheState>,
+): ProfileInfo[] {
+  if (!sortState) {
+    return [...profiles];
+  }
+  const direction = sortState.direction === "asc" ? 1 : -1;
+  return [...profiles].sort((left, right) => {
+    const leftValue = profileColumnSortValue(left, sortState.key, quotaByProfile);
+    const rightValue = profileColumnSortValue(right, sortState.key, quotaByProfile);
+    if (leftValue === null && rightValue === null) {
+      return left.name.localeCompare(right.name, "en", { numeric: true });
+    }
+    if (leftValue === null) return 1;
+    if (rightValue === null) return -1;
+    if (typeof leftValue === "number" && typeof rightValue === "number") {
+      return (leftValue - rightValue) * direction
+        || left.name.localeCompare(right.name, "en", { numeric: true });
+    }
+    return String(leftValue).localeCompare(String(rightValue), "zh-CN", { numeric: true }) * direction
+      || left.name.localeCompare(right.name, "en", { numeric: true });
+  });
+}
+
+function isCustomQuotaProfile(profile: ProfileInfo): boolean {
+  const provider = profile.modelProvider?.trim().toLowerCase();
+  return Boolean(provider && provider !== "openai" && provider !== "openai-responses");
+}
+
+function isQuotaUnsupported(profile: ProfileInfo, state: ProfileQuotaCacheState | undefined): boolean {
+  return Boolean(
+    state?.error
+      && !state.report
+      && isCustomQuotaProfile(profile)
+      && state.error.includes("does not have a configured quota provider"),
+  );
+}
+
+function ProfileColumnSortHeader({
+  label,
+  sortKey,
+  sortState,
+  onSort,
+  sortLabel,
+}: {
+  label: string;
+  sortKey: ProfileColumnSortKey;
+  sortState: ProfileColumnSortState;
+  onSort: (sortKey: ProfileColumnSortKey) => void;
+  sortLabel: string;
+}) {
+  const active = sortState?.key === sortKey;
+  const direction = active ? sortState.direction : null;
+  return (
+    <span
+      className={`profile-sort-header ${active ? "active" : ""}`}
+      role="columnheader"
+      aria-sort={direction === "asc" ? "ascending" : direction === "desc" ? "descending" : "none"}
+    >
+      <button
+        type="button"
+        className="profile-sort-header-button"
+        aria-label={`${label} ${sortLabel}`}
+        onClick={() => onSort(sortKey)}
+      >
+        <span className="profile-sort-label">{label}</span>
+        {direction === "asc" ? (
+          <ArrowUpwardRoundedIcon className="profile-sort-icon" fontSize="inherit" />
+        ) : direction === "desc" ? (
+          <ArrowDownwardRoundedIcon className="profile-sort-icon" fontSize="inherit" />
+        ) : (
+          <UnfoldMoreRoundedIcon className="profile-sort-icon" fontSize="inherit" />
+        )}
+      </button>
+    </span>
+  );
+}
+
+function ProfileCategoryAutocomplete({
+  value,
+  options,
+  inputName,
+  label,
+  placeholder,
+  className,
+  onChange,
+}: {
+  value: string;
+  options: ReadonlyArray<string>;
+  inputName: string;
+  label?: string;
+  placeholder?: string;
+  className?: string;
+  onChange: (value: string) => void;
+}) {
+  const { t } = useI18n();
+  const fieldSlotProps = textFieldSlotProps(inputName);
+
+  return (
+    <Autocomplete
+      className={`profile-category-autocomplete ${className ?? ""}`.trim()}
+      freeSolo
+      disableClearable
+      forcePopupIcon
+      popupIcon={<KeyboardArrowDownRoundedIcon fontSize="small" />}
+      options={options}
+      filterOptions={(candidateOptions, { inputValue }) => {
+        const normalizedValue = inputValue.trim();
+        const normalizedQuery = normalizedValue.toLowerCase();
+        const filtered = candidateOptions.filter((option) =>
+          option.toLowerCase().includes(normalizedQuery),
+        );
+
+        return normalizedValue && !filtered.includes(normalizedValue)
+          ? [normalizedValue, ...filtered]
+          : filtered;
+      }}
+      slotProps={{
+        popper: { className: "profile-category-popper" },
+        paper: { className: "profile-category-menu" },
+      }}
+      value={value}
+      onInputChange={(_, nextValue) => onChange(nextValue)}
+      onChange={(_, nextValue) => onChange(typeof nextValue === "string" ? nextValue : "")}
+      renderInput={(params) => (
+        <TextField
+          {...params}
+          label={label ?? t("分类")}
+          placeholder={placeholder}
+          slotProps={{
+            ...params.slotProps,
+            htmlInput: {
+              ...params.slotProps.htmlInput,
+              ...fieldSlotProps.htmlInput,
+            },
+          }}
+        />
+      )}
+    />
+  );
+}
+
 type ProfileSignalTone = "good" | "warning" | "error" | "neutral";
 
 function profileAuthSignal(profile: ProfileInfo): { label: string; tone: ProfileSignalTone; detail: string } {
@@ -352,6 +526,9 @@ function profileEnvironmentSignal(profile: ProfileInfo): { label: string; tone: 
     return { label: "路径异常", tone: "error", detail: "CODEX_HOME 或 User Data 路径不存在" };
   }
   if (!profile.configExists) {
+    if (profile.authState?.status === "api-key") {
+      return { label: "API Key 模式", tone: "good", detail: "使用 API Key 认证，config.toml 可选" };
+    }
     return { label: "缺少配置", tone: "warning", detail: "未找到 config.toml" };
   }
   if (!profile.managedByApp) {
@@ -440,7 +617,10 @@ function FeatureCommandGrid({ items }: { items: FeatureCommandItem[] }) {
             <span className="command-title">{item.title}</span>
             <span className="command-subtitle">{item.subtitle}</span>
           </span>
-          <KeyboardArrowRightRoundedIcon className="command-chevron" aria-hidden="true" />
+          <span className="command-meta">
+            {item.countLabel ? <span className="command-count">{item.countLabel}</span> : null}
+            <KeyboardArrowRightRoundedIcon className="command-chevron" aria-hidden="true" />
+          </span>
         </button>
       ))}
     </Box>
@@ -510,7 +690,6 @@ function App() {
   const [language, setLanguage] = useState<AppLanguage>(initialAppLanguage);
   const t = useMemo(() => createTranslator(language), [language]);
   const [settingsDialogOpen, setSettingsDialogOpen] = useState(false);
-  const [serverNodesDialogOpen, setServerNodesDialogOpen] = useState(false);
   const [doctorReport, setDoctorReport] = useState<DoctorReport | null>(null);
   const [doctorError, setDoctorError] = useState<string | null>(null);
   const styleMode = themePreference === "system" ? systemStyleMode : themePreference;
@@ -519,7 +698,10 @@ function App() {
   const profileRuntimeTargetsRef = useRef<ProfileInfo[]>([]);
   const profileRuntimeRefreshInFlightRef = useRef(false);
   const [activeName, setActiveName] = useState(initialActiveProfileName);
+  const [profileGridElement, setProfileGridElement] = useState<HTMLDivElement | null>(null);
+  const [profileHeaderElement, setProfileHeaderElement] = useState<HTMLElement | null>(null);
   const [profileSort, setProfileSort] = useState<ProfileSortMode>(initialProfileSortMode);
+  const [profileColumnSort, setProfileColumnSort] = useState<ProfileColumnSortState>(null);
   const [query, setQuery] = useState("");
   const [categoryFilter, setCategoryFilter] = useState("all");
   const [statusFilter, setStatusFilter] = useState("all");
@@ -528,6 +710,7 @@ function App() {
   const [copyDialogOpen, setCopyDialogOpen] = useState(false);
   const [copyDraft, setCopyDraft] = useState<CopyProfileInput | null>(null);
   const [editDraft, setEditDraft] = useState<ProfileEditDraft>({
+    name: "",
     alias: "",
     category: "",
     note: "",
@@ -549,8 +732,11 @@ function App() {
   const [confirmImportSensitive, setConfirmImportSensitive] = useState(false);
   const { activeActions, startAction, finishAction, isActionBusy } = useActionRegistry();
   const [feedback, setFeedback] = useState<FeedbackState | null>(null);
-  const [quotaByProfile, setQuotaByProfile] = useState<Record<string, ProfileQuotaCacheState>>({});
+  const [quotaByProfile, setQuotaByProfile] = useState<Record<string, ProfileQuotaCacheState>>(
+    () => readPersistedProfileQuotaCache(),
+  );
   const [quotaBatchLoading, setQuotaBatchLoading] = useState(false);
+  const [quotaRetryAfterAuthRefresh, setQuotaRetryAfterAuthRefresh] = useState(false);
   const [sessionDialogOpen, setSessionDialogOpen] = useState(false);
   const [sessionReport, setSessionReport] = useState<ProfileSessionReport | null>(null);
   const [sessionLoading, setSessionLoading] = useState(false);
@@ -560,6 +746,9 @@ function App() {
   const [sessionCategory, setSessionCategory] = useState("");
   const [sessionPage, setSessionPage] = useState(1);
   const [sessionPageSize, setSessionPageSize] = useState(10);
+  const [profilePage, setProfilePage] = useState(1);
+  const [profilePageSize, setProfilePageSize] = useState(100);
+  const [profilePageSizeMenuAnchor, setProfilePageSizeMenuAnchor] = useState<HTMLElement | null>(null);
   const [quotaDialogProfileName, setQuotaDialogProfileName] = useState("");
   const [authDialogOpen, setAuthDialogOpen] = useState(false);
   const [authReport, setAuthReport] = useState<AuthVaultReport | null>(null);
@@ -625,6 +814,18 @@ function App() {
       })),
     ].filter((option) => option.key === "all" || option.count > 0);
   }, [profileFilterSource, t]);
+  const profileCategoryOptions = useMemo(() => {
+    const categories = allProfiles
+      .map((profile) => profile.category.trim())
+      .filter(Boolean);
+
+    return [
+      ...PROFILE_CATEGORY_ORDER.filter((category) => categories.includes(category)),
+      ...Array.from(new Set(categories))
+        .filter((category) => !PROFILE_CATEGORY_ORDER.includes(category))
+        .sort((left, right) => left.localeCompare(right, "zh-CN")),
+    ];
+  }, [allProfiles]);
   const statusFilterOptions = useMemo(
     () => [
       { key: "all", label: t("全部"), count: profiles.length },
@@ -671,13 +872,35 @@ function App() {
       .toLowerCase()
       .includes(normalizedQuery);
     });
-    if (statusFilter === "archived") {
-      return filtered.sort((left, right) =>
+    const baseSorted = statusFilter === "archived"
+      ? filtered.sort((left, right) =>
         (right.archivedAt ?? "").localeCompare(left.archivedAt ?? ""),
+      )
+      : sortProfiles(filtered, profileSort);
+    return sortProfilesByColumn(baseSorted, profileColumnSort, quotaByProfile);
+  }, [categoryFilter, profileColumnSort, profileFilterSource, profileSort, query, quotaByProfile, statusFilter]);
+  const profilePageCount = Math.max(1, Math.ceil(visibleProfiles.length / profilePageSize));
+  const paginatedProfiles = useMemo(
+    () => visibleProfiles.slice((profilePage - 1) * profilePageSize, profilePage * profilePageSize),
+    [profilePage, profilePageSize, visibleProfiles],
+  );
+  useLayoutEffect(() => {
+    if (!profileGridElement || !profileHeaderElement) return;
+
+    const updateScrollbarSize = () => {
+      const scrollbarSize = Math.max(0, profileGridElement.offsetWidth - profileGridElement.clientWidth);
+      profileHeaderElement.style.setProperty(
+        "--profile-scrollbar-size",
+        `${scrollbarSize}px`,
       );
-    }
-    return sortProfiles(filtered, profileSort);
-  }, [categoryFilter, profileFilterSource, profileSort, query, statusFilter]);
+    };
+
+    updateScrollbarSize();
+    const resizeObserver = new ResizeObserver(updateScrollbarSize);
+    resizeObserver.observe(profileGridElement);
+    return () => resizeObserver.disconnect();
+  }, [profileGridElement, profileHeaderElement, visibleProfiles.length, profileFilterSource.length]);
+
   const activeProfile = useMemo(
     () => allProfiles.find((profile) => profile.name === activeName) ?? visibleProfiles[0] ?? null,
     [activeName, allProfiles, visibleProfiles],
@@ -690,8 +913,19 @@ function App() {
     }
   }, [activeName, report, visibleProfiles]);
   useEffect(() => {
+    setProfilePage((current) => Math.min(current, profilePageCount));
+  }, [profilePageCount]);
+  useEffect(() => {
+    setProfilePage(1);
+  }, [query, categoryFilter, statusFilter, profileSort, profileColumnSort]);
+  useEffect(() => {
     window.localStorage.setItem(PROFILE_SORT_STORAGE_KEY, profileSort);
   }, [profileSort]);
+  function toggleProfileColumnSort(sortKey: ProfileColumnSortKey) {
+    setProfileColumnSort((current) => current?.key === sortKey
+      ? { key: sortKey, direction: current.direction === "asc" ? "desc" : "asc" }
+      : { key: sortKey, direction: "asc" });
+  }
   useEffect(() => {
     if (activeName) {
       window.localStorage.setItem(ACTIVE_PROFILE_STORAGE_KEY, activeName);
@@ -757,20 +991,11 @@ function App() {
     {
       key: "model-route",
       title: t("模型路由"),
-      subtitle: t("阿里 · GLM · 本地模型"),
+      subtitle: t("按 Profile 管理模型与服务路由"),
       icon: <AltRouteRoundedIcon fontSize="small" />,
       countLabel: modelRouteCountLabel,
       actionLabel: t("配置"),
       onClick: handleOpenModelRoute,
-    },
-    {
-      key: "server-nodes",
-      title: t("服务器节点"),
-      subtitle: t("SSH · Linux Codex"),
-      icon: <DnsRoundedIcon fontSize="small" />,
-      ariaLabel: t("打开服务器节点"),
-      actionLabel: t("管理"),
-      onClick: () => setServerNodesDialogOpen(true),
     },
   ];
   const createNameExists = existingNames.has(createDraft.name.trim());
@@ -805,7 +1030,16 @@ function App() {
       !activeProfile.isRunning &&
       !activeProfile.isArchived,
   );
-  const editChanged = metadataChanged || (canEditModel && modelChanged);
+  const canEditLauncher = Boolean(
+    activeProfile &&
+      !activeProfile.isDefault &&
+      !activeProfile.isRunning &&
+      !activeProfile.isArchived,
+  );
+  const launcherNameChanged = Boolean(activeProfile) && editDraft.name.trim() !== activeProfile?.name;
+  const editNameExists = launcherNameChanged && existingNames.has(editDraft.name.trim());
+  const editNameInvalid = editDraft.name.trim() !== "" && !isValidProfileName(editDraft.name);
+  const editChanged = metadataChanged || (canEditModel && modelChanged) || (canEditLauncher && launcherNameChanged);
 
   function selectProfile(profileName: string) {
     setActiveName(profileName);
@@ -832,12 +1066,16 @@ function App() {
   }, [language]);
 
   useEffect(() => {
+    persistProfileQuotaCache(quotaByProfile);
+  }, [quotaByProfile]);
+
+  useEffect(() => {
     document.documentElement.dataset.style = styleMode;
   }, [styleMode]);
 
-  async function refreshProfiles(nextFeedback?: FeedbackState) {
+  async function refreshProfiles(nextFeedback?: FeedbackState): Promise<ProfileReport | null> {
     if (!startAction(actionKeys.profileRefresh, "刷新中")) {
-      return;
+      return null;
     }
     try {
       const nextReport = await listProfiles();
@@ -861,11 +1099,13 @@ function App() {
       sessionResourceRef.current = { key: "", updatedAt: null };
       setSessionProfileName("");
       setFeedback(nextFeedback ?? null);
+      return nextReport;
     } catch (error) {
       setFeedback({
         severity: "error",
         text: errorMessage(error, "读取 profile 失败"),
       });
+      return null;
     } finally {
       finishAction(actionKeys.profileRefresh);
     }
@@ -1149,6 +1389,7 @@ function App() {
   function openEditDialogForProfile(profile: ProfileInfo) {
     setActiveName(profile.name);
     setEditDraft({
+      name: profile.name,
       alias: profile.alias ?? "",
       category: profile.category,
       note: profile.note ?? "",
@@ -1189,7 +1430,7 @@ function App() {
   function handleOpenQuotaDialog(profile: ProfileInfo) {
     setQuotaDialogProfileName(profile.name);
     if (!quotaByProfile[profile.name]?.report && !quotaByProfile[profile.name]?.loading) {
-      void handleReadQuota(profile);
+      requestReadQuota(profile);
     }
   }
 
@@ -1334,6 +1575,7 @@ function App() {
   useEffect(() => {
     if (!activeProfile) {
       setEditDraft({
+        name: "",
         alias: "",
         category: "",
         note: "",
@@ -1343,6 +1585,7 @@ function App() {
       return;
     }
     setEditDraft({
+      name: activeProfile.name,
       alias: activeProfile.alias ?? "",
       category: activeProfile.category,
       note: activeProfile.note ?? "",
@@ -1463,7 +1706,12 @@ function App() {
       return;
     }
 
-    const actionKey = actionKeys.profileMetadata(activeProfile.name);
+    const originalName = activeProfile.name;
+    const nextName = editDraft.name.trim();
+    const launcherChanged = canEditLauncher && launcherNameChanged;
+    const actionKey = launcherChanged
+      ? actionKeys.profileLauncher(originalName)
+      : actionKeys.profileMetadata(originalName);
     if (!startAction(actionKey, "保存中")) {
       return;
     }
@@ -1471,7 +1719,7 @@ function App() {
       const messages: string[] = [];
       if (canEditModel && modelChanged) {
         const result = await updateProfileModel({
-          profileName: activeProfile.name,
+          profileName: originalName,
           model: editDraft.model.trim(),
           reasoningEffort: editDraft.reasoningEffort.trim() || null,
         });
@@ -1479,20 +1727,30 @@ function App() {
       }
       if (metadataChanged) {
         const result = await updateProfileMetadata({
-          name: activeProfile.name,
+          name: originalName,
           alias: editDraft.alias.trim() || null,
           category: editDraft.category.trim() || null,
           note: editDraft.note.trim() || null,
         });
         messages.push(result.message);
       }
+      if (launcherChanged) {
+        const result = await updateProfileLauncher({
+          profileName: originalName,
+          newProfileName: nextName,
+        });
+        messages.push(result.message);
+        setActiveName(nextName);
+      }
       setEditDialogOpen(false);
       await refreshProfiles({
         severity: "success",
         text:
-          messages.length > 1
-            ? `已更新 ${profileLabel(activeProfile)} 的信息和模型配置。`
-            : messages[0] ?? `已更新 ${profileLabel(activeProfile)}。`,
+          launcherChanged
+            ? `已更新启动命令为 ${nextName}。`
+            : messages.length > 1
+              ? `已更新 ${profileLabel(activeProfile)} 的信息和模型配置。`
+              : messages[0] ?? `已更新 ${profileLabel(activeProfile)}。`,
       });
     } catch (error) {
       setFeedback({
@@ -1584,15 +1842,41 @@ function App() {
     }
   }
 
+  function requestReadQuota(profile: ProfileInfo) {
+    if (profile.authState?.status === "refresh-required") {
+      setQuotaRetryAfterAuthRefresh(true);
+      setAuthLoginTarget({
+        kind: "local-profile",
+        profileName: profile.name,
+        profileLabel: profileLabel(profile),
+        hasAccount: Boolean(profile.account),
+      });
+      return;
+    }
+    void handleReadQuota(profile);
+  }
+
   async function handleReadVisibleQuotas() {
     if (quotaBatchLoading) return;
+    const refreshRequiredCount = visibleProfiles.filter((profile) => (
+      Boolean(profile.account)
+      && profile.authState?.status === "refresh-required"
+      && !quotaByProfile[profile.name]?.loading
+      && !isProfileQuotaCacheFresh(quotaByProfile[profile.name])
+    )).length;
     const targets = visibleProfiles.filter((profile) => (
       Boolean(profile.account)
+      && profile.authState?.status !== "refresh-required"
       && !quotaByProfile[profile.name]?.loading
       && !isProfileQuotaCacheFresh(quotaByProfile[profile.name])
     ));
     if (targets.length === 0) {
-      setFeedback({ severity: "info", text: t("当前列表额度均为最新，或没有可查询的已登录 Profile。") });
+      setFeedback({
+        severity: refreshRequiredCount > 0 ? "warning" : "info",
+        text: refreshRequiredCount > 0
+          ? t("当前列表有 Profile 需要先刷新认证")
+          : t("当前列表额度均为最新，或没有可查询的已登录 Profile。"),
+      });
       return;
     }
 
@@ -1606,10 +1890,15 @@ function App() {
       const succeeded = results.filter(Boolean).length;
       const failed = results.length - succeeded;
       setFeedback({
-        severity: failed > 0 ? "warning" : "success",
+        severity: failed > 0 || refreshRequiredCount > 0 ? "warning" : "success",
         text: failed > 0
           ? t("{success} 个已更新，{failed} 个暂不可查。", { success: succeeded, failed })
-          : t("已更新 {count} 个 Profile 的额度。", { count: succeeded }),
+          : refreshRequiredCount > 0
+            ? t("已更新 {success} 个 Profile，另有 {refreshRequired} 个需先刷新认证。", {
+              success: succeeded,
+              refreshRequired: refreshRequiredCount,
+            })
+            : t("已更新 {count} 个 Profile 的额度。", { count: succeeded }),
       });
     } finally {
       setQuotaBatchLoading(false);
@@ -2619,32 +2908,9 @@ function App() {
           </DialogActions>
         </Dialog>
 
-        <ServerNodesDialog
-          open={serverNodesDialogOpen}
-          onClose={() => setServerNodesDialogOpen(false)}
-          onFeedback={setFeedback}
-        />
-
         <Box className="workbench-grid no-inspector">
           <main id="profile-browser" className="profile-browser">
             <Paper className="browser-panel" elevation={0}>
-              <Box className="browser-header">
-                <Box className="product-brand">
-                  <Box className="product-brand-mark" aria-hidden="true">
-                    <img src="/rcodexmanager.png" alt="" draggable={false} />
-                  </Box>
-                  <Box className="product-brand-copy">
-                    <Typography className="product-brand-name" variant="h5" component="h1" translate="no">
-                      <span className="product-brand-prefix">r</span>
-                      <span>CodexManager</span>
-                    </Typography>
-                    <Typography className="product-brand-subtitle" variant="caption">
-                      {t("Codex Profile 工作台")}
-                    </Typography>
-                  </Box>
-                </Box>
-              </Box>
-
               <Box className="browser-action-row">
                 <FeatureCommandGrid items={featureCommands} />
               </Box>
@@ -2784,20 +3050,41 @@ function App() {
               </Box>
 
               <Box className="profile-list-surface">
-                <Box className="profile-grid" aria-label={t("profile 列表")}>
-                  <Box className="profile-list-header" aria-hidden="true">
-                    <Box className="profile-header-main">
-                      <span>Profile</span>
-                      <span>{t("分类")}</span>
-                      <span>{t("账号")}</span>
-                      <span>{t("认证")}</span>
-                      <span>{t("最近会话")}</span>
-                      <span>{t("额度")}</span>
-                      <span>{t("环境")}</span>
-                      <span>{t("状态")}</span>
+                <Box className="profile-table-viewport">
+                  <Box className="profile-table-content">
+                    <Box
+                      className="profile-list-header"
+                      ref={setProfileHeaderElement}
+                    >
+                      <Box className="profile-header-main">
+                        <span>Profile</span>
+                        <ProfileColumnSortHeader
+                          label={t("分类")}
+                          sortKey="category"
+                          sortState={profileColumnSort}
+                          sortLabel={profileColumnSort?.key === "category" && profileColumnSort.direction === "desc" ? t("降序") : t("升序")}
+                          onSort={toggleProfileColumnSort}
+                        />
+                        <span>{t("账号")}</span>
+                        <span>{t("认证")}</span>
+                        <span>{t("最近会话")}</span>
+                        <ProfileColumnSortHeader
+                          label={t("额度")}
+                          sortKey="usage"
+                          sortState={profileColumnSort}
+                          sortLabel={profileColumnSort?.key === "usage" && profileColumnSort.direction === "desc" ? t("降序") : t("升序")}
+                          onSort={toggleProfileColumnSort}
+                        />
+                        <span>{t("环境")}</span>
+                        <span>{t("状态")}</span>
+                      </Box>
+                      <span className="profile-action-header">{t("操作")}</span>
                     </Box>
-                    <span className="profile-action-header">{t("操作")}</span>
-                  </Box>
+                    <Box
+                      className="profile-grid"
+                      ref={setProfileGridElement}
+                      aria-label={t("profile 列表")}
+                    >
                   {profileFilterSource.length === 0 ? (
                     <Box className="empty-state list-empty">
                       {statusFilter === "archived" ? <ArchiveRoundedIcon /> : <TerminalRoundedIcon />}
@@ -2811,7 +3098,7 @@ function App() {
                       <Typography variant="body2">{t("没有匹配结果。")}</Typography>
                     </Box>
                   ) : (
-                    visibleProfiles.map((profile) => (
+                    paginatedProfiles.map((profile) => (
                       <ProfileCard
                         key={profile.name}
                         profile={profile}
@@ -2823,9 +3110,9 @@ function App() {
                         onEdit={() => openEditDialogForProfile(profile)}
                         onLaunch={() => void handleLaunchProfile(profile)}
                         onTerminate={() => void handleTerminateProfile(profile)}
-                        onArchive={() => handleOpenArchiveDialog(profile)}
-                        onDelete={() => handleOpenDeleteDialog(profile)}
+                        onReadQuota={() => requestReadQuota(profile)}
                         onRestore={() => void handleRestoreArchivedProfile(profile)}
+                        onDelete={() => handleOpenDeleteDialog(profile)}
                         busy={
                           isActionBusy(actionKeys.profileLifecycle(profile.name)) ||
                           isActionBusy(actionKeys.profileArchive(profile.name)) ||
@@ -2834,6 +3121,8 @@ function App() {
                       />
                     ))
                   )}
+                    </Box>
+                  </Box>
                 </Box>
                 <Box className="profile-list-footer">
                   <Typography variant="caption">
@@ -2842,11 +3131,19 @@ function App() {
                       : t("共 {count} 个 profile", { count: visibleProfiles.length })}
                   </Typography>
                   <Stack direction="row" spacing={0.5} className="profile-page-controls">
-                    <IconButton aria-label={t("上一页")} disabled>
+                    <IconButton
+                      aria-label={t("上一页")}
+                      disabled={profilePage <= 1}
+                      onClick={() => setProfilePage((current) => Math.max(1, current - 1))}
+                    >
                       <KeyboardArrowLeftRoundedIcon fontSize="small" />
                     </IconButton>
-                    <span>1</span>
-                    <IconButton aria-label={t("下一页")} disabled={visibleProfiles.length <= 100}>
+                    <span>{profilePage}</span>
+                    <IconButton
+                      aria-label={t("下一页")}
+                      disabled={profilePage >= profilePageCount}
+                      onClick={() => setProfilePage((current) => Math.min(profilePageCount, current + 1))}
+                    >
                       <KeyboardArrowRightRoundedIcon fontSize="small" />
                     </IconButton>
                   </Stack>
@@ -2855,9 +3152,31 @@ function App() {
                     size="small"
                     variant="outlined"
                     endIcon={<KeyboardArrowDownRoundedIcon />}
+                    onClick={(event) => setProfilePageSizeMenuAnchor(event.currentTarget)}
                   >
-                    {t("100 条/页")}
+                    {t("{count} 条/页", { count: profilePageSize })}
                   </Button>
+                  <Menu
+                    anchorEl={profilePageSizeMenuAnchor}
+                    open={Boolean(profilePageSizeMenuAnchor)}
+                    onClose={() => setProfilePageSizeMenuAnchor(null)}
+                    anchorOrigin={{ vertical: "top", horizontal: "right" }}
+                    transformOrigin={{ vertical: "bottom", horizontal: "right" }}
+                  >
+                    {[10, 50, 100].map((size) => (
+                      <MenuItem
+                        key={size}
+                        selected={profilePageSize === size}
+                        onClick={() => {
+                          setProfilePageSize(size);
+                          setProfilePage(1);
+                          setProfilePageSizeMenuAnchor(null);
+                        }}
+                      >
+                        {t("{count} 条/页", { count: size })}
+                      </MenuItem>
+                    ))}
+                  </Menu>
                 </Box>
               </Box>
             </Paper>
@@ -2940,7 +3259,7 @@ function App() {
                             className="hero-quota-action"
                             variant="outlined"
                             startIcon={<BarChartRoundedIcon />}
-                            onClick={() => void handleReadQuota(activeProfile)}
+                            onClick={() => requestReadQuota(activeProfile)}
                             disabled={
                               !activeProfile.account ||
                               Boolean(quotaByProfile[activeProfile.name]?.loading)
@@ -2998,7 +3317,7 @@ function App() {
                     <QuotaBlock
                       profile={activeProfile}
                       state={quotaByProfile[activeProfile.name]}
-                      onRefresh={() => void handleReadQuota(activeProfile)}
+                      onRefresh={() => requestReadQuota(activeProfile)}
                     />
                   </Box>
 
@@ -3083,44 +3402,33 @@ function App() {
                 <span>{t("查看额度")}</span>
               </MenuItem>
               <Divider className="profile-context-menu-divider" />
-
-              <MenuItem
-                onClick={() => runProfileContextAction((profile) => void revealPath(profile.codexHome))}
-                disabled={!contextMenuProfile.homeExists}
-              >
-                <FolderRoundedIcon className="profile-context-menu-icon" fontSize="small" />
-                <span>{t("打开 CODEX_HOME")}</span>
-              </MenuItem>
-              <MenuItem
-                onClick={() => runProfileContextAction((profile) => void revealPath(profile.userDataDir))}
-                disabled={!contextMenuProfile.userDataExists}
-              >
-                <FolderRoundedIcon className="profile-context-menu-icon" fontSize="small" />
-                <span>{t("打开 User Data")}</span>
-              </MenuItem>
-              <MenuItem
-                onClick={() =>
-                  runProfileContextAction((profile) => {
-                    if (profile.latestSession?.path) {
-                      void revealPath(profile.latestSession.path);
-                    }
-                  })
-                }
-                disabled={!contextMenuProfile.latestSession?.path}
-              >
-                <OpenInNewRoundedIcon className="profile-context-menu-icon" fontSize="small" />
-                <span>{t("打开最新会话")}</span>
-              </MenuItem>
-
-              <Divider className="profile-context-menu-divider" />
-
-              <MenuItem onClick={() => runProfileContextAction(handleOpenCopyDialog)}>
-                <ContentCopyRoundedIcon className="profile-context-menu-icon" fontSize="small" />
-                <span>{t("复制 Profile")}</span>
-              </MenuItem>
               <MenuItem onClick={() => runProfileContextAction(openEditDialogForProfile)}>
                 <EditRoundedIcon className="profile-context-menu-icon" fontSize="small" />
                 <span>{t("编辑信息")}</span>
+              </MenuItem>
+              <Divider className="profile-context-menu-divider" />
+              <MenuItem
+                onClick={() => runProfileContextAction(handleOpenArchiveDialog)}
+                disabled={
+                  contextMenuProfile.isDefault ||
+                  contextMenuProfile.isRunning ||
+                  isActionBusy(actionKeys.profileArchive(contextMenuProfile.name))
+                }
+              >
+                <ArchiveRoundedIcon className="profile-context-menu-icon" fontSize="small" />
+                <span>{t("归档")}</span>
+              </MenuItem>
+              <MenuItem
+                className="danger"
+                onClick={() => runProfileContextAction(handleOpenDeleteDialog)}
+                disabled={
+                  contextMenuProfile.isDefault ||
+                  contextMenuProfile.isRunning ||
+                  isActionBusy(actionKeys.profileDelete(contextMenuProfile.name))
+                }
+              >
+                <DeleteOutlineRoundedIcon className="profile-context-menu-icon" fontSize="small" />
+                <span>{t("删除")}</span>
               </MenuItem>
             </>
           ) : contextMenuProfile ? (
@@ -3199,7 +3507,7 @@ function App() {
               <QuotaBlock
                 profile={quotaDialogProfile}
                 state={quotaByProfile[quotaDialogProfile.name]}
-                onRefresh={() => void handleReadQuota(quotaDialogProfile)}
+                onRefresh={() => requestReadQuota(quotaDialogProfile)}
               />
             ) : null}
           </DialogContent>
@@ -3281,14 +3589,27 @@ function App() {
         <AuthLoginDialog
           open={Boolean(authLoginTarget)}
           target={authLoginTarget}
-          onClose={() => setAuthLoginTarget(null)}
+          onClose={() => {
+            setAuthLoginTarget(null);
+            setQuotaRetryAfterAuthRefresh(false);
+          }}
           onCompleted={async (target) => {
-            await refreshProfiles({
+            const nextReport = await refreshProfiles({
               severity: "success",
               text: `${target.profileLabel} 认证已更新`,
             });
             if (authDialogOpen) {
               await refreshAuthVault();
+            }
+            if (quotaRetryAfterAuthRefresh && nextReport) {
+              const refreshedProfile = [
+                ...nextReport.profiles,
+                ...(nextReport.archivedProfiles ?? []),
+              ].find((profile) => profile.name === target.profileName);
+              setQuotaRetryAfterAuthRefresh(false);
+              if (refreshedProfile) {
+                await handleReadQuota(refreshedProfile);
+              }
             }
           }}
         />
@@ -3355,6 +3676,7 @@ function App() {
           authProfiles={authReport?.profiles ?? []}
           authLoading={authLoading}
           busy={isActionBusy(actionKeys.profileCopy)}
+          categoryOptions={profileCategoryOptions}
           nameExists={copyNameExists}
           canSubmit={canCopyProfile}
           onClose={() => {
@@ -3370,25 +3692,6 @@ function App() {
           <TaskDialogTitle icon={<AddRoundedIcon />} title={t("新增 profile")} subtitle={t("新建独立工作区")} onClose={() => setCreateDialogOpen(false)} />
           <DialogContent>
             <Box className="create-profile-layout">
-              <Box className="create-profile-preview" aria-label={t("新 Profile 预览")}>
-                <span className="create-profile-preview-avatar" translate="no">
-                  {(createDraft.alias || createDraft.name || "c").trim().slice(0, 1)}
-                </span>
-                <Box className="create-profile-preview-copy">
-                  <Typography className="create-profile-preview-title" variant="subtitle2" translate="no">
-                    {createDraft.alias?.trim() || t("新 Profile")}
-                  </Typography>
-                  <Typography variant="caption" translate="no">
-                    {createDraft.name.trim() || "codex-*"}
-                  </Typography>
-                </Box>
-                <Box className="create-profile-preview-tags">
-                  <Chip size="small" label={createDraft.category?.trim() || t("未分类")} />
-                  <Chip size="small" label={createDraft.model?.trim() || t("跟随默认")} />
-                  <Chip size="small" label={createDraft.reasoningEffort?.trim() || t("默认推理")} />
-                </Box>
-              </Box>
-
               <CreateProfileSection
                 icon={<TerminalRoundedIcon />}
                 title={t("身份与分类")}
@@ -3418,12 +3721,12 @@ function App() {
                     placeholder={t("选填")}
                     slotProps={textFieldSlotProps("create-profile-alias")}
                   />
-                  <TextField
-                    label={t("分类")}
+                  <ProfileCategoryAutocomplete
                     value={createDraft.category ?? ""}
-                    onChange={(event) => updateCreateDraft("category", event.target.value)}
+                    options={profileCategoryOptions}
+                    inputName="create-profile-category"
                     placeholder={t("例如 深度")}
-                    slotProps={textFieldSlotProps("create-profile-category")}
+                    onChange={(category) => updateCreateDraft("category", category)}
                   />
                 </Box>
               </CreateProfileSection>
@@ -3528,12 +3831,32 @@ function App() {
 
                 <Box className="profile-edit-section">
                   <Box className="profile-edit-section-heading">
+                    <span className="profile-edit-section-icon"><TerminalRoundedIcon /></span>
                     <Box>
                       <Typography variant="subtitle2">{t("基本信息")}</Typography>
                       <Typography variant="caption">{t("用于列表识别、筛选和备注。")}</Typography>
                     </Box>
                   </Box>
                   <Box className="profile-edit-field-grid">
+                    <TextField
+                      label={t("启动命令")}
+                      value={editDraft.name}
+                      onChange={(event) =>
+                        setEditDraft((current) => ({ ...current, name: event.target.value }))
+                      }
+                      disabled={!canEditLauncher}
+                      error={canEditLauncher && (editNameExists || editNameInvalid)}
+                      helperText={
+                        canEditLauncher
+                          ? editNameExists
+                            ? t("启动命令已存在")
+                            : editNameInvalid
+                              ? t("仅支持 codex-、小写字母、数字和连字符")
+                              : t("修改后会同步更新 .zshrc 中的 shell 函数名")
+                          : t("默认、运行中或已归档 Profile 只读")
+                      }
+                      slotProps={textFieldSlotProps("edit-profile-name")}
+                    />
                     <TextField
                       label={t("别名")}
                       value={editDraft.alias}
@@ -3542,13 +3865,13 @@ function App() {
                       }
                       slotProps={textFieldSlotProps("edit-profile-alias")}
                     />
-                    <TextField
-                      label={t("分类")}
+                    <ProfileCategoryAutocomplete
                       value={editDraft.category}
-                      onChange={(event) =>
-                        setEditDraft((current) => ({ ...current, category: event.target.value }))
+                      options={profileCategoryOptions}
+                      inputName="edit-profile-category"
+                      onChange={(category) =>
+                        setEditDraft((current) => ({ ...current, category }))
                       }
-                      slotProps={textFieldSlotProps("edit-profile-category")}
                     />
                     <TextField
                       className="profile-edit-note"
@@ -3567,6 +3890,7 @@ function App() {
 
                 <Box className="profile-edit-section">
                   <Box className="profile-edit-section-heading">
+                    <span className="profile-edit-section-icon"><AltRouteRoundedIcon /></span>
                     <Box>
                       <Typography variant="subtitle2">{t("模型与推理")}</Typography>
                       <Typography variant="caption">{t("保存前会备份 config.toml，并保留其他配置项。")}</Typography>
@@ -3608,26 +3932,75 @@ function App() {
 
                 <Box className="profile-edit-section profile-edit-runtime">
                   <Box className="profile-edit-section-heading">
+                    <span className="profile-edit-section-icon"><FolderRoundedIcon /></span>
                     <Box>
                       <Typography variant="subtitle2">{t("路径与运行配置")}</Typography>
                       <Typography variant="caption">{t("路径由启动函数管理，仅提供查看和定位。")}</Typography>
                     </Box>
                   </Box>
                   <Box className="profile-edit-path-list">
-                    <button type="button" onClick={() => void revealPath(activeProfile.codexHome)} disabled={!activeProfile.homeExists}>
+                    <Box className="profile-edit-path-item">
                       <FolderRoundedIcon fontSize="small" />
                       <span><strong>CODEX_HOME</strong><small translate="no">{activeProfile.codexHome}</small></span>
-                      <OpenInNewRoundedIcon fontSize="small" />
-                    </button>
-                    <button type="button" onClick={() => void revealPath(activeProfile.userDataDir)} disabled={!activeProfile.userDataExists}>
+                      <Stack className="profile-edit-path-actions" direction="row" spacing={0.25}>
+                        <Tooltip title={t("复制路径")}>
+                          <IconButton
+                            size="small"
+                            aria-label={t("复制 {title} 路径", { title: "CODEX_HOME" })}
+                            onClick={() => void copyTextToClipboard(activeProfile.codexHome, t("已复制 {title} 路径", { title: "CODEX_HOME" }))}
+                          >
+                            <ContentCopyRoundedIcon fontSize="small" />
+                          </IconButton>
+                        </Tooltip>
+                        <Tooltip title={t("打开路径")}>
+                          <span>
+                            <IconButton
+                              size="small"
+                              aria-label={t("打开 {title}", { title: "CODEX_HOME" })}
+                              onClick={() => void revealPath(activeProfile.codexHome)}
+                              disabled={!activeProfile.homeExists}
+                            >
+                              <OpenInNewRoundedIcon fontSize="small" />
+                            </IconButton>
+                          </span>
+                        </Tooltip>
+                      </Stack>
+                    </Box>
+                    <Box className="profile-edit-path-item">
                       <FolderRoundedIcon fontSize="small" />
                       <span><strong>User Data</strong><small translate="no">{activeProfile.userDataDir}</small></span>
-                      <OpenInNewRoundedIcon fontSize="small" />
-                    </button>
+                      <Stack className="profile-edit-path-actions" direction="row" spacing={0.25}>
+                        <Tooltip title={t("复制路径")}>
+                          <IconButton
+                            size="small"
+                            aria-label={t("复制 {title} 路径", { title: "User Data" })}
+                            onClick={() => void copyTextToClipboard(activeProfile.userDataDir, t("已复制 {title} 路径", { title: "User Data" }))}
+                          >
+                            <ContentCopyRoundedIcon fontSize="small" />
+                          </IconButton>
+                        </Tooltip>
+                        <Tooltip title={t("打开路径")}>
+                          <span>
+                            <IconButton
+                              size="small"
+                              aria-label={t("打开 {title}", { title: "User Data" })}
+                              onClick={() => void revealPath(activeProfile.userDataDir)}
+                              disabled={!activeProfile.userDataExists}
+                            >
+                              <OpenInNewRoundedIcon fontSize="small" />
+                            </IconButton>
+                          </span>
+                        </Tooltip>
+                      </Stack>
+                    </Box>
                     <Box className="profile-edit-config-status">
-                      <span className={activeProfile.configExists ? "good" : "warning"}>
-                        {activeProfile.configExists ? <CheckCircleOutlineRoundedIcon /> : <WarningAmberRoundedIcon />}
-                        {t(activeProfile.configExists ? "config.toml 已读取" : "config.toml 缺失")}
+                      <span className={activeProfile.configExists || activeProfile.authState?.status === "api-key" ? "good" : "warning"}>
+                        {activeProfile.configExists || activeProfile.authState?.status === "api-key" ? <CheckCircleOutlineRoundedIcon /> : <WarningAmberRoundedIcon />}
+                        {t(activeProfile.configExists
+                          ? "config.toml 已读取"
+                          : activeProfile.authState?.status === "api-key"
+                            ? "API Key 认证，config.toml 可选"
+                            : "config.toml 缺失")}
                       </span>
                       <span>{t(profileSourceLabel(activeProfile))}</span>
                     </Box>
@@ -3643,8 +4016,12 @@ function App() {
               onClick={() => void handleSaveProfile()}
               disabled={
                 !editChanged ||
+                (canEditLauncher && (!isValidProfileName(editDraft.name) || editNameExists)) ||
                 (canEditModel && modelChanged && !editDraft.model.trim()) ||
-                Boolean(activeProfile && isActionBusy(actionKeys.profileMetadata(activeProfile.name)))
+                Boolean(activeProfile && (
+                  isActionBusy(actionKeys.profileMetadata(activeProfile.name)) ||
+                  isActionBusy(actionKeys.profileLauncher(activeProfile.name))
+                ))
               }
             >
               {t("保存更改")}
@@ -3855,6 +4232,7 @@ function CopyProfileDialog({
   authProfiles,
   authLoading,
   busy,
+  categoryOptions,
   nameExists,
   canSubmit,
   onClose,
@@ -3868,6 +4246,7 @@ function CopyProfileDialog({
   authProfiles: AuthProfileSlot[];
   authLoading: boolean;
   busy: boolean;
+  categoryOptions: ReadonlyArray<string>;
   nameExists: boolean;
   canSubmit: boolean;
   onClose: () => void;
@@ -3932,11 +4311,11 @@ function CopyProfileDialog({
                 onChange={(event) => onDraftChange("alias", event.target.value)}
                 slotProps={textFieldSlotProps("copy-profile-alias")}
               />
-              <TextField
-                label={t("分类")}
+              <ProfileCategoryAutocomplete
                 value={draft.category ?? ""}
-                onChange={(event) => onDraftChange("category", event.target.value)}
-                slotProps={textFieldSlotProps("copy-profile-category")}
+                options={categoryOptions}
+                inputName="copy-profile-category"
+                onChange={(category) => onDraftChange("category", category)}
               />
               <TextField
                 label={t("模型")}
@@ -4021,9 +4400,9 @@ function ProfileCard({
   onEdit,
   onLaunch,
   onTerminate,
-  onArchive,
-  onDelete,
+  onReadQuota,
   onRestore,
+  onDelete,
   busy,
 }: {
   profile: ProfileInfo;
@@ -4035,9 +4414,9 @@ function ProfileCard({
   onEdit: () => void;
   onLaunch: () => void;
   onTerminate: () => void;
-  onArchive: () => void;
-  onDelete: () => void;
+  onReadQuota: () => void;
   onRestore: () => void;
+  onDelete: () => void;
   busy: boolean;
 }) {
   const { language, t } = useI18n();
@@ -4059,6 +4438,7 @@ function ProfileCard({
   const statusTone = profile.isArchived ? "archived" : profile.isRunning ? "running" : profile.account ? "signed-in" : "signed-out";
   const authSignal = profileAuthSignal(profile);
   const environmentSignal = profileEnvironmentSignal(profile);
+  const usageActionLabel = t(quotaState?.report ? "刷新额度" : "查看额度");
 
   return (
     <Box className={`profile-card ${selected ? "selected" : ""} ${profile.isArchived ? "archived" : ""}`} onContextMenu={profile.isArchived ? undefined : onContextMenu}>
@@ -4171,35 +4551,37 @@ function ProfileCard({
             </IconButton>
           </span>
         </Tooltip>
+        {profile.isArchived ? (
+          <Tooltip title={t("删除")}>
+            <span>
+              <IconButton
+                className="profile-delete-button"
+                aria-label={`${t("删除")} ${profile.name}`}
+                onClick={(event) => {
+                  event.stopPropagation();
+                  onDelete();
+                }}
+                disabled={busy || profile.isDefault || profile.isRunning}
+              >
+                <DeleteOutlineRoundedIcon fontSize="small" />
+              </IconButton>
+            </span>
+          </Tooltip>
+        ) : null}
         {!profile.isArchived ? (
           <>
-            <Tooltip title={profile.isDefault ? t("默认 Profile 受保护") : profile.isRunning ? t("请先停止 Profile") : t("归档 Profile")}>
+            <Tooltip title={usageActionLabel}>
               <span>
                 <IconButton
-                  className="profile-archive-button"
-                  aria-label={`${t("归档")} ${profile.name}`}
+                  className="profile-usage-button"
+                  aria-label={`${usageActionLabel} ${profile.name}`}
                   onClick={(event) => {
                     event.stopPropagation();
-                    onArchive();
+                    onReadQuota();
                   }}
-                  disabled={busy || profile.isDefault || profile.isRunning}
+                  disabled={busy || !profile.account || Boolean(quotaState?.loading)}
                 >
-                  <ArchiveRoundedIcon fontSize="small" />
-                </IconButton>
-              </span>
-            </Tooltip>
-            <Tooltip title={profile.isDefault ? t("默认 Profile 受保护") : profile.isRunning ? t("请先停止 Profile") : t("删除 Profile")}>
-              <span>
-                <IconButton
-                  className="profile-delete-button"
-                  aria-label={`${t("删除")} ${profile.name}`}
-                  onClick={(event) => {
-                    event.stopPropagation();
-                    onDelete();
-                  }}
-                  disabled={busy || profile.isDefault || profile.isRunning}
-                >
-                  <DeleteOutlineRoundedIcon fontSize="small" />
+                  <DataUsageRoundedIcon fontSize="small" />
                 </IconButton>
               </span>
             </Tooltip>
@@ -4229,8 +4611,9 @@ function ProfileQuotaListCell({
   profile: ProfileInfo;
   state: ProfileQuotaCacheState | undefined;
 }) {
-  const { t } = useI18n();
+  const { language, t } = useI18n();
   const windows = quotaWindowsForList(state?.report ?? null);
+  const quotaUnsupported = isQuotaUnsupported(profile, state);
   const hasExhaustedWindow = windows.some((window) => (
     window.status === "exhausted" || quotaRemainingPercent(window) === 0
   ));
@@ -4238,7 +4621,9 @@ function ProfileQuotaListCell({
     window.status === "low"
     || ((quotaRemainingPercent(window) ?? 100) <= 20)
   ));
-  const tone = state?.error
+  const tone = quotaUnsupported
+    ? "muted"
+    : state?.error
     ? "warning"
     : hasExhaustedWindow
       ? "error"
@@ -4247,15 +4632,35 @@ function ProfileQuotaListCell({
         : windows.length
           ? "good"
           : "muted";
-  const tooltip = state?.error
-    || (windows.length
-      ? windows.map((window) => t("{window} 剩余 {percent}%", {
-          window: compactQuotaWindowLabel(window),
-          percent: Math.round(quotaRemainingPercent(window) ?? 0),
-        })).join(" · ")
-      : profile.account
-        ? t("点击上方额度按钮查询当前列表")
-        : t("未登录，无法查询额度"));
+  const tooltip = [
+    quotaUnsupported
+      ? t("当前 Profile 使用自定义模型服务，未提供可读取的额度接口。")
+      : state?.error
+        ? t("额度查询失败，请稍后重试")
+        : null,
+    windows.length
+      ? windows.map((window) => [
+          t("{window} 剩余 {percent}%", {
+            window: compactQuotaWindowLabel(window),
+            percent: Math.round(quotaRemainingPercent(window) ?? 0),
+          }),
+          window.resetsAt === null
+            ? null
+            : t("下次刷新 {time}", {
+                time: formatQuotaDateTime(window.resetsAt, language),
+              }),
+        ].filter(Boolean).join(" · ")).join(" | ")
+      : quotaUnsupported
+        ? null
+        : profile.account
+          ? t("点击上方额度按钮查询当前列表")
+          : t("未登录，无法查询额度"),
+    state?.report && state.updatedAt > 0
+      ? t("上次查询 {time}", {
+          time: formatQuotaDateTime(Math.floor(state.updatedAt / 1000), language),
+        })
+      : null,
+  ].filter(Boolean).join(" · ");
 
   return (
     <Tooltip title={tooltip}>
@@ -4265,13 +4670,18 @@ function ProfileQuotaListCell({
             <CircularProgress size={12} />
             <Typography variant="caption">{t("查询中")}</Typography>
           </>
+        ) : quotaUnsupported ? (
+          <>
+            <InfoOutlinedIcon />
+            <Typography variant="caption">{t("暂不支持")}</Typography>
+          </>
         ) : state?.error && windows.length === 0 ? (
           <>
             <WarningAmberRoundedIcon />
             <Typography variant="caption">{t("暂不可查")}</Typography>
           </>
         ) : windows.length ? (
-          <Box className="profile-quota-values">
+          <Box className={`profile-quota-values ${windows.length === 1 ? "single" : ""}`}>
             {windows.map((window) => {
               const remaining = Math.round(quotaRemainingPercent(window) ?? 0);
               const windowTone = window.status === "exhausted" || remaining === 0
@@ -4436,10 +4846,11 @@ function QuotaBlock({
   state: ProfileQuotaCacheState | undefined;
   onRefresh: () => void;
 }) {
-  const { t } = useI18n();
+  const { language, t } = useI18n();
   const loading = state?.loading ?? false;
   const report = state?.report ?? null;
   const error = state?.error ?? null;
+  const quotaUnsupported = isQuotaUnsupported(profile, state);
   const disabled = loading || !profile.account;
 
   return (
@@ -4460,16 +4871,30 @@ function QuotaBlock({
         <Typography className="quota-muted" variant="caption">
           {t("未登录")}
         </Typography>
-      ) : error ? (
-        <Typography className="quota-error" variant="caption">
-          {error}
-        </Typography>
       ) : report ? (
         <Box className="quota-window-list">
+          {error ? (
+            <Typography className="quota-error" variant="caption">
+              {error}
+            </Typography>
+          ) : null}
           {report.windows.map((window) => (
-            <QuotaWindowRow key={window.id} window={window} />
+            <QuotaWindowRow key={window.id} window={window} language={language} />
           ))}
+          {state?.updatedAt ? (
+            <Typography className="quota-muted quota-last-queried" variant="caption">
+              {t("上次查询 {time}", {
+                time: formatQuotaDateTime(Math.floor(state.updatedAt / 1000), language),
+              })}
+            </Typography>
+          ) : null}
         </Box>
+      ) : error ? (
+        <Typography className={quotaUnsupported ? "quota-muted" : "quota-error"} variant="caption">
+          {quotaUnsupported
+            ? t("当前 Profile 使用自定义模型服务，未提供可读取的额度接口。")
+            : t("额度查询失败，请稍后重试")}
+        </Typography>
       ) : (
         <Typography className="quota-muted" variant="caption">
           {t("未查询")}
@@ -4479,7 +4904,14 @@ function QuotaBlock({
   );
 }
 
-function QuotaWindowRow({ window }: { window: QuotaWindowInfo }) {
+function QuotaWindowRow({
+  window,
+  language,
+}: {
+  window: QuotaWindowInfo;
+  language: AppLanguage;
+}) {
+  const { t } = useI18n();
   const usedPercent = clampPercent(window.usedPercent);
   return (
     <Box className={`quota-window-row ${window.status}`}>
@@ -4494,7 +4926,11 @@ function QuotaWindowRow({ window }: { window: QuotaWindowInfo }) {
       />
       <Stack direction="row" spacing={1} sx={{ alignItems: "center", justifyContent: "space-between" }}>
         <Typography variant="caption">{formatWindowMinutes(window.windowMinutes)}</Typography>
-        <Typography variant="caption">{formatResetAt(window.resetsAt)}</Typography>
+        <Typography variant="caption">
+          {window.resetsAt === null
+            ? t("reset --")
+            : t("下次刷新 {time}", { time: formatQuotaDateTime(window.resetsAt, language) })}
+        </Typography>
       </Stack>
     </Box>
   );
@@ -4616,16 +5052,6 @@ function formatWindowMinutes(value: number | null): string {
     return Number.isInteger(hours) ? `${hours}h` : `${hours.toFixed(1)}h`;
   }
   return `${value}m`;
-}
-
-function formatResetAt(value: number | null): string {
-  if (value === null) {
-    return "reset --";
-  }
-  return new Intl.DateTimeFormat("zh-CN", {
-    hour: "2-digit",
-    minute: "2-digit",
-  }).format(new Date(value * 1000));
 }
 
 function formatSessionTime(value: string | null, locale: AppLanguage = "zh-CN"): string {

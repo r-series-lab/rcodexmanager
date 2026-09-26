@@ -26,6 +26,7 @@ import {
   EmptyState,
   ErrorState,
   ManagerDialogShell,
+  ManagerPagination,
   MasterDetailLayout,
   SensitiveActionConfirmDialog,
   StatusBadge,
@@ -44,6 +45,12 @@ import type {
 } from "../../lib/types";
 import { useI18n } from "../../i18n";
 import "../manager-dialogs.css";
+
+function apiKeyValue(state: ProfileModelRouteState, fallback: string): string {
+  if (!state.hasApiKey) return fallback;
+  if (state.apiKeySource?.startsWith("env:")) return state.apiKeySource;
+  return state.apiKeySource === "inline" ? fallback : state.apiKeySource || fallback;
+}
 
 function routeTone(profile: ProfileModelRouteState): StatusTone {
   if (!profile.canApply && !profile.routed) return "neutral";
@@ -120,6 +127,8 @@ export function ModelRouteDialog({
   const [localError, setLocalError] = useState<string | null>(null);
   const [localAction, setLocalAction] = useState<"preview" | "draft" | "live" | null>(null);
   const [confirmAction, setConfirmAction] = useState<"apply" | "restore" | null>(null);
+  const [page, setPage] = useState(1);
+  const [pageSize, setPageSize] = useState(100);
 
   const selectedPreset = presets.find((item) => item.id === preset) ?? null;
   const filtered = useMemo(() => {
@@ -127,6 +136,19 @@ export function ModelRouteDialog({
     if (!value) return profiles;
     return profiles.filter((profile) => [profile.profileName, profile.profileLabel, profile.profileCategory, profile.model, profile.baseUrl, profile.routeStatusLabel].join(" ").toLowerCase().includes(value));
   }, [profiles, query]);
+  const pageCount = Math.max(1, Math.ceil(filtered.length / pageSize));
+  const paginatedProfiles = useMemo(
+    () => filtered.slice((page - 1) * pageSize, page * pageSize),
+    [filtered, page, pageSize],
+  );
+
+  useEffect(() => {
+    setPage(1);
+  }, [query]);
+
+  useEffect(() => {
+    setPage((current) => Math.min(current, pageCount));
+  }, [pageCount]);
 
   function invalidatePreview() {
     setPreview(null);
@@ -163,12 +185,26 @@ export function ModelRouteDialog({
 
   useEffect(() => {
     if (!selected) return;
+    const importedPreset = selected.preset ?? (selected.needsProxy ? "openai-chat" : "custom-responses");
+    setPreset(importedPreset);
     setModel(selected.model || selectedPreset?.defaultModel || "");
     setReasoningEffort(selected.reasoningEffort || "xhigh");
+    setProxyBaseUrl("http://127.0.0.1:15721/v1");
+    setUpstreamBaseUrl(selected.upstreamBaseUrl?.trim() || selected.baseUrl?.trim() || "");
+    setApiKeyEnv(selected.apiKeyEnv?.trim() || "");
+    setTemplateId("");
     setPreview(null);
     setDraftCheck(null);
     setLiveCheck(null);
-  }, [selected?.profileName]);
+    setLocalError(null);
+  }, [
+    selected?.profileName,
+    selected?.preset,
+    selected?.baseUrl,
+    selected?.upstreamBaseUrl,
+    selected?.apiKeyEnv,
+    selected?.needsProxy,
+  ]);
 
   useEffect(() => {
     if (!selectedPreset) return;
@@ -260,8 +296,8 @@ export function ModelRouteDialog({
     <EmptyState icon={<AltRouteRoundedIcon />} title="没有匹配的 profile" />
   ) : (
     <Box className="feature-list-items">
-      {filtered.map((profile) => (
-        <button key={profile.profileName} type="button" className={`feature-list-item ${profile.profileName === selected?.profileName ? "active" : ""}`} onClick={() => onProfileChange(profile.profileName)}>
+      {paginatedProfiles.map((profile) => (
+        <button key={profile.profileName} type="button" className={`feature-list-item ${profile.profileName === selected?.profileName ? "active" : ""}`} aria-current={profile.profileName === selected?.profileName ? "true" : undefined} onClick={() => onProfileChange(profile.profileName)}>
           <Stack direction="row" spacing={1} sx={{ alignItems: "flex-start" }}>
             <AltRouteRoundedIcon className="feature-list-leading-icon" />
             <Box sx={{ minWidth: 0, flex: 1 }}>
@@ -296,7 +332,13 @@ export function ModelRouteDialog({
               <SourceCard label="Wire API" value={selected.wireApi || t("默认")} />
               <SourceCard label="写入状态" value={selected.canApply ? t("可修改") : t("只读")} warning={!selected.canApply} />
               <SourceCard label="Base URL" value={selected.baseUrl || t("官方默认")} mono />
-              <SourceCard label="API Key" value={selected.hasApiKey ? t("已配置") : t("未配置")} />
+              <SourceCard
+                label="API Key"
+                value={
+                  apiKeyValue(selected, t("已配置"))
+                }
+                mono={selected.apiKeySource?.startsWith("env:")}
+              />
             </Box>
             <Box className="feature-fieldset">
               <Stack direction="row" spacing={1} sx={{ alignItems: "center", justifyContent: "space-between" }}>
@@ -327,7 +369,14 @@ export function ModelRouteDialog({
             </Box>
             <TextField size="small" label={t(selectedPreset?.chatOnly ? "上游 Chat Base URL" : "Responses Base URL")} value={upstreamBaseUrl} onChange={(event) => { setUpstreamBaseUrl(event.target.value); invalidatePreview(); }} placeholder="https://.../v1" />
             {selectedPreset?.chatOnly ? <TextField size="small" label={t("Responses 代理 URL")} value={proxyBaseUrl} onChange={(event) => { setProxyBaseUrl(event.target.value); invalidatePreview(); }} placeholder="http://127.0.0.1:15721/v1" /> : null}
-            <TextField size="small" label={t("API key 环境变量")} value={apiKeyEnv} onChange={(event) => { setApiKeyEnv(event.target.value); invalidatePreview(); }} placeholder={t("例如 ZAI_API_KEY")} />
+            <TextField
+              size="small"
+              label={t("API key 环境变量")}
+              value={apiKeyEnv}
+              onChange={(event) => { setApiKeyEnv(event.target.value); invalidatePreview(); }}
+              placeholder={t("例如 ZAI_API_KEY")}
+              helperText={t("应用后保存变量名，不保存环境变量里的明文 key。")}
+            />
             <TextField size="small" type="password" label={t("API key（仅本次弹窗）")} value={apiKey} onChange={(event) => { setApiKey(event.target.value); invalidatePreview(); }} autoComplete="off" helperText={t("关闭弹窗或应用后立即清空，不进入 localStorage 与应用元数据。")} />
             <Button size="small" endIcon={<ExpandMoreRoundedIcon />} sx={{ alignSelf: "flex-start" }} onClick={() => setAdvanced((value) => !value)}>{t("高级字段")}</Button>
             <Collapse in={advanced}>
@@ -375,13 +424,14 @@ export function ModelRouteDialog({
         onClose={onClose}
         className="model-route-v2"
         actions={selected ? (
-          <>
-            <Button size="small" startIcon={<FolderOpenRoundedIcon />} onClick={() => onReveal(selected.configPath)}>{t("定位 config")}</Button>
+          <Box className="manager-action-layout">
+            <ManagerPagination page={page} pageCount={pageCount} pageSize={pageSize} total={filtered.length} onPageChange={setPage} onPageSizeChange={(size) => { setPageSize(size); setPage(1); }} />
             <Stack direction="row" spacing={0.75}>
+              <Button size="small" startIcon={<FolderOpenRoundedIcon />} onClick={() => onReveal(selected.configPath)}>{t("定位 config")}</Button>
               <Button size="small" startIcon={<RestartAltRoundedIcon />} disabled={busy || !selected.canRestore} onClick={() => setConfirmAction("restore")}>{t("恢复官方配置")}</Button>
               <Button size="small" variant="contained" disabled={busy || !selected.canApply || !preview} onClick={() => setConfirmAction("apply")}>{t("应用预览")}</Button>
             </Stack>
-          </>
+          </Box>
         ) : undefined}
       >
         <DialogToolbar>

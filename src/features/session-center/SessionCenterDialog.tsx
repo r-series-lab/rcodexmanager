@@ -3,20 +3,16 @@ import ChatBubbleOutlineRoundedIcon from "@mui/icons-material/ChatBubbleOutlineR
 import ContentCopyRoundedIcon from "@mui/icons-material/ContentCopyRounded";
 import FolderOpenRoundedIcon from "@mui/icons-material/FolderOpenRounded";
 import FormatListBulletedRoundedIcon from "@mui/icons-material/FormatListBulletedRounded";
-import KeyboardArrowLeftRoundedIcon from "@mui/icons-material/KeyboardArrowLeftRounded";
-import KeyboardArrowRightRoundedIcon from "@mui/icons-material/KeyboardArrowRightRounded";
 import SearchRoundedIcon from "@mui/icons-material/SearchRounded";
 import TerminalRoundedIcon from "@mui/icons-material/TerminalRounded";
 import {
   Box,
   Button,
-  IconButton,
   InputAdornment,
   MenuItem,
   Skeleton,
   Stack,
   TextField,
-  Tooltip,
   Typography,
 } from "@mui/material";
 import {
@@ -25,6 +21,7 @@ import {
   EmptyState,
   ErrorState,
   ManagerDialogShell,
+  ManagerPagination,
   MasterDetailLayout,
   StatusBadge,
 } from "../../components/manager";
@@ -120,6 +117,7 @@ export function SessionCenterDialog({
   const [detailLoadingKey, setDetailLoadingKey] = useState("");
   const [detailError, setDetailError] = useState<string | null>(null);
   const requestIdRef = useRef(0);
+  const suppressAutoSelectRef = useRef(false);
 
   const selectedItem = selectedKey ? items.find((item) => sessionKey(item) === selectedKey) ?? null : null;
   const selectedItemKey = selectedItem ? sessionKey(selectedItem) : "";
@@ -159,6 +157,7 @@ export function SessionCenterDialog({
   useEffect(() => {
     if (!open) {
       requestIdRef.current += 1;
+      suppressAutoSelectRef.current = false;
       setSelectedKey("");
       setDetailError(null);
       setTab("summary");
@@ -167,11 +166,18 @@ export function SessionCenterDialog({
     if (selectedItemKey) void loadSelectedDetail();
   }, [open, selectedItemKey]);
 
+  useEffect(() => {
+    if (!open || loading) return;
+    if (suppressAutoSelectRef.current) {
+      suppressAutoSelectRef.current = false;
+      return;
+    }
+    if (selectedItemKey || items.length === 0) return;
+    setSelectedKey(sessionKey(items[0]));
+  }, [items, loading, open, selectedItemKey]);
+
   const lastRefresh = report?.generatedAt ? formatTime(report.generatedAt, language, t("时间未知")) : t("尚未刷新");
   const detailLoading = Boolean(selectedItemKey && detailLoadingKey === selectedItemKey);
-  const pageStart = report ? report.offset + 1 : (page - 1) * pageSize + 1;
-  const pageEnd = report ? report.offset + report.sessions.length : pageStart + items.length - 1;
-
   const list = (
     <Box className="feature-list-panel">
       {loading && items.length === 0 ? (
@@ -192,6 +198,7 @@ export function SessionCenterDialog({
                 type="button"
                 key={key}
                 className={`feature-list-item ${active ? "active" : ""}`}
+                aria-current={active ? "true" : undefined}
                 onClick={() => setSelectedKey(key)}
               >
                 <Stack direction="row" spacing={1} sx={{ alignItems: "flex-start" }}>
@@ -271,18 +278,22 @@ export function SessionCenterDialog({
       onClose={onClose}
       className="session-center-v2"
       actions={
-        <>
-          <Stack direction="row" spacing={0.5} sx={{ alignItems: "center" }}>
-            <Tooltip title={t("上一页")}><span><IconButton size="small" onClick={() => onPageChange(page - 1)} disabled={loading || page <= 1}><KeyboardArrowLeftRoundedIcon /></IconButton></span></Tooltip>
-            <Typography variant="caption">{t("{range} · 第 {page} 页", { range: items.length ? `${pageStart}-${pageEnd}` : t("0 条"), page })}</Typography>
-            <Tooltip title={t("下一页")}><span><IconButton size="small" onClick={() => onPageChange(page + 1)} disabled={loading || !report?.hasMore}><KeyboardArrowRightRoundedIcon /></IconButton></span></Tooltip>
-          </Stack>
+        <Box className="manager-action-layout">
+          <ManagerPagination
+            page={page}
+            pageCount={report?.hasMore ? page + 1 : page}
+            pageSize={pageSize}
+            total={report?.sessionCount ?? items.length}
+            loading={loading}
+            onPageChange={onPageChange}
+            onPageSizeChange={onPageSizeChange}
+          />
           <Stack direction="row" spacing={0.75}>
             <Button size="small" startIcon={<FolderOpenRoundedIcon />} disabled={!detail?.path} onClick={() => detail && onOpen(detail)}>{t("在文件夹中显示")}</Button>
             <Button size="small" startIcon={<ContentCopyRoundedIcon />} disabled={!selectedItem} onClick={() => selectedItem && onCopySummary(selectedItem)}>{t("复制摘要")}</Button>
             <Button size="small" variant="contained" disabled={!selectedItem} onClick={() => selectedItem && onCopyReference(selectedItem)}>{t("引用到当前")}</Button>
           </Stack>
-        </>
+        </Box>
       }
     >
       <DialogToolbar>
@@ -303,11 +314,16 @@ export function SessionCenterDialog({
           {categories.map((item) => <MenuItem key={item} value={item}>{item}</MenuItem>)}
         </TextField>
         <Button className="manager-filter-toggle" size="small" variant={profileName === activeProfileName ? "contained" : "outlined"} disabled={!activeProfileName} onClick={() => onProfileChange(activeProfileName)}>{t("当前")}</Button>
-        <TextField select size="small" value={pageSize} onChange={(event) => onPageSizeChange(Number(event.target.value))} sx={{ width: 92 }}>
-          {[10, 20, 50].map((size) => <MenuItem key={size} value={size}>{t("{count} / 页", { count: size })}</MenuItem>)}
-        </TextField>
       </DialogToolbar>
-      <MasterDetailLayout list={list} detail={detailPanel} detailOpen={Boolean(selectedItem)} onBack={() => setSelectedKey("")} />
+      <MasterDetailLayout
+        list={list}
+        detail={detailPanel}
+        detailOpen={Boolean(selectedItem)}
+        onBack={() => {
+          suppressAutoSelectRef.current = true;
+          setSelectedKey("");
+        }}
+      />
     </ManagerDialogShell>
   );
 }

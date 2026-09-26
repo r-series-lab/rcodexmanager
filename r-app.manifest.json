@@ -15,7 +15,7 @@
     "architecture": "modular-workbench",
     "category": "Codex 多 Profile 工作台",
     "tagline": "把隔离的 Codex 工作环境收进一个控制台。",
-    "description": "统一管理本地 Profile、历史会话、登录态备份、远程渠道、模型路由，以及通过 SSH 连接的 Linux Codex 节点。",
+    "description": "统一管理本地 Profile、历史会话、登录态备份、远程渠道和模型路由。",
     "stage": "开发预览",
     "localFirst": true,
     "nonGoals": [
@@ -37,8 +37,7 @@
     "formats": [
       "Tauri",
       "Rust",
-      "JSON CLI",
-      "SSH"
+      "JSON CLI"
     ],
     "facts": [
       {
@@ -46,8 +45,8 @@
         "value": "隔离 Codex Profile"
       },
       {
-        "label": "远端协议",
-        "value": "SSH + 单对象 JSON"
+        "label": "运行方式",
+        "value": "本地优先"
       },
       {
         "label": "敏感数据",
@@ -79,18 +78,13 @@
         "icon": "Route",
         "title": "模型路由",
         "body": "预览、测试、应用和恢复第三方模型路由，写配置前备份且不修改 auth.json。"
-      },
-      {
-        "icon": "ServerCog",
-        "title": "Linux 节点",
-        "body": "从 Mac 通过既有 SSH 配置管理无界面节点，不开放额外管理端口。"
       }
     ],
     "workflow": [
       {
         "label": "发现",
-        "title": "汇总本地与远端 Profile",
-        "body": "读取默认目录、Shell 启动函数和已配置 SSH 节点，建立统一状态视图。"
+        "title": "汇总本地 Profile",
+        "body": "读取默认目录和 Shell 启动函数，建立统一状态视图。"
       },
       {
         "label": "诊断",
@@ -100,7 +94,7 @@
       {
         "label": "管理",
         "title": "进入对应管理域处理",
-        "body": "按需加载会话、认证、渠道、路由或服务器节点，避免首页预取敏感正文。"
+        "body": "按需加载会话、认证、渠道或路由，避免首页预取敏感正文。"
       },
       {
         "label": "自动化",
@@ -112,7 +106,7 @@
       "title": "高权限动作必须保持可见、可回滚",
       "body": "认证、配置和远端写入均有运行状态保护、备份和显式确认。应用不保存 SSH 凭据，不把密钥写入参数或诊断，也不接管来源不明的外部进程。"
     },
-    "releaseSummary": "0.1.5 Public Preview 已覆盖紧凑 Profile 工作区、额度与认证状态、五个按需加载的管理中心、官方登录流程和 SSH Linux 节点管理。",
+    "releaseSummary": "0.1.6 Public Preview 改进远程节点管理、Profile 归档与额度工作流，并增强桌面端与 Headless CLI 的一致性。",
     "screenshots": [
       {
         "id": "profile-workspace",
@@ -141,8 +135,8 @@
           "选中后查看摘要、cwd 和来源路径"
         ],
         "caption": "先分页检索会话索引，选中后才读取单条详情，避免打开弹窗时扫描全部 JSONL 正文。",
-        "width": 1376,
-        "height": 720
+        "width": 1160,
+        "height": 792
       },
       {
         "id": "auth-vault",
@@ -156,8 +150,8 @@
           "应用或回滚前确认目标 Profile"
         ],
         "caption": "认证备份、有效性、来源和应用目标保持可见，写入前使用预检、运行保护和可恢复备份。",
-        "width": 1376,
-        "height": 720
+        "width": 1160,
+        "height": 792
       },
       {
         "id": "remote-channels",
@@ -171,8 +165,8 @@
           "查看脱敏日志与连接状态"
         ],
         "caption": "微信与飞书都围绕选中的 Profile 工作；遇到异常时先看状态与脱敏日志，再决定是否重启。",
-        "width": 1376,
-        "height": 720
+        "width": 1160,
+        "height": 792
       },
       {
         "id": "model-routing",
@@ -186,23 +180,8 @@
           "应用前预览写入内容并保留备份"
         ],
         "caption": "适合为自定义 Profile 接入 Qwen、GLM、本地模型或外部 Responses 服务，同时保持 auth.json 不变。",
-        "width": 1376,
-        "height": 720
-      },
-      {
-        "id": "server-nodes",
-        "source": "docs/assets/screenshots/server-nodes.png",
-        "alt": "rCodexManager 通过 SSH 管理 Linux Codex 节点",
-        "title": "服务器节点：通过 SSH 管理 Linux Codex",
-        "description": "服务器节点通过既有 SSH Host 调用远端 headless CLI，按需查看 Profile、会话、认证、路由、渠道和 Doctor，不保存 SSH 凭据。",
-        "highlights": [
-          "从 SSH Host 探测服务器节点",
-          "按标签加载远程 Profile、会话和认证",
-          "查看任务号、耗时、超时和失败建议"
-        ],
-        "caption": "通过既有 SSH Host 查看服务器 Profile、模型、认证和运行状态，不保存 SSH 凭据，也不开放额外端口。",
-        "width": 1376,
-        "height": 720
+        "width": 1160,
+        "height": 792
       }
     ]
   },
@@ -210,21 +189,21 @@
     {
       "id": "overview",
       "label": "产品与使用概览",
-      "description": "Profile、会话、认证、渠道、模型路由、服务器节点与安全边界。",
+      "description": "Profile、会话、认证、渠道、模型路由与安全边界。",
       "group": "开始使用",
       "source": "README.md"
     },
     {
       "id": "cli",
       "label": "CLI 完整参考",
-      "description": "命令、JSON 合同、远端节点和 Agent 安全执行顺序。",
+      "description": "命令、JSON 合同和 Agent 安全执行顺序。",
       "group": "自动化",
       "source": "docs/cli.md"
     },
     {
       "id": "interface-guide",
       "label": "界面与功能说明",
-      "description": "主工作区、五个管理中心、设置、登录与服务器节点的交互说明。",
+      "description": "主工作区、四个管理中心、设置与登录的交互说明。",
       "group": "开始使用",
       "source": "docs/interface.md"
     },
@@ -250,7 +229,7 @@
         "product": {
           "category": "Multi-profile Codex workbench",
           "tagline": "Bring isolated Codex environments into one control surface.",
-          "description": "Manage local profiles, session history, authentication backups, remote messaging channels, model routing, and headless Linux Codex nodes over SSH.",
+          "description": "Manage local profiles, session history, authentication backups, remote messaging channels, and model routing.",
           "stage": "Development preview",
           "nonGoals": [
             "Merge CODEX_HOME, sessions, or authentication state across profiles",
@@ -265,8 +244,8 @@
               "value": "Isolated Codex profile"
             },
             {
-              "label": "Remote protocol",
-              "value": "SSH + single-object JSON"
+              "label": "Runtime model",
+              "value": "Local-first"
             },
             {
               "label": "Sensitive data",
@@ -298,18 +277,13 @@
               "icon": "Route",
               "title": "Model routing",
               "body": "Preview, test, apply, and restore third-party model routes with configuration backups and no writes to auth.json."
-            },
-            {
-              "icon": "ServerCog",
-              "title": "Linux nodes",
-              "body": "Manage headless Codex nodes from macOS through existing SSH configuration without opening an additional management port."
             }
           ],
           "workflow": [
             {
               "label": "Discover",
-              "title": "Collect local and remote profiles",
-              "body": "Read default directories, shell launch functions, and configured SSH nodes to establish one status view."
+              "title": "Collect local profiles",
+              "body": "Read default directories and shell launch functions to establish one status view."
             },
             {
               "label": "Diagnose",
@@ -319,7 +293,7 @@
             {
               "label": "Manage",
               "title": "Enter the relevant management domain",
-              "body": "Load sessions, authentication, channels, routing, or server nodes only when needed instead of prefetching sensitive content."
+              "body": "Load sessions, authentication, channels, or routing only when needed instead of prefetching sensitive content."
             },
             {
               "label": "Automate",
@@ -331,7 +305,7 @@
             "title": "Privileged actions remain visible and recoverable",
             "body": "Authentication, configuration, and remote writes use runtime guards, backups, and explicit confirmation. The app does not store SSH credentials, place secrets in arguments or diagnostics, or take over external processes whose ownership cannot be established."
           },
-          "releaseSummary": "Version 0.1.5 Public Preview covers the compact Profile workspace, quota and authentication state, five lazy-loaded management centers, official sign-in, and SSH-managed Linux nodes.",
+          "releaseSummary": "Version 0.1.6 Public Preview improves remote node management, Profile archive and quota workflows, and desktop/Headless CLI consistency.",
           "screenshots": [
             {
               "id": "profile-workspace",
@@ -360,8 +334,8 @@
                 "Read summary, cwd, and source path after selection"
               ],
               "caption": "Search the bounded index first and load one selected transcript detail instead of scanning every JSONL body when the dialog opens.",
-              "width": 1376,
-              "height": 720
+              "width": 1160,
+              "height": 792
             },
             {
               "id": "auth-vault",
@@ -375,8 +349,8 @@
                 "Confirm target Profile before apply or rollback"
               ],
               "caption": "Backup validity, source, and target remain visible while previews, runtime guards, and recovery copies protect every write.",
-              "width": 1376,
-              "height": 720
+              "width": 1160,
+              "height": 792
             },
             {
               "id": "remote-channels",
@@ -390,8 +364,8 @@
                 "Read redacted logs and connection state"
               ],
               "caption": "WeChat and Feishu both operate around the selected Profile; check state and redacted logs before restarting a failed channel.",
-              "width": 1376,
-              "height": 720
+              "width": 1160,
+              "height": 792
             },
             {
               "id": "model-routing",
@@ -405,23 +379,8 @@
                 "Preview writes and keep a recovery backup"
               ],
               "caption": "Use it to connect custom Profiles to Qwen, GLM, local models, or external Responses services while leaving auth.json untouched.",
-              "width": 1376,
-              "height": 720
-            },
-            {
-              "id": "server-nodes",
-              "source": "docs/assets/screenshots/server-nodes.png",
-              "alt": "rCodexManager managing a headless Linux Codex node over SSH",
-              "title": "Linux server nodes: manage Codex over SSH",
-              "description": "Server Nodes calls a remote headless CLI through an existing SSH Host and loads Profiles, sessions, authentication, routing, channels, and Doctor only when needed.",
-              "highlights": [
-                "Probe nodes from configured SSH Hosts",
-                "Load remote Profiles, sessions, and authentication by tab",
-                "Review operation ids, durations, timeouts, and recovery hints"
-              ],
-              "caption": "Inspect server Profiles, models, authentication, and runtime state through an existing SSH Host without storing SSH credentials or opening a management port.",
-              "width": 1376,
-              "height": 720
+              "width": 1160,
+              "height": 792
             }
           ]
         },
@@ -429,18 +388,18 @@
           {
             "id": "overview",
             "label": "Product and usage overview",
-            "description": "Profiles, sessions, authentication, channels, model routing, Linux nodes, CLI, and security boundaries.",
+            "description": "Profiles, sessions, authentication, channels, model routing, CLI, and security boundaries.",
             "group": "Getting started",
             "source": "README_EN.md",
-            "reviewedForVersion": "0.1.5"
+            "reviewedForVersion": "0.1.6"
           },
           {
             "id": "interface-guide",
             "label": "Interface and feature guide",
-            "description": "The main workspace, five management centers, settings, sign-in, and Linux node interactions.",
+            "description": "The main workspace, four management centers, settings, and sign-in.",
             "group": "Getting started",
             "source": "docs/interface_EN.md",
-            "reviewedForVersion": "0.1.5"
+            "reviewedForVersion": "0.1.6"
           },
           {
             "id": "release-workflow",
@@ -448,7 +407,7 @@
             "description": "Source checks, server-created Tags, desktop and headless builds, and Draft Release review.",
             "group": "Releases",
             "source": "docs/RELEASE_WORKFLOW_EN.md",
-            "reviewedForVersion": "0.1.5"
+            "reviewedForVersion": "0.1.6"
           },
           {
             "id": "changelog",
@@ -456,7 +415,7 @@
             "description": "Features, security, compatibility, and documentation changes by version.",
             "group": "Releases",
             "source": "CHANGELOG_EN.md",
-            "reviewedForVersion": "0.1.5"
+            "reviewedForVersion": "0.1.6"
           }
         ]
       }

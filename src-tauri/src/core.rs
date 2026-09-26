@@ -58,8 +58,8 @@ const SESSION_DETAIL_CACHE_LIMIT: usize = 64;
 const DEFAULT_NO_PROXY: &str = "localhost,127.0.0.1,::1,*.local";
 const AUTH_BACKUP_EXPORT_KIND: &str = "app.rseries.rcodexmanager.auth-backup";
 const AUTH_BACKUP_EXPORT_VERSION: u16 = 1;
-const WECHAT_ACP_PACKAGE: &str = "wechat-acp@0.2.3";
-const CODEX_ACP_PACKAGE: &str = "@zed-industries/codex-acp@0.15.0";
+const WECHAT_ACP_PACKAGE: &str = "wechat-acp@0.10.0";
+const CODEX_ACP_PACKAGE: &str = "@agentclientprotocol/codex-acp@1.12.0";
 const WECHAT_BRIDGE_LOG_TAIL_LINES: usize = 80;
 const WECHAT_MIN_NODE_MAJOR: u32 = 20;
 const WECHAT_START_SETTLE_MS: u64 = 700;
@@ -177,6 +177,13 @@ pub struct UpdateProfileModelInput {
     pub profile_name: String,
     pub model: String,
     pub reasoning_effort: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct UpdateProfileLauncherInput {
+    pub profile_name: String,
+    pub new_profile_name: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -521,6 +528,92 @@ pub struct ProfileQuotaReport {
     pub windows: Vec<QuotaWindowInfo>,
 }
 
+#[derive(Debug, Clone, Deserialize, Default)]
+struct QuotaConfigFile {
+    #[serde(default)]
+    profiles: BTreeMap<String, QuotaProfileConfig>,
+    #[serde(default)]
+    providers: BTreeMap<String, QuotaProviderConfig>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+struct QuotaProfileConfig {
+    provider: String,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+struct QuotaProviderConfig {
+    url: String,
+    #[serde(default = "default_quota_method")]
+    method: String,
+    #[serde(default)]
+    auth: Option<String>,
+    #[serde(default)]
+    api_key_env: Option<String>,
+    #[serde(default)]
+    auth_header: Option<String>,
+    #[serde(default)]
+    auth_prefix: Option<String>,
+    #[serde(default)]
+    headers: BTreeMap<String, String>,
+    #[serde(default)]
+    mapping: QuotaMappingConfig,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+struct QuotaMappingConfig {
+    #[serde(default = "default_quota_windows_path")]
+    windows: String,
+    #[serde(default = "default_quota_id_path")]
+    id: String,
+    #[serde(default = "default_quota_label_path")]
+    label: String,
+    #[serde(default)]
+    used_percent: Option<String>,
+    #[serde(default)]
+    remaining_percent: Option<String>,
+    #[serde(default)]
+    window_minutes: Option<String>,
+    #[serde(default)]
+    resets_at: Option<String>,
+    #[serde(default)]
+    allowed: Option<String>,
+    #[serde(default)]
+    limit_reached: Option<String>,
+    #[serde(default)]
+    status: Option<String>,
+}
+
+impl Default for QuotaMappingConfig {
+    fn default() -> Self {
+        Self {
+            windows: default_quota_windows_path(),
+            id: default_quota_id_path(),
+            label: default_quota_label_path(),
+            used_percent: None,
+            remaining_percent: None,
+            window_minutes: None,
+            resets_at: None,
+            allowed: None,
+            limit_reached: None,
+            status: None,
+        }
+    }
+}
+
+fn default_quota_method() -> String {
+    "GET".to_string()
+}
+fn default_quota_windows_path() -> String {
+    "windows".to_string()
+}
+fn default_quota_id_path() -> String {
+    "id".to_string()
+}
+fn default_quota_label_path() -> String {
+    "label".to_string()
+}
+
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ProxyEnvSettings {
@@ -561,6 +654,12 @@ pub struct ProfileModelRouteState {
     pub base_url: Option<String>,
     pub wire_api: Option<String>,
     pub has_api_key: bool,
+    pub api_key_source: Option<String>,
+    pub api_key_env: Option<String>,
+    pub route_mode: Option<String>,
+    pub upstream_base_url: Option<String>,
+    pub preset: Option<ModelRoutePreset>,
+    pub managed_route: bool,
     pub route_status: String,
     pub route_status_label: String,
     pub read_only_reason: Option<String>,
@@ -1163,14 +1262,15 @@ pub fn list_profiles(context: &ProfileContext) -> Result<ProfileReport, String> 
             continue;
         }
 
-        let Some(codex_home_raw) = extract_shell_value(&function.body, "CODEX_HOME=") else {
+        let Some(codex_home) =
+            resolve_shell_path_value(&function.body, "CODEX_HOME=", &context.home_dir)
+        else {
             continue;
         };
         let launcher_kind = profile_launcher_kind_from_body(&function.body);
-        let codex_home = expand_shell_path(&codex_home_raw, &context.home_dir);
-        let user_data_dir = extract_shell_value(&function.body, "--user-data-dir=")
-            .map(|value| expand_shell_path(&value, &context.home_dir))
-            .unwrap_or_else(|| default_user_data_dir(context, &function.name, launcher_kind));
+        let user_data_dir =
+            resolve_shell_path_value(&function.body, "--user-data-dir=", &context.home_dir)
+                .unwrap_or_else(|| default_user_data_dir(context, &function.name, launcher_kind));
         let config_path = codex_home.join("config.toml");
         let config = read_codex_config(&config_path);
         let (account, auth_state) = read_profile_auth(&codex_home);
@@ -3724,11 +3824,14 @@ pub fn check_model_route_draft(
     } else {
         model_route_responses_endpoint(&base_url)
     };
-    let (_, api_key) = resolve_model_route_api_key(
+    let (_, api_key_config) = resolve_model_route_api_key(
         input.api_key.as_deref(),
         input.api_key_env.as_deref(),
         false,
     )?;
+    let api_key = api_key_config
+        .as_ref()
+        .and_then(|config| config.actual_value());
     let started_at = Instant::now();
     let client = reqwest::blocking::Client::builder()
         .timeout(Duration::from_secs(45))
@@ -5389,6 +5492,59 @@ pub fn update_profile_metadata(
     })
 }
 
+pub fn update_profile_launcher(
+    context: &ProfileContext,
+    input: UpdateProfileLauncherInput,
+) -> Result<ProfileActionReport, String> {
+    validate_profile_selector_name(&input.profile_name)?;
+    validate_profile_name(&input.new_profile_name)?;
+    let profile = find_profile(context, &input.profile_name)?;
+    ensure_mutable_profile(&profile, "rename")?;
+    if profile.is_running {
+        return Err(format!(
+            "{} is running; stop it before renaming the launch command",
+            profile.name
+        ));
+    }
+    if input.profile_name == input.new_profile_name {
+        return Ok(ProfileActionReport {
+            generated_at: now_iso(),
+            action: "launcher-update".to_string(),
+            zshrc_path: path_string(&context.zshrc_path),
+            profile: Some(profile),
+            backups: Vec::new(),
+            message: format!("launch command remains {}", input.profile_name),
+        });
+    }
+
+    let contents = read_zshrc(context)?;
+    if find_shell_function(&contents, &input.new_profile_name).is_some() {
+        return Err(format!(
+            "profile {} already exists in {}",
+            input.new_profile_name,
+            path_string(&context.zshrc_path)
+        ));
+    }
+    let next_contents =
+        rename_shell_function(&contents, &input.profile_name, &input.new_profile_name)
+            .ok_or_else(|| format!("profile {} launcher was not found", input.profile_name))?;
+    write_zshrc(context, &contents, &next_contents)?;
+    rename_metadata(context, &input.profile_name, &input.new_profile_name)?;
+
+    let refreshed = find_profile(context, &input.new_profile_name)?;
+    Ok(ProfileActionReport {
+        generated_at: now_iso(),
+        action: "launcher-update".to_string(),
+        zshrc_path: path_string(&context.zshrc_path),
+        profile: Some(refreshed),
+        backups: Vec::new(),
+        message: format!(
+            "renamed launch command {} to {}",
+            input.profile_name, input.new_profile_name
+        ),
+    })
+}
+
 pub fn reset_profile(
     context: &ProfileContext,
     input: ResetProfileInput,
@@ -5494,6 +5650,20 @@ pub fn update_profile_model(
     })
 }
 
+fn profile_model_route_launch_env(profile: &ProfileInfo) -> BTreeMap<String, String> {
+    let config_path = Path::new(&profile.config_path);
+    let Some(env_key) = read_model_route_config_view(config_path).api_key_env else {
+        return BTreeMap::new();
+    };
+    let Ok(value) = std::env::var(&env_key) else {
+        return BTreeMap::new();
+    };
+    let Some(value) = normalized_input(Some(&value)) else {
+        return BTreeMap::new();
+    };
+    BTreeMap::from([(env_key, value.to_string())])
+}
+
 pub fn launch_profile(context: &ProfileContext, name: &str) -> Result<ProfileActionReport, String> {
     validate_profile_selector_name(name)?;
     let profile = find_profile(context, name)?;
@@ -5520,7 +5690,11 @@ pub fn launch_profile(context: &ProfileContext, name: &str) -> Result<ProfileAct
             });
         }
 
-        let launch_command = server_profile_launch_command(&profile.codex_home, &codex);
+        let launch_command = server_profile_launch_command(
+            &profile.codex_home,
+            &codex,
+            &profile_model_route_launch_env(&profile),
+        );
         let status = Command::new(&tmux)
             .args(["new-session", "-d", "-s", &session_name])
             .arg(&launch_command)
@@ -5547,6 +5721,12 @@ pub fn launch_profile(context: &ProfileContext, name: &str) -> Result<ProfileAct
         });
     }
 
+    let mut launch_env = BTreeMap::new();
+    if let Some(api_key) = read_profile_api_key(Path::new(&profile.codex_home)) {
+        launch_env.insert("OPENAI_API_KEY".to_string(), api_key);
+    }
+    launch_env.extend(profile_model_route_launch_env(&profile));
+
     let mut command = Command::new("open");
     command
         .arg("-n")
@@ -5554,6 +5734,9 @@ pub fn launch_profile(context: &ProfileContext, name: &str) -> Result<ProfileAct
         .arg("Codex")
         .arg("--env")
         .arg(format!("CODEX_HOME={}", profile.codex_home));
+    for (key, value) in launch_env {
+        command.arg("--env").arg(format!("{key}={value}"));
+    }
     if let Ok(proxy) = detect_system_proxy_env() {
         append_open_proxy_env(&mut command, &proxy);
     }
@@ -5652,6 +5835,29 @@ pub fn read_profile_quota(
 ) -> Result<ProfileQuotaReport, String> {
     validate_profile_selector_name(name)?;
     let profile = find_profile(context, name)?;
+    let quota_config = load_quota_config(context)?;
+    if let Some(profile_config) = quota_config
+        .as_ref()
+        .and_then(|config| config.profiles.get(name))
+    {
+        let provider = quota_config
+            .as_ref()
+            .and_then(|config| config.providers.get(&profile_config.provider))
+            .ok_or_else(|| {
+                format!(
+                    "quota provider '{}' is not configured",
+                    profile_config.provider
+                )
+            })?;
+        return read_custom_profile_quota(context, &profile, &profile_config.provider, provider);
+    }
+
+    if profile.model_provider.is_some() {
+        return Err(format!(
+            "{} does not have a configured quota provider",
+            profile.name
+        ));
+    }
     let codex_home = PathBuf::from(&profile.codex_home);
     let auth = read_codex_auth_material(&codex_home)
         .ok_or_else(|| format!("{} has no readable auth.json", profile.name))?;
@@ -5691,6 +5897,217 @@ pub fn read_profile_quota(
         captured_at: Utc::now().timestamp(),
         endpoint: CHATGPT_USAGE_ENDPOINT.to_string(),
         windows,
+    })
+}
+
+fn load_quota_config(context: &ProfileContext) -> Result<Option<QuotaConfigFile>, String> {
+    let path = quota_providers_path(context);
+    if !path.exists() {
+        return Ok(None);
+    }
+    let contents = fs::read_to_string(&path)
+        .map_err(|error| format!("failed to read quota configuration: {error}"))?;
+    toml::from_str::<QuotaConfigFile>(&contents)
+        .map(Some)
+        .map_err(|error| format!("invalid quota configuration: {error}"))
+}
+
+fn read_custom_profile_quota(
+    context: &ProfileContext,
+    profile: &ProfileInfo,
+    provider_id: &str,
+    provider: &QuotaProviderConfig,
+) -> Result<ProfileQuotaReport, String> {
+    if !provider.method.eq_ignore_ascii_case("GET") {
+        return Err(format!(
+            "quota provider '{provider_id}' only supports GET requests"
+        ));
+    }
+    let url = provider.url.trim();
+    if !(url.starts_with("https://") || url.starts_with("http://")) {
+        return Err(format!(
+            "quota provider '{provider_id}' URL must use http or https"
+        ));
+    }
+
+    let codex_home = PathBuf::from(&profile.codex_home);
+    let auth = read_codex_auth_material(&codex_home);
+    let auth_mode = provider.auth.as_deref().unwrap_or("bearer");
+    let secret = if auth_mode.eq_ignore_ascii_case("none") {
+        None
+    } else if let Some(env_name) = provider
+        .api_key_env
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+    {
+        Some(std::env::var(env_name).map_err(|_| {
+            format!("quota provider '{provider_id}' API key environment variable is unavailable")
+        })?)
+    } else {
+        Some(
+            auth.as_ref()
+                .and_then(|material| material.access_token.as_deref())
+                .ok_or_else(|| {
+                    format!(
+                        "{} has no credential for quota provider '{provider_id}'",
+                        profile.name
+                    )
+                })?
+                .to_string(),
+        )
+    };
+
+    let proxy_url = resolve_quota_proxy_url(context);
+    let mut client_builder = reqwest::blocking::Client::builder()
+        .timeout(Duration::from_secs(QUOTA_HTTP_TIMEOUT_SECONDS))
+        .user_agent(format!("rCodexManager/{}", env!("CARGO_PKG_VERSION")));
+    if let Some(proxy_url) = proxy_url {
+        let proxy = reqwest::Proxy::all(proxy_url)
+            .map_err(|_| "configured server proxy is invalid".to_string())?;
+        client_builder = client_builder.proxy(proxy);
+    }
+    let client = client_builder
+        .build()
+        .map_err(|error| format!("failed to build quota client: {error}"))?;
+    let mut request = client.get(url).header("Accept", "application/json");
+    for (key, value) in &provider.headers {
+        request = request.header(key, value);
+    }
+    if auth_mode.eq_ignore_ascii_case("none") {
+        // Public quota endpoint; no authorization header is added.
+    } else {
+        let header = provider.auth_header.as_deref().unwrap_or("Authorization");
+        let prefix = provider.auth_prefix.as_deref().unwrap_or_else(|| {
+            if auth_mode.eq_ignore_ascii_case("api-key") {
+                ""
+            } else {
+                "Bearer "
+            }
+        });
+        request = request.header(
+            header,
+            format!("{prefix}{}", secret.as_deref().unwrap_or_default()),
+        );
+    }
+
+    let response = request
+        .send()
+        .map_err(|error| format!("quota request failed: {error}"))?;
+    let status = response.status();
+    if !status.is_success() {
+        return Err(format!("quota endpoint returned HTTP {}", status.as_u16()));
+    }
+    let payload = response
+        .json::<Value>()
+        .map_err(|error| format!("failed to parse quota response: {error}"))?;
+    let windows_value = json_path_value(&payload, &provider.mapping.windows)
+        .and_then(Value::as_array)
+        .ok_or_else(|| {
+            format!(
+                "quota response field '{}' is not an array",
+                provider.mapping.windows
+            )
+        })?;
+    let windows = windows_value
+        .iter()
+        .enumerate()
+        .map(|(index, item)| map_custom_quota_window(item, index, &provider.mapping))
+        .collect::<Result<Vec<_>, _>>()?;
+    if windows.is_empty() {
+        return Err("quota endpoint returned no quota windows".to_string());
+    }
+
+    Ok(ProfileQuotaReport {
+        generated_at: now_iso(),
+        profile_name: profile.name.clone(),
+        account: auth.and_then(|material| material.account),
+        captured_at: Utc::now().timestamp(),
+        endpoint: url.to_string(),
+        windows,
+    })
+}
+
+fn map_custom_quota_window(
+    value: &Value,
+    index: usize,
+    mapping: &QuotaMappingConfig,
+) -> Result<QuotaWindowInfo, String> {
+    let id = json_path_value(value, &mapping.id)
+        .and_then(Value::as_str)
+        .map(str::to_string)
+        .unwrap_or_else(|| format!("window-{index}"));
+    let label = json_path_value(value, &mapping.label)
+        .and_then(Value::as_str)
+        .map(str::to_string)
+        .unwrap_or_else(|| id.clone());
+    let used_percent = mapping
+        .used_percent
+        .as_deref()
+        .and_then(|path| json_number(value, path));
+    let remaining_percent = mapping
+        .remaining_percent
+        .as_deref()
+        .and_then(|path| json_number(value, path));
+    let window_minutes = mapping
+        .window_minutes
+        .as_deref()
+        .and_then(|path| json_integer(value, path));
+    let resets_at = mapping
+        .resets_at
+        .as_deref()
+        .and_then(|path| json_integer(value, path));
+    let allowed = mapping
+        .allowed
+        .as_deref()
+        .and_then(|path| json_path_value(value, path).and_then(Value::as_bool));
+    let limit_reached = mapping
+        .limit_reached
+        .as_deref()
+        .and_then(|path| json_path_value(value, path).and_then(Value::as_bool));
+    let status = mapping
+        .status
+        .as_deref()
+        .and_then(|path| json_path_value(value, path).and_then(Value::as_str))
+        .map(str::to_string)
+        .unwrap_or_else(|| {
+            if remaining_percent.unwrap_or(100.0) <= 0.0 {
+                "exhausted".to_string()
+            } else if remaining_percent.unwrap_or(100.0) <= 20.0 {
+                "low".to_string()
+            } else {
+                "available".to_string()
+            }
+        });
+    Ok(QuotaWindowInfo {
+        id,
+        label,
+        used_percent,
+        remaining_percent,
+        window_minutes,
+        resets_at,
+        allowed,
+        limit_reached,
+        status,
+    })
+}
+
+fn json_path_value<'a>(value: &'a Value, path: &str) -> Option<&'a Value> {
+    path.split('.')
+        .filter(|part| !part.is_empty())
+        .try_fold(value, |current, part| current.as_object()?.get(part))
+}
+
+fn json_number(value: &Value, path: &str) -> Option<f64> {
+    json_path_value(value, path)
+        .and_then(|item| item.as_f64().or_else(|| item.as_str()?.parse().ok()))
+}
+
+fn json_integer(value: &Value, path: &str) -> Option<i64> {
+    json_path_value(value, path).and_then(|item| {
+        item.as_i64()
+            .or_else(|| item.as_f64().map(|number| number as i64))
+            .or_else(|| item.as_str()?.parse().ok())
     })
 }
 
@@ -6361,12 +6778,19 @@ fn wechat_runtime_path_entries(
         .collect()
 }
 
-fn server_profile_launch_command(codex_home: &str, codex_binary: &Path) -> String {
+fn server_profile_launch_command(
+    codex_home: &str,
+    codex_binary: &Path,
+    extra_env: &BTreeMap<String, String>,
+) -> String {
     let mut parts = vec![
         "exec".to_string(),
         "env".to_string(),
         format!("CODEX_HOME={}", shell_quote(codex_home)),
     ];
+    for (key, value) in extra_env {
+        parts.push(format!("{}={}", key, shell_quote(value)));
+    }
     for key in [
         "HTTP_PROXY",
         "HTTPS_PROXY",
@@ -6975,7 +7399,7 @@ fn session_sort_value(session: &CodexSessionSummary) -> &str {
 }
 
 fn normalize_session_page_limit(limit: usize) -> usize {
-    limit.clamp(1, 50)
+    limit.clamp(1, 100)
 }
 
 fn normalized_optional_filter(value: Option<&str>) -> Option<String> {
@@ -7312,6 +7736,13 @@ fn read_codex_auth_material(codex_home: &Path) -> Option<CodexAuthMaterial> {
     let contents = fs::read_to_string(auth_path).ok()?;
     let root: Value = serde_json::from_str(&contents).ok()?;
     read_codex_auth_material_from_value(&root)
+}
+
+fn read_profile_api_key(codex_home: &Path) -> Option<String> {
+    let auth_path = codex_home.join("auth.json");
+    let contents = fs::read_to_string(auth_path).ok()?;
+    let root: Value = serde_json::from_str(&contents).ok()?;
+    string_at(&root, &["OPENAI_API_KEY"]).or_else(|| string_at(&root, &["api_key"]))
 }
 
 fn read_codex_auth_material_from_value(root: &Value) -> Option<CodexAuthMaterial> {
@@ -8060,6 +8491,10 @@ fn app_data_dir(context: &ProfileContext) -> PathBuf {
     context.home_dir.join(".rcodexmanager")
 }
 
+fn quota_providers_path(context: &ProfileContext) -> PathBuf {
+    app_data_dir(context).join("quota-providers.toml")
+}
+
 fn auth_vault_dir(context: &ProfileContext) -> PathBuf {
     app_data_dir(context).join("auth-vault")
 }
@@ -8567,7 +9002,7 @@ fn write_wechat_bridge_wrapper(
         fs::create_dir_all(parent).map_err(|error| error.to_string())?;
     }
     let script = format!(
-        "#!/usr/bin/env bash\nset -euo pipefail\nexport CODEX_HOME={}\nexport PATH={}\nexec {} -y --package {} codex-acp -c 'shell_environment_policy.inherit=\"all\"' \"$@\"\n",
+        "#!/usr/bin/env bash\nset -euo pipefail\nexport CODEX_HOME={}\nexport PATH={}\nexec {} -y --package {} codex-acp \"$@\"\n",
         shell_quote(&profile.codex_home),
         shell_quote(&node_runtime.path_env.to_string_lossy()),
         shell_quote(&path_string(&node_runtime.npx_path)),
@@ -9060,6 +9495,18 @@ fn remove_metadata(context: &ProfileContext, name: &str) -> Result<(), String> {
     write_metadata_store(context, &store)
 }
 
+fn rename_metadata(
+    context: &ProfileContext,
+    current_name: &str,
+    new_name: &str,
+) -> Result<(), String> {
+    let mut store = read_metadata_store(context)?;
+    if let Some(metadata) = store.profiles.remove(current_name) {
+        store.profiles.insert(new_name.to_string(), metadata);
+    }
+    write_metadata_store(context, &store)
+}
+
 fn write_zshrc(context: &ProfileContext, previous: &str, next: &str) -> Result<(), String> {
     if let Some(parent) = context.zshrc_path.parent() {
         fs::create_dir_all(parent).map_err(|error| error.to_string())?;
@@ -9169,6 +9616,60 @@ fn extract_shell_value(body: &str, token: &str) -> Option<String> {
     Some(rest[..end].to_string())
 }
 
+fn resolve_shell_path_value(body: &str, token: &str, home_dir: &Path) -> Option<PathBuf> {
+    let raw_value = extract_shell_value(body, token)?;
+    let variables = shell_local_variables(body);
+    let resolved_value = resolve_shell_variables(&raw_value, &variables);
+    Some(expand_shell_path(&resolved_value, home_dir))
+}
+
+fn shell_local_variables(body: &str) -> BTreeMap<String, String> {
+    body.lines()
+        .filter_map(|line| {
+            let assignment = line
+                .trim()
+                .strip_prefix("local ")
+                .or_else(|| line.trim().strip_prefix("export "))
+                .unwrap_or_else(|| line.trim());
+            let (name, _) = assignment.split_once('=')?;
+            if name.is_empty()
+                || !name
+                    .chars()
+                    .all(|char| char.is_ascii_alphanumeric() || char == '_')
+            {
+                return None;
+            }
+            let value = extract_shell_value(assignment, "=")?;
+            Some((name.to_string(), value))
+        })
+        .collect()
+}
+
+fn resolve_shell_variables(value: &str, variables: &BTreeMap<String, String>) -> String {
+    let mut current = value.to_string();
+    for _ in 0..8 {
+        let Some(variable_start) = current.strip_prefix('$') else {
+            break;
+        };
+        let (variable_name, suffix) = if let Some(rest) = variable_start.strip_prefix('{') {
+            let Some(end) = rest.find('}') else {
+                break;
+            };
+            (&rest[..end], &rest[end + 1..])
+        } else {
+            let end = variable_start
+                .find(|char: char| !char.is_ascii_alphanumeric() && char != '_')
+                .unwrap_or(variable_start.len());
+            (&variable_start[..end], &variable_start[end..])
+        };
+        let Some(replacement) = variables.get(variable_name) else {
+            break;
+        };
+        current = format!("{replacement}{suffix}");
+    }
+    current
+}
+
 fn profile_launcher_kind_from_body(body: &str) -> ProfileLauncherKind {
     if body.contains("open -n -a \"Codex\"")
         || body.contains("open -n -a Codex")
@@ -9257,6 +9758,17 @@ fn remove_function(contents: &str, name: &str) -> Option<String> {
     Some(with_trailing_newline(lines.join("\n")))
 }
 
+fn rename_shell_function(contents: &str, current_name: &str, new_name: &str) -> Option<String> {
+    let existing = find_shell_function(contents, current_name)?;
+    let mut lines: Vec<String> = contents.lines().map(ToString::to_string).collect();
+    let original = lines.get(existing.start_line)?.clone();
+    let leading_len = original.len() - original.trim_start().len();
+    let leading = &original[..leading_len];
+    let trimmed = original[leading_len..].strip_prefix(&format!("{current_name}()"))?;
+    lines[existing.start_line] = format!("{leading}{new_name}(){trimmed}");
+    Some(with_trailing_newline(lines.join("\n")))
+}
+
 fn render_profile_function(context: &ProfileContext, draft: &ProfileDraft) -> String {
     let codex_home = escape_double_quotes(&shorten_home_path(&draft.codex_home, &context.home_dir));
     let user_data_dir =
@@ -9334,11 +9846,39 @@ struct ModelRoutePresetSpec {
 #[derive(Debug, Clone)]
 struct ModelRouteConfigView {
     model_provider: Option<String>,
+    managed_route: bool,
     base_url: Option<String>,
     wire_api: Option<String>,
     has_api_key: bool,
+    api_key_source: Option<String>,
+    api_key_env: Option<String>,
     route_mode: Option<String>,
     upstream_base_url: Option<String>,
+    preset: Option<ModelRoutePreset>,
+}
+
+#[derive(Debug, Clone)]
+enum ModelRouteApiKeyConfig {
+    Inline(String),
+    Env(String),
+}
+
+impl ModelRouteApiKeyConfig {
+    fn actual_value(&self) -> Option<String> {
+        match self {
+            Self::Inline(value) => normalized_input(Some(value)).map(ToOwned::to_owned),
+            Self::Env(key) => std::env::var(key)
+                .ok()
+                .and_then(|value| normalized_input(Some(&value)).map(ToOwned::to_owned)),
+        }
+    }
+
+    fn source(&self) -> String {
+        match self {
+            Self::Inline(_) => "inline".to_string(),
+            Self::Env(key) => format!("env:{key}"),
+        }
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -9603,6 +10143,36 @@ fn model_route_preset_id(preset: ModelRoutePreset) -> &'static str {
     }
 }
 
+fn parse_model_route_preset(value: &str) -> Option<ModelRoutePreset> {
+    match value.trim() {
+        "aliyun-qwen" => Some(ModelRoutePreset::AliyunQwen),
+        "glm" => Some(ModelRoutePreset::Glm),
+        "openai-chat" => Some(ModelRoutePreset::OpenaiChat),
+        "local-openai" => Some(ModelRoutePreset::LocalOpenai),
+        "custom-responses" => Some(ModelRoutePreset::CustomResponses),
+        _ => None,
+    }
+}
+
+fn infer_model_route_preset(
+    model_provider: Option<&str>,
+    base_url: Option<&str>,
+    wire_api: Option<&str>,
+) -> Option<ModelRoutePreset> {
+    if model_provider == Some(MODEL_ROUTE_PROVIDER_ID) {
+        return None;
+    }
+    if wire_api.is_some_and(is_chat_wire_api)
+        || base_url.is_some_and(looks_like_chat_completions_url)
+    {
+        return Some(ModelRoutePreset::OpenaiChat);
+    }
+    if wire_api.is_some_and(|value| value.eq_ignore_ascii_case("responses")) {
+        return Some(ModelRoutePreset::CustomResponses);
+    }
+    None
+}
+
 fn profile_model_route_state(profile: &ProfileInfo) -> ProfileModelRouteState {
     let config_path = PathBuf::from(&profile.config_path);
     let route_config = read_model_route_config_view(&config_path);
@@ -9664,6 +10234,12 @@ fn profile_model_route_state(profile: &ProfileInfo) -> ProfileModelRouteState {
         base_url: route_config.base_url,
         wire_api: route_config.wire_api,
         has_api_key: route_config.has_api_key,
+        api_key_source: route_config.api_key_source,
+        api_key_env: route_config.api_key_env,
+        route_mode: route_config.route_mode,
+        upstream_base_url: route_config.upstream_base_url,
+        preset: route_config.preset,
+        managed_route: route_config.managed_route,
         route_status: route_status.to_string(),
         route_status_label: route_status_label.to_string(),
         read_only_reason,
@@ -9676,17 +10252,23 @@ fn profile_model_route_state(profile: &ProfileInfo) -> ProfileModelRouteState {
 }
 
 fn read_model_route_config_view(config_path: &Path) -> ModelRouteConfigView {
+    let empty = ModelRouteConfigView {
+        model_provider: None,
+        managed_route: false,
+        base_url: None,
+        wire_api: None,
+        has_api_key: false,
+        api_key_source: None,
+        api_key_env: None,
+        route_mode: None,
+        upstream_base_url: None,
+        preset: None,
+    };
     let Some(table) = read_toml_table(config_path).ok() else {
-        return ModelRouteConfigView {
-            model_provider: None,
-            base_url: None,
-            wire_api: None,
-            has_api_key: false,
-            route_mode: None,
-            upstream_base_url: None,
-        };
+        return empty;
     };
     let model_provider = table_string(&table, "model_provider");
+    let managed_route = model_provider.as_deref() == Some(MODEL_ROUTE_PROVIDER_ID);
     let provider_table = model_provider
         .as_deref()
         .and_then(|provider_id| nested_toml_table(&table, &["model_providers", provider_id]));
@@ -9696,20 +10278,42 @@ fn read_model_route_config_view(config_path: &Path) -> ModelRouteConfigView {
     let wire_api = provider_table
         .and_then(|provider| table_string(provider, "wire_api"))
         .or_else(|| table_string(&table, "wire_api"));
-    let has_api_key = provider_table
+    let inline_api_key = provider_table
         .and_then(|provider| table_string(provider, "experimental_bearer_token"))
         .or_else(|| table_string(&table, "experimental_bearer_token"))
-        .is_some_and(|value| !value.trim().is_empty());
+        .filter(|value| !value.trim().is_empty());
+    let api_key_env = provider_table
+        .and_then(|provider| table_string(provider, "env_key"))
+        .or_else(|| table_string(&table, "env_key"))
+        .filter(|value| !value.trim().is_empty());
+    let api_key_source = inline_api_key
+        .as_ref()
+        .map(|_| "inline".to_string())
+        .or_else(|| api_key_env.as_deref().map(|key| format!("env:{key}")));
+    let stored_preset = provider_table
+        .and_then(|provider| table_string(provider, MODEL_ROUTE_PRESET_KEY))
+        .and_then(|value| parse_model_route_preset(&value));
+    let preset = stored_preset.or_else(|| {
+        infer_model_route_preset(
+            model_provider.as_deref(),
+            base_url.as_deref(),
+            wire_api.as_deref(),
+        )
+    });
     let route_mode =
         provider_table.and_then(|provider| table_string(provider, MODEL_ROUTE_MODE_KEY));
     let upstream_base_url = provider_table
         .and_then(|provider| table_string(provider, MODEL_ROUTE_UPSTREAM_BASE_URL_KEY));
 
     ModelRouteConfigView {
+        managed_route,
+        has_api_key: inline_api_key.is_some() || api_key_env.is_some(),
+        api_key_source,
+        api_key_env,
+        preset,
         model_provider,
         base_url,
         wire_api,
-        has_api_key,
         route_mode,
         upstream_base_url,
     }
@@ -9769,7 +10373,7 @@ fn build_model_route_plan(
         route_mode,
         spec.id,
         upstream_base_url.as_deref(),
-        api_key_for_config.as_deref(),
+        api_key_for_config.as_ref(),
     )?;
     let warnings = model_route_warnings(profile, spec.chat_only, &base_url);
 
@@ -9828,27 +10432,25 @@ fn resolve_model_route_api_key(
     api_key: Option<&str>,
     api_key_env: Option<&str>,
     redacted: bool,
-) -> Result<(Option<String>, Option<String>), String> {
+) -> Result<(Option<String>, Option<ModelRouteApiKeyConfig>), String> {
     if let Some(value) = normalized_input(api_key) {
-        return Ok((
-            Some("inline".to_string()),
-            Some(if redacted {
-                "••••••••".to_string()
-            } else {
-                value.to_string()
-            }),
-        ));
+        let config = ModelRouteApiKeyConfig::Inline(if redacted {
+            "••••••••".to_string()
+        } else {
+            value.to_string()
+        });
+        return Ok((Some(config.source()), Some(config)));
     }
     if let Some(env_key) = normalized_input(api_key_env) {
-        if redacted {
-            return Ok((Some(format!("env:{env_key}")), Some("••••••••".to_string())));
+        if !redacted {
+            let value = std::env::var(&env_key)
+                .map_err(|_| format!("environment variable {env_key} is not set"))?;
+            if value.trim().is_empty() {
+                return Err(format!("environment variable {env_key} is empty"));
+            }
         }
-        let value = std::env::var(env_key)
-            .map_err(|_| format!("environment variable {env_key} is not set"))?;
-        if value.trim().is_empty() {
-            return Err(format!("environment variable {env_key} is empty"));
-        }
-        return Ok((Some(format!("env:{env_key}")), Some(value)));
+        let config = ModelRouteApiKeyConfig::Env(env_key.to_string());
+        return Ok((Some(config.source()), Some(config)));
     }
     Ok((None, None))
 }
@@ -9862,7 +10464,7 @@ fn build_model_route_config_text(
     route_mode: &str,
     preset: ModelRoutePreset,
     upstream_base_url: Option<&str>,
-    api_key: Option<&str>,
+    api_key: Option<&ModelRouteApiKeyConfig>,
 ) -> Result<String, String> {
     let mut table = read_toml_table_or_empty(config_path)?;
     table.insert("model".to_string(), toml::Value::String(model.to_string()));
@@ -9902,11 +10504,20 @@ fn build_model_route_config_text(
             toml::Value::String(upstream_base_url.to_string()),
         );
     }
-    if let Some(api_key) = api_key.filter(|value| !value.trim().is_empty()) {
-        provider_table.insert(
-            "experimental_bearer_token".to_string(),
-            toml::Value::String(api_key.to_string()),
-        );
+    match api_key {
+        Some(ModelRouteApiKeyConfig::Inline(value)) if !value.trim().is_empty() => {
+            provider_table.insert(
+                "experimental_bearer_token".to_string(),
+                toml::Value::String(value.to_string()),
+            );
+        }
+        Some(ModelRouteApiKeyConfig::Env(env_key)) if !env_key.trim().is_empty() => {
+            provider_table.insert(
+                "env_key".to_string(),
+                toml::Value::String(env_key.to_string()),
+            );
+        }
+        _ => {}
     }
     ensure_table(&mut table, "model_providers")?.insert(
         MODEL_ROUTE_PROVIDER_ID.to_string(),
@@ -9989,10 +10600,20 @@ fn read_model_route_api_key_from_config(
         .filter(|value| !value.trim().is_empty())
         .map(ToOwned::to_owned)
         .or_else(|| table_string(&table, "model_provider"))?;
-    nested_toml_table(&table, &["model_providers", &provider_id])
+    let provider_table = nested_toml_table(&table, &["model_providers", &provider_id]);
+    let inline_key = provider_table
         .and_then(|provider| table_string(provider, "experimental_bearer_token"))
         .or_else(|| table_string(&table, "experimental_bearer_token"))
-        .and_then(|value| normalized_input(Some(value.as_str())).map(ToOwned::to_owned))
+        .and_then(|value| normalized_input(Some(value.as_str())).map(ToOwned::to_owned));
+    if inline_key.is_some() {
+        return inline_key;
+    }
+    let env_key = provider_table
+        .and_then(|provider| table_string(provider, "env_key"))
+        .or_else(|| table_string(&table, "env_key"))?;
+    std::env::var(env_key)
+        .ok()
+        .and_then(|value| normalized_input(Some(&value)).map(ToOwned::to_owned))
 }
 
 fn looks_like_responses_success(value: &Value) -> bool {
@@ -10090,7 +10711,14 @@ fn find_model_route_proxy_target(request_model: &str) -> Result<ModelRouteProxyT
             continue;
         };
         let api_key = table_string(provider_table, "experimental_bearer_token")
-            .and_then(|value| normalized_input(Some(value.as_str())).map(ToOwned::to_owned));
+            .and_then(|value| normalized_input(Some(value.as_str())).map(ToOwned::to_owned))
+            .or_else(|| {
+                table_string(provider_table, "env_key").and_then(|env_key| {
+                    std::env::var(env_key)
+                        .ok()
+                        .and_then(|value| normalized_input(Some(&value)).map(ToOwned::to_owned))
+                })
+            });
         candidates.push(ModelRouteProxyTarget {
             profile_name: profile.name,
             model,
@@ -11439,29 +12067,31 @@ fn escape_toml_string(value: &str) -> String {
 
 #[cfg(test)]
 mod tests {
+    use std::collections::BTreeMap;
     use std::io::Write;
     use std::path::Path;
     use std::sync::Mutex;
 
     use super::{
-        build_model_route_tool_context_from_request, cc_switch_proxy_status_detail,
-        chat_completion_to_response_minimal, chat_completion_to_response_with_context,
-        chat_completions_endpoint, chat_sse_block_to_response_events,
-        clear_model_route_proxy_diagnostic, clear_model_route_proxy_logs,
-        command_has_user_data_dir, feishu_remote_paths, is_codex_main_process,
-        matching_profile_pids, model_route_proxy_check_result, model_route_responses_endpoint,
+        build_model_route_config_text, build_model_route_tool_context_from_request,
+        cc_switch_proxy_status_detail, chat_completion_to_response_minimal,
+        chat_completion_to_response_with_context, chat_completions_endpoint,
+        chat_sse_block_to_response_events, clear_model_route_proxy_diagnostic,
+        clear_model_route_proxy_logs, command_has_user_data_dir, feishu_remote_paths,
+        infer_model_route_preset, is_codex_main_process, matching_profile_pids,
+        model_route_proxy_check_result, model_route_responses_endpoint,
         parse_codex_home_from_environ, parse_node_major_version, preferred_quota_proxy_url,
         profile_runtime_statuses_from_processes, proxy_env_from_scutil,
-        proxy_url_from_codex_wrapper, proxy_url_from_shell_script,
+        proxy_url_from_codex_wrapper, proxy_url_from_shell_script, read_model_route_config_view,
         read_model_route_proxy_http_endpoint, read_model_route_proxy_status,
         read_recent_session_index_summaries, read_session_file_details,
         record_model_route_proxy_diagnostic, responses_to_chat_completions_minimal,
         responses_to_chat_completions_with_context, sanitize_external_command_output,
         server_profile_launch_command, start_model_route_proxy, stop_model_route_proxy,
         terminate_wechat_bridge_pids, wechat_runtime_path_entries, CodexAuthMaterial,
-        ModelRouteStreamState, ModelRouteToolContext, ProfileAuthStatus, ProfileContext,
-        ProfileLauncherKind, ProfileRuntimeTarget, RunningCodexProcess, SESSION_DETAIL_HEAD_BYTES,
-        SESSION_DETAIL_TAIL_BYTES,
+        ModelRouteApiKeyConfig, ModelRouteStreamState, ModelRouteToolContext, ProfileAuthStatus,
+        ProfileContext, ProfileLauncherKind, ProfileRuntimeTarget, RunningCodexProcess,
+        SESSION_DETAIL_HEAD_BYTES, SESSION_DETAIL_TAIL_BYTES,
     };
 
     static MODEL_ROUTE_PROXY_TEST_LOCK: Mutex<()> = Mutex::new(());
@@ -11642,9 +12272,112 @@ mod tests {
         let command = server_profile_launch_command(
             "/home/demo/codex profile",
             Path::new("/usr/local/bin/codex"),
+            &BTreeMap::new(),
         );
         assert!(command.starts_with("exec env CODEX_HOME='/home/demo/codex profile'"));
         assert!(command.ends_with("'/usr/local/bin/codex'"));
+    }
+
+    #[test]
+    fn model_route_env_key_saves_a_reference_instead_of_a_plaintext_key() {
+        let temp = tempfile::tempdir().unwrap();
+        let config_path = temp.path().join("config.toml");
+        std::fs::write(
+            &config_path,
+            "model = \"gpt-5.5\"\nmodel_reasoning_effort = \"medium\"\n",
+        )
+        .unwrap();
+        let api_key = ModelRouteApiKeyConfig::Env("KIMI_API_KEY".to_string());
+        let config_text = build_model_route_config_text(
+            &config_path,
+            "kimi-for-coding",
+            "xhigh",
+            "rCodexManager Chat Route",
+            "http://127.0.0.1:15721/v1",
+            "chat",
+            super::ModelRoutePreset::OpenaiChat,
+            Some("https://api.kimi.com/coding/v1"),
+            Some(&api_key),
+        )
+        .unwrap();
+
+        assert!(config_text.contains("env_key = \"KIMI_API_KEY\""));
+        assert!(!config_text.contains("experimental_bearer_token"));
+        assert!(!config_text.contains("secret-key"));
+
+        std::fs::write(&config_path, &config_text).unwrap();
+        let view = read_model_route_config_view(&config_path);
+        assert!(view.has_api_key);
+        assert_eq!(view.api_key_env.as_deref(), Some("KIMI_API_KEY"));
+        assert_eq!(view.api_key_source.as_deref(), Some("env:KIMI_API_KEY"));
+        assert_eq!(view.preset, Some(super::ModelRoutePreset::OpenaiChat));
+    }
+
+    #[test]
+    fn model_route_config_recognizes_manual_env_key_providers() {
+        let temp = tempfile::tempdir().unwrap();
+        let config_path = temp.path().join("config.toml");
+        std::fs::write(
+            &config_path,
+            r#"
+model = "ark-code-latest"
+model_provider = "volcengine"
+
+[model_providers.volcengine]
+name = "Volcengine Coding Plan"
+base_url = "https://ark.example/api/coding/v3"
+env_key = "OPENAI_API_KEY"
+wire_api = "responses"
+"#,
+        )
+        .unwrap();
+
+        let view = read_model_route_config_view(&config_path);
+        assert!(view.model_provider.is_some());
+        assert!(!view.managed_route);
+        assert!(view.has_api_key);
+        assert_eq!(view.api_key_env.as_deref(), Some("OPENAI_API_KEY"));
+        assert_eq!(view.api_key_source.as_deref(), Some("env:OPENAI_API_KEY"));
+        assert_eq!(view.preset, Some(super::ModelRoutePreset::CustomResponses));
+        assert_eq!(
+            infer_model_route_preset(
+                view.model_provider.as_deref(),
+                view.base_url.as_deref(),
+                view.wire_api.as_deref()
+            ),
+            Some(super::ModelRoutePreset::CustomResponses)
+        );
+    }
+
+    #[test]
+    fn resolves_local_shell_path_variables_in_profile_launchers() {
+        let body = r#"
+codex-kimi() {
+  local profile_dir="$HOME/.codex-kimi"
+  open -n -a "Codex" \
+    --env CODEX_HOME="$profile_dir" \
+    --args --user-data-dir="$HOME/Library/Application Support/Codex-Kimi"
+}
+"#;
+        let home = Path::new("/Users/demo");
+
+        assert_eq!(
+            super::resolve_shell_path_value(body, "CODEX_HOME=", home),
+            Some(Path::new("/Users/demo/.codex-kimi").to_path_buf())
+        );
+        assert_eq!(
+            super::resolve_shell_path_value(body, "--user-data-dir=", home),
+            Some(Path::new("/Users/demo/Library/Application Support/Codex-Kimi").to_path_buf())
+        );
+    }
+
+    #[test]
+    fn renames_shell_function_without_changing_its_body() {
+        let contents = "codex-old() {\n  echo keep-this\n}\n";
+        let renamed = super::rename_shell_function(contents, "codex-old", "codex-new")
+            .expect("function should be found");
+
+        assert_eq!(renamed, "codex-new() {\n  echo keep-this\n}\n");
     }
 
     #[test]

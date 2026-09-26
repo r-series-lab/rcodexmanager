@@ -25,7 +25,6 @@ import {
   openAuthLoginUrl,
   readAuthLoginSession,
   startLocalProfileLogin,
-  startServerProfileLogin,
 } from "../../lib/api";
 import type { AuthLoginSessionReport, AuthLoginTargetKind } from "../../lib/types";
 import { StatusBadge } from "../../components/manager";
@@ -35,8 +34,6 @@ export interface AuthLoginTarget {
   kind: AuthLoginTargetKind;
   profileName: string;
   profileLabel: string;
-  nodeId?: string;
-  nodeLabel?: string;
   hasAccount?: boolean;
 }
 
@@ -102,9 +99,7 @@ export function AuthLoginDialog({
     setError(null);
     setCopied(null);
     try {
-      const next = target.kind === "server-profile"
-        ? await startServerProfileLogin(target.nodeId || "", target.profileName)
-        : await startLocalProfileLogin(target.profileName);
+      const next = await startLocalProfileLogin(target.profileName);
       setSession(next);
     } catch (startError) {
       setError(messageOf(startError, t("生成授权信息失败")));
@@ -134,7 +129,6 @@ export function AuthLoginDialog({
     onClose();
   }
 
-  const isServer = target?.kind === "server-profile";
   const waiting = session?.status === "waiting";
   const completed = session?.status === "completed";
   const failed = session && ["failed", "cancelled", "expired"].includes(session.status);
@@ -157,7 +151,6 @@ export function AuthLoginDialog({
             </Typography>
             <Typography component="span" className="auth-login-subtitle">
               {target?.profileLabel || target?.profileName || "Codex"}
-              {isServer && target?.nodeLabel ? ` · ${target.nodeLabel}` : ""}
             </Typography>
           </Box>
         </Box>
@@ -170,18 +163,14 @@ export function AuthLoginDialog({
         {!session && !starting ? (
           <Box className="auth-login-intro">
             <StatusBadge
-              label={isServer ? t("设备码登录") : t("浏览器授权")}
+              label={t("浏览器授权")}
               tone="info"
             />
             <Typography variant="body2">
-              {isServer
-                ? t("生成一次性设备码，在 OpenAI 授权页完成后，服务器会直接保存该 Profile 的认证。")
-                : t("生成当前 Profile 的 OpenAI 授权链接，完成后认证会保存到对应 CODEX_HOME。")}
+              {t("生成当前 Profile 的 OpenAI 授权链接，完成后认证会保存到对应 CODEX_HOME。")}
             </Typography>
             <Alert severity="info">
-              {isServer
-                ? t("设备码通常在 15 分钟后失效；授权期间请保持服务器连接。")
-                : t("授权期间请保持本弹窗打开，以便 Codex 接收 localhost 回调。")}
+              {t("授权期间请保持本弹窗打开，以便 Codex 接收 localhost 回调。")}
             </Alert>
           </Box>
         ) : null}
@@ -190,7 +179,7 @@ export function AuthLoginDialog({
           <Box className="auth-login-loading">
             <CircularProgress size={24} />
             <Typography variant="body2">
-              {isServer ? t("正在向服务器申请设备码…") : t("正在启动 Codex 登录会话…")}
+              {t("正在启动 Codex 登录会话…")}
             </Typography>
           </Box>
         ) : null}
@@ -296,7 +285,7 @@ export function AuthLoginDialog({
             disabled={!target || starting}
             onClick={() => void startLogin()}
           >
-            {failed ? t("重新生成") : isServer ? t("生成设备码") : t("生成授权链接")}
+            {failed ? t("重新生成") : t("生成授权链接")}
           </Button>
         ) : null}
       </DialogActions>

@@ -61,11 +61,6 @@ test("language preference updates key workflows and persists", async ({ page }, 
   await expect(modelRouting.getByPlaceholder("Search profiles, models, or route status")).toBeVisible();
   await modelRouting.getByRole("button", { name: "Close" }).click();
 
-  await page.getByRole("button", { name: "Open server nodes" }).click();
-  const serverNodes = page.getByRole("dialog", { name: /Server nodes/ });
-  await expect(serverNodes.getByPlaceholder("Search server nodes")).toBeVisible();
-  await serverNodes.getByRole("button", { name: "Close" }).click();
-
   await page.reload();
   await expect(page.locator("html")).toHaveAttribute("lang", "en-US");
   await expect(page.getByRole("button", { name: "Open settings" })).toBeVisible();

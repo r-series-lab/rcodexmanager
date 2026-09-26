@@ -6,6 +6,16 @@
 
 - No unreleased changes.
 
+## 0.1.6
+
+Public Preview update improving remote node management, Profile archive and quota workflows, and consistency between the desktop app and Linux Headless CLI.
+
+### Changed
+
+- Improved remote-node connection, task, and status management with corresponding Rust and frontend coverage.
+- Refined Profile, authentication, and quota workflows to reduce unnecessary management-panel loading.
+- Updated bilingual documentation, the application manifest, and the Linux Headless CLI package version.
+
 ## 0.1.5
 
 The first user-facing Public Preview. It aligns the application, source Tag, and package version while completing open-source governance, independent-project disclosure, and release safety gates.

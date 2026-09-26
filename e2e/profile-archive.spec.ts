@@ -22,9 +22,8 @@ test("row selection stays compact and archived profiles can be restored", async 
   const toolbarButtons = page.locator(".window-toolbar button");
   await expect(toolbarButtons).toHaveCount(1);
   await expect(toolbarButtons.nth(0)).toHaveAttribute("aria-label", "打开设置");
-  await expect(page.getByRole("button", { name: "打开服务器节点" })).toBeVisible();
-
-  await profileRow.getByRole("button", { name: "归档 codex-g" }).click();
+  await profileRow.getByRole("button", { name: "更多操作 codex-g" }).click();
+  await page.getByRole("menuitem", { name: "归档", exact: true }).click();
 
   const confirmDialog = page.getByRole("dialog", { name: /归档 Profile/ });
   await expect(confirmDialog).toContainText("认证、会话和模型配置都会原样保留");
@@ -46,14 +45,17 @@ test("row actions replace the removed profile inspector", async ({ page }) => {
   const profileRow = page.locator(".profile-card").first();
 
   await expect(page.getByRole("button", { name: /展开详情栏|收起详情栏/ })).toHaveCount(0);
-  await expect(profileRow.getByRole("button", { name: /归档/ })).toBeVisible();
-  await expect(profileRow.getByRole("button", { name: /删除/ })).toBeVisible();
+  await expect(profileRow.getByRole("button", { name: /归档/ })).toHaveCount(0);
+  await expect(profileRow.getByRole("button", { name: /删除/ })).toHaveCount(0);
+  await expect(profileRow.getByRole("button", { name: /查看额度/ })).toBeVisible();
 
   await profileRow.getByRole("button", { name: /更多/ }).click();
   await expect(page.getByRole("menuitem", { name: "修复 WebSocket" })).toHaveCount(0);
   await expect(page.getByRole("menuitem", { name: /刷新认证|登录 Profile/ })).toBeVisible();
   await expect(page.getByRole("menuitem", { name: "打开 CODEX_HOME" })).toBeVisible();
   await expect(page.getByRole("menuitem", { name: "复制 Profile" })).toBeVisible();
+  await expect(page.getByRole("menuitem", { name: "归档", exact: true })).toBeDisabled();
+  await expect(page.getByRole("menuitem", { name: "删除", exact: true })).toBeDisabled();
   await page.getByRole("menuitem", { name: "查看额度" }).click();
 
   const quotaDialog = page.getByRole("dialog", { name: /Profile 额度/ });
@@ -97,6 +99,7 @@ test("double click opens the expanded profile editor", async ({ page }) => {
   await expect(editor.getByText("基本信息", { exact: true })).toBeVisible();
   await expect(editor.getByText("模型与推理", { exact: true })).toBeVisible();
   await expect(editor.getByText("路径与运行配置", { exact: true })).toBeVisible();
+  await expect(editor.getByLabel("启动命令")).toHaveValue("codex-g");
   await expect(editor.getByLabel("模型")).toBeEnabled();
   await expect(editor.getByLabel("推理等级")).toBeEnabled();
   await editor.getByLabel("备注").fill("双击编辑测试");

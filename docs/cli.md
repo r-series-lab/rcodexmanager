@@ -85,30 +85,13 @@ npm run cli:install
 服务器不需要图形界面或 Tauri 运行库。发布归档中的无界面 CLI 与桌面端共享 profile、会话、认证、模型路由和渠道核心逻辑：
 
 ```bash
-tar -xzf rCodexManager_0.1.5_linux-x86_64.tar.gz
+tar -xzf rCodexManager_0.1.6_linux-x86_64.tar.gz
 ./install.sh
 ~/.local/bin/rcodexmanager --json info
 ~/.local/bin/rcodexmanager --json doctor
 ```
 
 CLI 自动优先读取已存在的 `~/.zshrc`，其次读取 `~/.bashrc`。服务器使用 Bash 时，创建的 `codex-*` 启动函数会写入 `.bashrc` 并在修改前备份。
-
-Mac App 的“服务器节点”通过本机 SSH 配置执行远程 JSON 命令。节点设置只包含显示名称、SSH Host 和远程 CLI 路径；SSH 密码、私钥、API key、认证正文与渠道 token 不进入节点元数据。推荐使用 SSH alias 和绝对 CLI 路径：
-
-```text
-SSH Host: demo-server
-远程 CLI: /home/demo/.local/bin/rcodexmanager
-```
-
-远程协议要求 stdout 中只有一个 CLI JSON envelope。连接提示或 SSH Host 错误应保留在 stderr，不能混入业务 JSON。
-
-Mac 端会在 SSH 运行期间并发读取 stdout/stderr，避免大于系统管道缓冲区的会话详情阻塞。查询默认 30 秒、会话详情和普通写入 60 秒、网络自检和渠道启动 120 秒。任务报告包含 `operationId`、`startedAt`、`durationMs`、`timeoutSeconds` 和 `outputTruncated`。同一 App 进程会拒绝同一节点上的并发写操作。
-
-节点弹窗在当前窗口内为每个节点保留最近 10 条非敏感任务摘要。Doctor、列表/状态、会话读取、路由预览和自检可以安全重试；创建、启停、认证应用、渠道启停和路由写入失败后必须先刷新状态，避免重复执行已经在服务器完成的操作。复制诊断会包含任务号和耗时，并脱敏常见凭据字段。
-
-节点的 Profile、认证、模型路由、渠道、Doctor 与会话分页结果在 App 进程内缓存 30 秒。会话列表通过 `profileName/query/offset/limit` 分页，详情只在用户选择后执行 `read-session`；缓存不写入磁盘，重新启动 App 后自动清空。
-
-Mac App 的 Profiles 页还提供“从本机同步”。它先通过远端 CLI 创建新的服务器 Profile，再按用户选择导入本机认证，最后重新读取服务器列表确认结果。认证正文只经 SSH 标准输入传输，不作为命令参数，也不会写入节点元数据或任务历史；服务器端临时文件会在导入结束后清理。该入口不会复制本机会话和桌面 User Data。
 
 ## Doctor 诊断
 
@@ -166,7 +149,7 @@ rcodexmanager --json delete --name codex-f --archive-data
 
 默认 `codex` profile 不能归档、删除、重置、修改模型或安全终止。运行中的 profile 必须先停止才能归档。`archive` 只在 `~/.rcodexmanager/profile-metadata.json` 写入归档时间，不修改启动函数、`CODEX_HOME`、User Data、认证、会话或模型配置；`list` 的 `profiles` 只返回活动项，归档项位于 `archivedProfiles`。执行写操作前先用 `list` 检查 `isDefault`、`isRunning` 和 `isArchived`。
 
-`list` 中每个 Profile 的 `authState` 只返回认证状态、access token 到期时间和是否存在 refresh token，不返回凭证正文。状态包括 `missing`、`valid`、`refresh-required`、`expired`、`api-key`、`unknown` 和 `invalid`。静态状态不等同于服务端在线确认；服务器节点详情中的“验证认证”会执行只读 `quota --name <profile>`。
+`list` 中每个 Profile 的 `authState` 只返回认证状态、access token 到期时间和是否存在 refresh token，不返回凭证正文。状态包括 `missing`、`valid`、`refresh-required`、`expired`、`api-key`、`unknown` 和 `invalid`。静态状态不等同于服务端在线确认；需要在线验证时，对对应 Profile 执行只读 `quota --name <profile>`。
 
 `model set` 会备份当前 `config.toml`，只更新顶层 `model` 和 `model_reasoning_effort`，并保留 `model_provider`、Provider 配置、认证和会话。运行中的 Profile 必须先停止。不要为了切换模型使用 `reset`，后者会归档并重建 Profile 数据目录。
 
@@ -185,7 +168,7 @@ rcodexmanager --json sessions detail --profile codex-g --session-id <id>
 rcodexmanager --json sessions detail --profile codex-g --session-id <id> --updated-at <iso-time>
 ```
 
-`limit` 会被核心逻辑限制在安全页容量内。不要通过循环一次性抓取所有详情；先筛选索引，再读取需要的会话。
+`limit` 默认是 10，核心逻辑允许 1–100；桌面端预设为 `10/50/100`。不要通过循环一次性抓取所有详情；先筛选索引，再读取需要的会话。
 
 ## 账号与额度
 
@@ -201,7 +184,33 @@ rcodexmanager --json import-auth --name codex-g \
 
 ```
 
-`login` 调用官方 Codex 登录流程并直接写入目标 `CODEX_HOME`。它需要持续输出授权地址或设备码，因此不支持 `--json`；无界面 Linux 应使用 `--device-auth`。授权地址和一次性代码属于短期敏感信息，不应写入日志。`quota` 使用 profile 当前 access token 调用只读 usage 接口，不另存 token。macOS 查询按“代理环境变量 → Codex wrapper → 系统网络代理”的顺序选择代理，因此 Finder 启动的 App 也能复用系统代理；网络失败只表示无法在线验证，不等于认证失效。`import-auth` 只允许停止中的非默认 profile，并先备份原 `auth.json`。
+`login` 调用官方 Codex 登录流程并直接写入目标 `CODEX_HOME`。它需要持续输出授权地址或设备码，因此不支持 `--json`；无界面 Linux 应使用 `--device-auth`。授权地址和一次性代码属于短期敏感信息，不应写入日志。`quota` 使用 profile 当前 access token 调用只读 usage 接口，不另存 token。自定义模型 profile 会读取 `~/.rcodexmanager/quota-providers.toml`；没有关联 provider 时返回“暂不支持”，不会回退调用官方 ChatGPT usage 接口。macOS 查询按“代理环境变量 → Codex wrapper → 系统网络代理”的顺序选择代理，因此 Finder 启动的 App 也能复用系统代理；网络失败只表示无法在线验证，不等于认证失效。`import-auth` 只允许停止中的非默认 profile，并先备份原 `auth.json`。
+
+### 自定义额度查询
+
+`quota` 支持通过 TOML 为自定义模型配置只读额度接口。Profile 使用 `[profiles.<profile>]` 下的 `provider` 关联 provider；API Key 只填写环境变量名，不把密钥写入配置文件：
+
+```toml
+[profiles.codex-kimi]
+provider = "kimi"
+
+[providers.kimi]
+url = "https://api.example.com/quota"
+auth = "api-key"
+api_key_env = "KIMI_API_KEY"
+
+[providers.kimi.mapping]
+windows = "data.windows"
+id = "id"
+label = "name"
+remaining_percent = "remaining_percent"
+used_percent = "used_percent"
+window_minutes = "window_minutes"
+resets_at = "reset_at"
+status = "status"
+```
+
+当前 provider 请求使用 `GET`，支持 Bearer、API Key、无认证、自定义请求头和点号分隔的 JSON 字段映射。缺少配置时返回 `暂不支持`，排序不会将其当作 `0%`。
 
 ## 认证库
 
@@ -256,7 +265,7 @@ rcodexmanager --json wechat service --name codex-o
 rcodexmanager --json wechat service --name codex-o --install --enable --now
 ```
 
-启动依赖本机可用的 `wechat-acp` 与 `codex-acp`。日志输出已做基础脱敏。
+启动通过 `npx` 使用固定版本 `wechat-acp@0.10.0` 和 `@agentclientprotocol/codex-acp@1.12.0`，要求 Node.js 20+；profile 的 `CODEX_HOME`、模型和路由配置会传给对应 ACP 进程。日志输出已做基础脱敏。
 
 ## 飞书渠道
 
@@ -315,6 +324,7 @@ rcodexmanager --json model-route restore --name codex-g --confirm-sensitive
 重要边界：
 
 - CLI 不接受明文 `--api-key`，只接受环境变量名。
+- 环境变量方式应用后保存 provider 的 `env_key` 变量名；启动/自检时解析实际环境变量。弹窗明文 key 应用后才会写入 Profile 配置。
 - `preview` 与 `test-draft` 不写配置。
 - `apply` 与 `restore` 只允许停止中的非默认 profile，并先备份 `config.toml`。
 - `model-route proxy` 只检查状态。内置代理由长驻桌面进程管理，应在模型路由弹窗中启动或停止；一次性 CLI 进程不承担代理生命周期。

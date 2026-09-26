@@ -41,23 +41,3 @@ test("new profile can continue directly into authorization or stop after creatio
   await expect(login.getByRole("button", { name: "打开授权页" })).toBeVisible();
   await login.getByRole("button", { name: "取消登录" }).click();
 });
-
-test("server profile uses a copyable device code", async ({ page }) => {
-  await page.getByRole("button", { name: "打开服务器节点" }).click();
-  const serverDialog = page.getByRole("dialog", { name: /服务器节点/ });
-  await serverDialog.getByRole("tab", { name: /Profiles/ }).click();
-  await serverDialog.locator(".server-profile-row").filter({ hasText: "codex-o" }).click();
-  await serverDialog.locator(".server-profile-inspector").getByRole("button", { name: "刷新认证" }).click();
-
-  const login = page.getByRole("dialog", { name: "刷新认证" });
-  await login.getByRole("button", { name: "生成设备码" }).click();
-  await expect(login.getByText("DEMO-CODE1")).toBeVisible();
-  await expect(login.getByText("auth.openai.com/codex/device")).toBeVisible();
-  await expect(login.getByRole("button", { name: "复制代码" })).toBeVisible();
-
-  const geometry = await login.evaluate((element) => ({
-    clientWidth: element.clientWidth,
-    scrollWidth: element.scrollWidth,
-  }));
-  expect(geometry.scrollWidth).toBeLessThanOrEqual(geometry.clientWidth + 1);
-});
