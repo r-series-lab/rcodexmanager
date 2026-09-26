@@ -5665,6 +5665,14 @@ fn profile_model_route_launch_env(profile: &ProfileInfo) -> BTreeMap<String, Str
 }
 
 pub fn launch_profile(context: &ProfileContext, name: &str) -> Result<ProfileActionReport, String> {
+    launch_profile_with_options(context, name, false)
+}
+
+pub fn launch_profile_with_options(
+    context: &ProfileContext,
+    name: &str,
+    background: bool,
+) -> Result<ProfileActionReport, String> {
     validate_profile_selector_name(name)?;
     let profile = find_profile(context, name)?;
 
@@ -5732,6 +5740,7 @@ pub fn launch_profile(context: &ProfileContext, name: &str) -> Result<ProfileAct
         .arg("-n")
         .arg("-a")
         .arg("Codex")
+        .args(background.then_some("-j"))
         .arg("--env")
         .arg(format!("CODEX_HOME={}", profile.codex_home));
     for (key, value) in launch_env {

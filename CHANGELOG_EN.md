@@ -6,6 +6,16 @@
 
 - No unreleased changes.
 
+## 0.1.8
+
+Authentication refresh update with background Codex startup and automatic dialog completion.
+
+### Changed
+
+- Improved the refresh-auth dialog hierarchy with a clear recommended action and browser fallback.
+- Start the selected Profile in the background without bringing Codex to the foreground.
+- Refresh the Profile state and close the dialog automatically after authentication recovers.
+
 ## 0.1.7
 
 Public Preview preparation update refreshing mock-data screenshots and interface layout.

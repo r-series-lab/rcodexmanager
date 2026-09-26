@@ -473,6 +473,75 @@
   gap: 12px;
 }
 
+.auth-login-intro.is-refresh {
+  gap: 10px;
+}
+
+.auth-login-mode-row {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.auth-login-mode-note {
+  color: var(--muted);
+  font-size: 11px;
+}
+
+.auth-login-explainer {
+  width: 100%;
+  padding: 11px 13px;
+  border: 1px solid var(--manager-border-soft, var(--line-soft));
+  border-radius: 10px;
+  background: var(--manager-detail-surface, var(--surface-subtle));
+}
+
+.auth-login-explainer .MuiTypography-root {
+  color: var(--text);
+  line-height: 1.55;
+}
+
+.auth-login-intro.is-refresh .auth-login-explainer {
+  border-color: var(--accent-line);
+  background: var(--accent-soft);
+}
+
+.auth-login-refresh-card {
+  width: 100%;
+  padding: 13px;
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+  border: 1px solid var(--accent-line);
+  border-radius: 12px;
+  background: linear-gradient(135deg, var(--accent-soft), var(--manager-detail-surface, var(--surface-subtle)));
+  box-shadow: 0 8px 22px color-mix(in srgb, var(--accent) 10%, transparent);
+}
+
+.auth-login-refresh-card-title {
+  color: var(--text);
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.auth-login-refresh-card > .MuiTypography-body2 {
+  color: var(--muted);
+  line-height: 1.5;
+}
+
+.auth-login-auto-button {
+  min-height: 40px;
+  margin-top: 3px !important;
+  border-radius: 9px !important;
+  box-shadow: none !important;
+}
+
+.auth-login-dialog-content.is-refresh {
+  justify-content: flex-start;
+}
+
 .auth-login-intro > .MuiTypography-root {
   color: var(--text);
   line-height: 1.55;

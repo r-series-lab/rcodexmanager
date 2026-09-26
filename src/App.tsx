@@ -1806,6 +1806,51 @@ function App() {
     }
   }
 
+  async function handleAutoRefreshAuth(target: AuthLoginTarget): Promise<boolean> {
+    const profile = [...(report?.profiles ?? []), ...(report?.archivedProfiles ?? [])].find(
+      (item) => item.name === target.profileName,
+    );
+    if (!profile || profile.isArchived) {
+      return false;
+    }
+
+    try {
+      if (!profile.isRunning) {
+        await launchProfile(profile.name, { background: true });
+      }
+
+      for (let attempt = 0; attempt < 15; attempt += 1) {
+        await new Promise((resolve) => window.setTimeout(resolve, 1_000));
+        const nextReport = await listProfiles();
+        const nextProfile = nextReport.profiles.find((item) => item.name === target.profileName);
+        if (nextProfile && ["valid", "api-key", "unknown"].includes(nextProfile.authState?.status ?? "")) {
+          const refreshedReport = await refreshProfiles({
+            severity: "success",
+            text: `${target.profileLabel} 已通过 Codex 自动刷新认证`,
+          });
+          if (quotaRetryAfterAuthRefresh && refreshedReport) {
+            const refreshedProfile = [
+              ...refreshedReport.profiles,
+              ...(refreshedReport.archivedProfiles ?? []),
+            ].find((item) => item.name === target.profileName);
+            setQuotaRetryAfterAuthRefresh(false);
+            if (refreshedProfile) {
+              await handleReadQuota(refreshedProfile);
+            }
+          }
+          return true;
+        }
+      }
+    } catch (error) {
+      setFeedback({
+        severity: "error",
+        text: errorMessage(error, "Codex 自动刷新失败"),
+      });
+    }
+
+    return false;
+  }
+
   async function handleReadQuota(profile: ProfileInfo): Promise<boolean> {
     setQuotaByProfile((current) => ({
       ...current,
@@ -3612,6 +3657,7 @@ function App() {
               }
             }
           }}
+          onAutoRefresh={handleAutoRefreshAuth}
         />
 
         <WechatBridgeDialog

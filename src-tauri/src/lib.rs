@@ -573,10 +573,13 @@ async fn reset_profile_command(
 }
 
 #[tauri::command]
-async fn launch_profile_command(name: String) -> Result<core::ProfileActionReport, String> {
+async fn launch_profile_command(
+    name: String,
+    background: Option<bool>,
+) -> Result<core::ProfileActionReport, String> {
     tauri::async_runtime::spawn_blocking(move || {
         let context = core::ProfileContext::from_options(None, None)?;
-        core::launch_profile(&context, &name)
+        core::launch_profile_with_options(&context, &name, background.unwrap_or(false))
     })
     .await
     .map_err(|error| error.to_string())?

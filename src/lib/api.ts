@@ -641,11 +641,17 @@ export async function resetProfile(input: ResetProfileInput): Promise<ProfileAct
   return invoke<ProfileActionReport>("reset_profile_command", { input });
 }
 
-export async function launchProfile(name: string): Promise<ProfileActionReport> {
+export async function launchProfile(
+  name: string,
+  options: { background?: boolean } = {},
+): Promise<ProfileActionReport> {
   if (!isTauriRuntime()) {
     return createMockActionReport("launch", name);
   }
-  return invoke<ProfileActionReport>("launch_profile_command", { name });
+  return invoke<ProfileActionReport>("launch_profile_command", {
+    name,
+    background: options.background ?? false,
+  });
 }
 
 export async function terminateProfile(name: string): Promise<ProfileActionReport> {
