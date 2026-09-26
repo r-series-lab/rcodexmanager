@@ -106,7 +106,7 @@
       "title": "高权限动作必须保持可见、可回滚",
       "body": "认证、配置和远端写入均有运行状态保护、备份和显式确认。应用不保存 SSH 凭据，不把密钥写入参数或诊断，也不接管来源不明的外部进程。"
     },
-    "releaseSummary": "0.1.7 Public Preview 改进远程节点管理、Profile 归档与额度工作流，并增强桌面端与 Headless CLI 的一致性。",
+    "releaseSummary": "0.1.8 Public Preview 优化认证刷新体验，支持后台启动 Codex 自动刷新并在完成后关闭弹窗。",
     "screenshots": [
       {
         "id": "profile-workspace",
@@ -305,7 +305,7 @@
             "title": "Privileged actions remain visible and recoverable",
             "body": "Authentication, configuration, and remote writes use runtime guards, backups, and explicit confirmation. The app does not store SSH credentials, place secrets in arguments or diagnostics, or take over external processes whose ownership cannot be established."
           },
-          "releaseSummary": "Version 0.1.7 Public Preview improves remote node management, Profile archive and quota workflows, and desktop/Headless CLI consistency.",
+          "releaseSummary": "Version 0.1.8 Public Preview improves authentication refresh with background Codex startup and automatic dialog completion.",
           "screenshots": [
             {
               "id": "profile-workspace",
@@ -391,7 +391,7 @@
             "description": "Profiles, sessions, authentication, channels, model routing, CLI, and security boundaries.",
             "group": "Getting started",
             "source": "README_EN.md",
-            "reviewedForVersion": "0.1.7"
+            "reviewedForVersion": "0.1.8"
           },
           {
             "id": "interface-guide",
@@ -399,7 +399,7 @@
             "description": "The main workspace, four management centers, settings, and sign-in.",
             "group": "Getting started",
             "source": "docs/interface_EN.md",
-            "reviewedForVersion": "0.1.7"
+            "reviewedForVersion": "0.1.8"
           },
           {
             "id": "release-workflow",
@@ -407,7 +407,7 @@
             "description": "Source checks, server-created Tags, desktop and headless builds, and Draft Release review.",
             "group": "Releases",
             "source": "docs/RELEASE_WORKFLOW_EN.md",
-            "reviewedForVersion": "0.1.7"
+            "reviewedForVersion": "0.1.8"
           },
           {
             "id": "changelog",
@@ -415,7 +415,7 @@
             "description": "Features, security, compatibility, and documentation changes by version.",
             "group": "Releases",
             "source": "CHANGELOG_EN.md",
-            "reviewedForVersion": "0.1.7"
+            "reviewedForVersion": "0.1.8"
           }
         ]
       }

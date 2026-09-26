@@ -1,6 +1,6 @@
 [package]
 name = "rcodexmanager"
-version = "0.1.7"
+version = "0.1.8"
 description = "A local Codex profile manager for independent desktop instances"
 authors = ["r-series-lab contributors"]
 edition = "2021"

@@ -42,15 +42,18 @@ export function AuthLoginDialog({
   target,
   onClose,
   onCompleted,
+  onAutoRefresh,
 }: {
   open: boolean;
   target: AuthLoginTarget | null;
   onClose: () => void;
   onCompleted: (target: AuthLoginTarget) => Promise<void> | void;
+  onAutoRefresh: (target: AuthLoginTarget) => Promise<boolean> | boolean;
 }) {
   const { t } = useI18n();
   const [session, setSession] = useState<AuthLoginSessionReport | null>(null);
   const [starting, setStarting] = useState(false);
+  const [autoRefreshing, setAutoRefreshing] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [copied, setCopied] = useState<"url" | "code" | null>(null);
   const completedSessionRef = useRef("");
@@ -59,6 +62,7 @@ export function AuthLoginDialog({
     if (!open) {
       setSession(null);
       setStarting(false);
+      setAutoRefreshing(false);
       setError(null);
       setCopied(null);
       completedSessionRef.current = "";
@@ -105,6 +109,24 @@ export function AuthLoginDialog({
       setError(messageOf(startError, t("生成授权信息失败")));
     } finally {
       setStarting(false);
+    }
+  }
+
+  async function refreshWithCodex() {
+    if (!target) return;
+    setAutoRefreshing(true);
+    setError(null);
+    try {
+      const refreshed = await onAutoRefresh(target);
+      if (refreshed) {
+        onClose();
+      } else {
+        setError(t("Codex 自动刷新未完成，可以改用浏览器重新登录。"));
+      }
+    } catch (refreshError) {
+      setError(messageOf(refreshError, t("Codex 自动刷新失败，可以改用浏览器重新登录。")));
+    } finally {
+      setAutoRefreshing(false);
     }
   }
 
@@ -159,19 +181,52 @@ export function AuthLoginDialog({
         </IconButton>
       </DialogTitle>
 
-      <DialogContent className="auth-login-dialog-content">
+      <DialogContent className={`auth-login-dialog-content ${target?.hasAccount ? "is-refresh" : "is-login"}`}>
         {!session && !starting ? (
-          <Box className="auth-login-intro">
-            <StatusBadge
-              label={t("浏览器授权")}
-              tone="info"
-            />
-            <Typography variant="body2">
-              {t("生成当前 Profile 的 OpenAI 授权链接，完成后认证会保存到对应 CODEX_HOME。")}
-            </Typography>
+          <Box className={`auth-login-intro ${target?.hasAccount ? "is-refresh" : "is-login"}`}>
+            <Box className="auth-login-mode-row">
+              <StatusBadge
+                label={target?.hasAccount ? t("自动刷新优先") : t("浏览器授权")}
+                tone={target?.hasAccount ? "success" : "info"}
+              />
+              {target?.hasAccount ? (
+                <Typography variant="caption" className="auth-login-mode-note">
+                  {t("保留当前 Profile 和会话")}
+                </Typography>
+              ) : null}
+            </Box>
+            <Box className="auth-login-explainer">
+              <Typography variant="body2">
+                {target?.hasAccount
+                  ? t("如果 access token 已过期且 refresh token 仍有效，启动 Codex 会自动刷新认证。")
+                  : t("生成当前 Profile 的 OpenAI 授权链接，完成后认证会保存到对应 CODEX_HOME。")}
+              </Typography>
+            </Box>
             <Alert severity="info">
-              {t("授权期间请保持本弹窗打开，以便 Codex 接收 localhost 回调。")}
+              {target?.hasAccount
+                ? t("自动刷新会在后台启动 Codex，完成后本窗口会自动关闭。")
+                : t("授权期间请保持本弹窗打开，以便 Codex 接收 localhost 回调。")}
             </Alert>
+            {target?.hasAccount ? (
+              <Box className="auth-login-refresh-card">
+                <Typography className="auth-login-refresh-card-title">
+                  {t("推荐：启动 Codex 自动刷新")}
+                </Typography>
+                <Typography variant="body2">
+                  {t("不会替换当前 Profile，也不会清除会话。")}
+                </Typography>
+                <Button
+                  fullWidth
+                  variant="contained"
+                  className="auth-login-auto-button"
+                  startIcon={autoRefreshing ? <CircularProgress size={16} /> : <LoginRoundedIcon />}
+                  disabled={autoRefreshing}
+                  onClick={() => void refreshWithCodex()}
+                >
+                  {autoRefreshing ? t("正在启动 Codex 自动刷新…") : t("启动 Codex 自动刷新")}
+                </Button>
+              </Box>
+            ) : null}
           </Box>
         ) : null}
 
@@ -282,10 +337,10 @@ export function AuthLoginDialog({
           <Button
             variant="contained"
             startIcon={<LoginRoundedIcon />}
-            disabled={!target || starting}
+            disabled={!target || starting || autoRefreshing}
             onClick={() => void startLogin()}
           >
-            {failed ? t("重新生成") : t("生成授权链接")}
+            {failed ? t("重新生成") : target?.hasAccount ? t("浏览器重新登录") : t("生成授权链接")}
           </Button>
         ) : null}
       </DialogActions>

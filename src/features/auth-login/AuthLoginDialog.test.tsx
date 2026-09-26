@@ -50,6 +50,7 @@ describe("AuthLoginDialog", () => {
         }}
         onClose={onClose}
         onCompleted={() => undefined}
+        onAutoRefresh={() => false}
       />,
     );
 

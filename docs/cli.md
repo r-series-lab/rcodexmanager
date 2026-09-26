@@ -85,7 +85,7 @@ npm run cli:install
 服务器不需要图形界面或 Tauri 运行库。发布归档中的无界面 CLI 与桌面端共享 profile、会话、认证、模型路由和渠道核心逻辑：
 
 ```bash
-tar -xzf rCodexManager_0.1.7_linux-x86_64.tar.gz
+tar -xzf rCodexManager_0.1.8_linux-x86_64.tar.gz
 ./install.sh
 ~/.local/bin/rcodexmanager --json info
 ~/.local/bin/rcodexmanager --json doctor
