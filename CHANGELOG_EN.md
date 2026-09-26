@@ -6,6 +6,15 @@
 
 - No unreleased changes.
 
+## 0.1.7
+
+Public Preview preparation update refreshing mock-data screenshots and interface layout.
+
+### Changed
+
+- Refreshed public screenshots for Profile, sessions, authentication vault, remote channels, and model routing.
+- Kept all screenshots on sanitized test data with no real sessions or authentication material.
+
 ## 0.1.6
 
 Public Preview update improving remote node management, Profile archive and quota workflows, and consistency between the desktop app and Linux Headless CLI.

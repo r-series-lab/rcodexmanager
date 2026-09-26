@@ -189,4 +189,4 @@ Security rules:
 
 MIT
 
-This overview is the maintained English documentation for version `0.1.6`.
+This overview is the maintained English documentation for version `0.1.7`.
