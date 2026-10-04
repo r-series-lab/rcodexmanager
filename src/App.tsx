@@ -25,6 +25,7 @@ import InfoOutlinedIcon from "@mui/icons-material/InfoOutlined";
 import KeyboardArrowDownRoundedIcon from "@mui/icons-material/KeyboardArrowDownRounded";
 import KeyboardArrowLeftRoundedIcon from "@mui/icons-material/KeyboardArrowLeftRounded";
 import KeyboardArrowRightRoundedIcon from "@mui/icons-material/KeyboardArrowRightRounded";
+import LinkRoundedIcon from "@mui/icons-material/LinkRounded";
 import LightModeRoundedIcon from "@mui/icons-material/LightModeRounded";
 import LoginRoundedIcon from "@mui/icons-material/LoginRounded";
 import MoreVertRoundedIcon from "@mui/icons-material/MoreVertRounded";
@@ -285,6 +286,7 @@ const DEFAULT_FORM: CreateProfileInput = {
   alias: "",
   category: "深度",
   note: null,
+  skillSourceNames: [],
 };
 
 const PROFILE_CATEGORY_ORDER = ["默认", "付费", "free", "upi", "非plus", "深度", "平衡"];
@@ -1001,6 +1003,14 @@ function App() {
   const createNameExists = existingNames.has(createDraft.name.trim());
   const createNameInvalid = createDraft.name.trim() !== "" && !isValidProfileName(createDraft.name);
   const canCreate = isValidProfileName(createDraft.name) && !createNameExists;
+  const skillSourceProfiles = useMemo(
+    () => profiles.filter((profile) => profile.name !== createDraft.name.trim()),
+    [createDraft.name, profiles],
+  );
+  const selectedSkillSourceProfiles = useMemo(
+    () => skillSourceProfiles.filter((profile) => (createDraft.skillSourceNames ?? []).includes(profile.name)),
+    [createDraft.skillSourceNames, skillSourceProfiles],
+  );
   const copyNameExists = copyDraft ? existingNames.has(copyDraft.name.trim()) : false;
   const copySourceProfile = copyDraft
     ? profiles.find((profile) => profile.name === copyDraft.sourceName) ?? null
@@ -1624,6 +1634,7 @@ function App() {
         alias: (createDraft.alias ?? "").trim() || null,
         category: (createDraft.category ?? "").trim() || null,
         note: null,
+        skillSourceNames: createDraft.skillSourceNames ?? [],
       });
       setCreateDraft(DEFAULT_FORM);
       setCreateDialogOpen(false);
@@ -3831,6 +3842,51 @@ function App() {
                     slotProps={textFieldSlotProps("create-profile-user-data-dir")}
                   />
                 </Box>
+              </CreateProfileSection>
+
+              <CreateProfileSection
+                className="create-profile-skills"
+                icon={<LinkRoundedIcon />}
+                title={t("复用 Skills")}
+                description={t("从已有 Profile 软链接 Skills，来源更新后会同步生效。")}
+              >
+                <Autocomplete
+                  multiple
+                  disableCloseOnSelect
+                  options={skillSourceProfiles}
+                  value={selectedSkillSourceProfiles}
+                  isOptionEqualToValue={(option, value) => option.name === value.name}
+                  getOptionLabel={(profile) => profileLabel(profile)}
+                  onChange={(_, profiles) => updateCreateDraft("skillSourceNames", profiles.map((profile) => profile.name))}
+                  renderOption={(props, profile, { selected }) => (
+                    <li {...props} key={profile.name}>
+                      <Checkbox checked={selected} size="small" sx={{ mr: 0.75 }} />
+                      <Box sx={{ minWidth: 0 }}>
+                        <Typography variant="body2" noWrap>{profileLabel(profile)}</Typography>
+                        <Typography variant="caption" color="text.secondary" noWrap>{profile.name}</Typography>
+                      </Box>
+                    </li>
+                  )}
+                  renderInput={(params) => (
+                    <TextField
+                      {...params}
+                      label={t("来源 Profile")}
+                      placeholder={selectedSkillSourceProfiles.length ? undefined : t("可多选")}
+                      helperText={
+                        selectedSkillSourceProfiles.length
+                          ? t("将复用 {count} 个 Profile 的 Skills", { count: selectedSkillSourceProfiles.length })
+                          : t("不选择则不复用 Skills")
+                      }
+                      slotProps={{
+                        ...params.slotProps,
+                        htmlInput: {
+                          ...params.slotProps.htmlInput,
+                          ...textFieldSlotProps("create-profile-skill-sources").htmlInput,
+                        },
+                      }}
+                    />
+                  )}
+                />
               </CreateProfileSection>
             </Box>
           </DialogContent>

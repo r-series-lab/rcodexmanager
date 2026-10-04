@@ -2,6 +2,20 @@
 
 rCodexManager treats a Profile as the primary object. The main workspace is optimized for status comparison, while sessions, authentication, channels, and routing live in four lazy-loaded management centers. Public screenshots are generated from browser mock data and contain only `example.com` identities and sample paths.
 
+## Dark Screenshot Assets
+
+The dark screenshots used by the product film and demos live under `assets/screenshots/dark/` alongside the original light documentation set. They are rendered from the same browser mock data so product demos and documentation share one visual baseline.
+
+![Dark Profile workspace](assets/screenshots/dark/profile-workspace.png)
+
+![Dark session center](assets/screenshots/dark/session-center.png)
+
+![Dark authentication vault](assets/screenshots/dark/auth-vault.png)
+
+![Dark remote channels](assets/screenshots/dark/remote-channels.png)
+
+![Dark model routing](assets/screenshots/dark/model-routing.png)
+
 ## Main Workspace
 
 The compact table presents Profile identity, category, account and plan, authentication health, latest session, on-demand quota, environment health, runtime state, and lifecycle actions. Clicking a row selects it without opening the detail view. Double-click opens the full editor. The context menu is intentionally limited to start/stop, edit, archive, and delete.

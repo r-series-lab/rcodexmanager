@@ -10,7 +10,11 @@ use std::fs::OpenOptions;
 use std::io::{BufRead, BufReader, Read, Seek, SeekFrom, Write};
 use std::net::{SocketAddr, TcpListener, TcpStream};
 #[cfg(unix)]
+use std::os::unix::fs::symlink;
+#[cfg(unix)]
 use std::os::unix::fs::PermissionsExt;
+#[cfg(windows)]
+use std::os::windows::fs::{symlink_dir, symlink_file};
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -138,6 +142,8 @@ pub struct CreateProfileInput {
     pub alias: Option<String>,
     pub category: Option<String>,
     pub note: Option<String>,
+    #[serde(default)]
+    pub skill_source_names: Vec<String>,
     #[serde(default)]
     pub launcher_kind: Option<ProfileLauncherKind>,
 }
@@ -5256,6 +5262,12 @@ pub fn create_profile(
             .as_deref()
             .unwrap_or(DEFAULT_REASONING_EFFORT),
     )?;
+    let linked_skills = link_profile_skills(
+        context,
+        &draft.name,
+        &draft.codex_home,
+        &input.skill_source_names,
+    )?;
 
     let next_contents = upsert_function(&contents, context, &draft, false)?;
     write_zshrc(context, &contents, &next_contents)?;
@@ -5276,7 +5288,14 @@ pub fn create_profile(
         zshrc_path: path_string(&context.zshrc_path),
         profile: Some(profile),
         backups: Vec::new(),
-        message: format!("created {} and added its shell launcher", draft.name),
+        message: if linked_skills.linked_count == 0 {
+            format!("created {} and added its shell launcher", draft.name)
+        } else {
+            format!(
+                "created {} and linked {} Skill(s) from {} Profile(s)",
+                draft.name, linked_skills.linked_count, linked_skills.source_count
+            )
+        },
     })
 }
 
@@ -5297,6 +5316,7 @@ pub fn copy_profile(
             alias: None,
             category: None,
             note: None,
+            skill_source_names: Vec::new(),
             launcher_kind: input.launcher_kind.or(Some(source.launcher_kind)),
         },
     )?;
@@ -6454,6 +6474,114 @@ fn profile_draft(
     })
 }
 
+#[derive(Debug, Default)]
+struct SkillLinkResult {
+    linked_count: usize,
+    source_count: usize,
+}
+
+fn link_profile_skills(
+    context: &ProfileContext,
+    target_name: &str,
+    target_codex_home: &Path,
+    source_names: &[String],
+) -> Result<SkillLinkResult, String> {
+    if source_names.is_empty() {
+        return Ok(SkillLinkResult::default());
+    }
+
+    let target_skills_dir = target_codex_home.join("skills");
+    fs::create_dir_all(&target_skills_dir).map_err(|error| error.to_string())?;
+    let mut result = SkillLinkResult::default();
+    let mut seen_source_names = BTreeSet::new();
+    let mut seen_skill_names = BTreeSet::new();
+
+    for raw_source_name in source_names {
+        let source_name = raw_source_name.trim();
+        if source_name.is_empty() {
+            continue;
+        }
+        validate_profile_selector_name(source_name)?;
+        if source_name == target_name {
+            return Err("a profile cannot reuse its own Skills".to_string());
+        }
+        if !seen_source_names.insert(source_name.to_string()) {
+            continue;
+        }
+
+        let source = find_profile(context, source_name)?;
+        let source_codex_home = PathBuf::from(&source.codex_home);
+        if paths_refer_to_same_location(&source_codex_home, target_codex_home) {
+            return Err(format!(
+                "Skill source {source_name} points to the new profile's CODEX_HOME"
+            ));
+        }
+        result.source_count += 1;
+
+        let source_skills_dir = source_codex_home.join("skills");
+        let entries = match fs::read_dir(&source_skills_dir) {
+            Ok(entries) => entries,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => continue,
+            Err(error) => {
+                return Err(format!(
+                    "could not read Skills for {source_name}: {}",
+                    error
+                ));
+            }
+        };
+
+        for entry in entries {
+            let entry = entry.map_err(|error| error.to_string())?;
+            let file_type = entry.file_type().map_err(|error| error.to_string())?;
+            if !file_type.is_dir() && !file_type.is_symlink() {
+                continue;
+            }
+
+            let skill_name = entry.file_name();
+            let skill_name_text = skill_name.to_string_lossy();
+            if skill_name_text == ".system" || skill_name_text == ".DS_Store" {
+                continue;
+            }
+            if !seen_skill_names.insert(skill_name.clone()) {
+                continue;
+            }
+
+            let target_skill_path = target_skills_dir.join(&skill_name);
+            if target_skill_path.symlink_metadata().is_ok() {
+                continue;
+            }
+            create_skill_symlink(&entry.path(), &target_skill_path)?;
+            result.linked_count += 1;
+        }
+    }
+
+    Ok(result)
+}
+
+fn create_skill_symlink(source: &Path, target: &Path) -> Result<(), String> {
+    #[cfg(unix)]
+    {
+        symlink(source, target).map_err(|error| error.to_string())
+    }
+    #[cfg(windows)]
+    {
+        if source
+            .metadata()
+            .map_err(|error| error.to_string())?
+            .is_dir()
+        {
+            symlink_dir(source, target).map_err(|error| error.to_string())
+        } else {
+            symlink_file(source, target).map_err(|error| error.to_string())
+        }
+    }
+    #[cfg(not(any(unix, windows)))]
+    {
+        let _ = (source, target);
+        Err("this platform does not support Skill symlinks".to_string())
+    }
+}
+
 fn normalized_input(value: Option<&str>) -> Option<&str> {
     value.map(str::trim).filter(|value| !value.is_empty())
 }
@@ -6673,6 +6801,24 @@ fn resolve_server_command_binary(context: &ProfileContext, command: &str) -> Opt
         PathBuf::from("/usr/local/bin").join(command),
         PathBuf::from("/usr/bin").join(command),
     ];
+    #[cfg(target_os = "macos")]
+    if command == "codex" {
+        for app_root in [
+            PathBuf::from("/Applications/Codex.app"),
+            context.home_dir.join("Applications/Codex.app"),
+        ] {
+            candidates.push(
+                app_root
+                    .join("Contents/Resources/codex-cli/bin")
+                    .join(command),
+            );
+            candidates.push(
+                app_root
+                    .join("Contents/Resources/codex-cli/CodexCLI.app/Contents/MacOS")
+                    .join(command),
+            );
+        }
+    }
     if let Some(path_value) = std::env::var_os("PATH") {
         candidates
             .extend(std::env::split_paths(&path_value).map(|directory| directory.join(command)));
@@ -12086,9 +12232,9 @@ mod tests {
         cc_switch_proxy_status_detail, chat_completion_to_response_minimal,
         chat_completion_to_response_with_context, chat_completions_endpoint,
         chat_sse_block_to_response_events, clear_model_route_proxy_diagnostic,
-        clear_model_route_proxy_logs, command_has_user_data_dir, feishu_remote_paths,
-        infer_model_route_preset, is_codex_main_process, matching_profile_pids,
-        model_route_proxy_check_result, model_route_responses_endpoint,
+        clear_model_route_proxy_logs, command_has_user_data_dir, create_profile,
+        feishu_remote_paths, infer_model_route_preset, is_codex_main_process,
+        matching_profile_pids, model_route_proxy_check_result, model_route_responses_endpoint,
         parse_codex_home_from_environ, parse_node_major_version, preferred_quota_proxy_url,
         profile_runtime_statuses_from_processes, proxy_env_from_scutil,
         proxy_url_from_codex_wrapper, proxy_url_from_shell_script, read_model_route_config_view,
@@ -12098,12 +12244,84 @@ mod tests {
         responses_to_chat_completions_with_context, sanitize_external_command_output,
         server_profile_launch_command, start_model_route_proxy, stop_model_route_proxy,
         terminate_wechat_bridge_pids, wechat_runtime_path_entries, CodexAuthMaterial,
-        ModelRouteApiKeyConfig, ModelRouteStreamState, ModelRouteToolContext, ProfileAuthStatus,
-        ProfileContext, ProfileLauncherKind, ProfileRuntimeTarget, RunningCodexProcess,
-        SESSION_DETAIL_HEAD_BYTES, SESSION_DETAIL_TAIL_BYTES,
+        CreateProfileInput, ModelRouteApiKeyConfig, ModelRouteStreamState, ModelRouteToolContext,
+        ProfileAuthStatus, ProfileContext, ProfileLauncherKind, ProfileRuntimeTarget,
+        RunningCodexProcess, SESSION_DETAIL_HEAD_BYTES, SESSION_DETAIL_TAIL_BYTES,
     };
 
     static MODEL_ROUTE_PROXY_TEST_LOCK: Mutex<()> = Mutex::new(());
+
+    #[test]
+    #[cfg(unix)]
+    fn creating_profile_links_skills_from_multiple_sources_without_copying_system_skills() {
+        let temp = tempfile::tempdir().unwrap();
+        let context = ProfileContext {
+            home_dir: temp.path().to_path_buf(),
+            zshrc_path: temp.path().join(".zshrc"),
+        };
+        std::fs::write(&context.zshrc_path, "").unwrap();
+
+        for name in ["codex-a", "codex-b"] {
+            create_profile(
+                &context,
+                CreateProfileInput {
+                    name: name.to_string(),
+                    codex_home: None,
+                    user_data_dir: None,
+                    model: None,
+                    reasoning_effort: None,
+                    alias: None,
+                    category: None,
+                    note: None,
+                    skill_source_names: Vec::new(),
+                    launcher_kind: Some(ProfileLauncherKind::Server),
+                },
+            )
+            .unwrap();
+        }
+
+        let source_a_skills = temp.path().join(".codex-a/skills");
+        let source_b_skills = temp.path().join(".codex-b/skills");
+        std::fs::create_dir_all(source_a_skills.join("shared-skill")).unwrap();
+        std::fs::create_dir_all(source_a_skills.join(".system")).unwrap();
+        std::fs::create_dir_all(source_b_skills.join("second-skill")).unwrap();
+        std::fs::create_dir_all(source_b_skills.join("shared-skill")).unwrap();
+
+        let report = create_profile(
+            &context,
+            CreateProfileInput {
+                name: "codex-target".to_string(),
+                codex_home: None,
+                user_data_dir: None,
+                model: None,
+                reasoning_effort: None,
+                alias: None,
+                category: None,
+                note: None,
+                skill_source_names: vec!["codex-a".to_string(), "codex-b".to_string()],
+                launcher_kind: Some(ProfileLauncherKind::Server),
+            },
+        )
+        .unwrap();
+
+        let target_skills = temp.path().join(".codex-target/skills");
+        assert!(target_skills
+            .join("shared-skill")
+            .symlink_metadata()
+            .unwrap()
+            .file_type()
+            .is_symlink());
+        assert!(target_skills
+            .join("second-skill")
+            .symlink_metadata()
+            .unwrap()
+            .file_type()
+            .is_symlink());
+        assert!(!target_skills.join(".system").exists());
+        assert!(report
+            .message
+            .contains("linked 2 Skill(s) from 2 Profile(s)"));
+    }
 
     #[test]
     fn profile_auth_state_distinguishes_expired_and_refreshable_tokens() {

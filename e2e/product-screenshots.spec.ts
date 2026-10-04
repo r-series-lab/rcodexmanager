@@ -1,6 +1,7 @@
 import { expect, test, type Locator, type Page } from "@playwright/test";
 
-const outputRoot = "docs/assets/screenshots";
+const captureTheme = process.env.RCODEXMANAGER_CAPTURE_THEME === "dark" ? "dark" : "light";
+const outputRoot = captureTheme === "dark" ? "docs/assets/screenshots/dark" : "docs/assets/screenshots";
 
 test.skip(
   !process.env.RCODEXMANAGER_CAPTURE_PRODUCT,
@@ -8,11 +9,11 @@ test.skip(
 );
 
 test.beforeEach(async ({ page }) => {
-  await page.addInitScript(() => {
-    localStorage.setItem("rcodexmanager-style", "light");
+  await page.addInitScript((theme) => {
+    localStorage.setItem("rcodexmanager-style", theme);
     localStorage.setItem("rcodexmanager-language", "zh-CN");
     localStorage.removeItem("rcodexmanager-active-profile");
-  });
+  }, captureTheme);
   await page.goto("/");
   await expect(page.getByRole("main")).toBeVisible();
 });

@@ -1024,6 +1024,7 @@ pub fn run_from_env_with_desktop(desktop_available: bool) -> CliOutcome {
                 alias,
                 category,
                 note,
+                skill_source_names: Vec::new(),
                 launcher_kind: server.then_some(ProfileLauncherKind::Server),
             },
         ) {

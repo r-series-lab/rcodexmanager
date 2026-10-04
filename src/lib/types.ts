@@ -273,6 +273,7 @@ export interface CreateProfileInput {
   alias: string | null;
   category: string | null;
   note: string | null;
+  skillSourceNames: string[];
 }
 
 export interface CopyProfileInput {

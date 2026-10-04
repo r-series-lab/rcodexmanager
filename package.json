@@ -33,6 +33,7 @@
     "cli:install": "./scripts/install-local-cli.sh",
     "skill:install": "./scripts/install-skill.sh",
     "screenshots:product": "RCODEXMANAGER_CAPTURE_PRODUCT=1 playwright test e2e/product-screenshots.spec.ts --project=desktop-light",
+    "screenshots:product:dark": "RCODEXMANAGER_CAPTURE_PRODUCT=1 RCODEXMANAGER_CAPTURE_THEME=dark playwright test e2e/product-screenshots.spec.ts --project=desktop-light",
     "skill:check": "./scripts/install-skill.sh --check",
     "size": "du -sh ./target ./dist 2>/dev/null || true",
     "clean:build-cache": "cargo clean --manifest-path ./src-tauri/Cargo.toml -p rcodexmanager && rm -rf ./dist ./target/release/bundle",

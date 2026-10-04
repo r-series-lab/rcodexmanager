@@ -2,6 +2,20 @@
 
 rCodexManager 以 Profile 为主对象，将日常状态对比放在主工作区，将较重的会话、认证、渠道和路由操作放入四个按需加载的管理中心。公开截图全部由浏览器 mock 数据生成，只使用 `example.com` 账号和示例路径。
 
+## 暗色界面素材
+
+宣传片与演示使用的暗色截图保存在 `assets/screenshots/dark/`，与原有浅色文档截图并存。它们由同一套浏览器 mock 数据真实渲染，便于在产品介绍、演示和文档中保持一致的视觉基线。
+
+![暗色 Profile 工作区](assets/screenshots/dark/profile-workspace.png)
+
+![暗色会话中心](assets/screenshots/dark/session-center.png)
+
+![暗色认证库](assets/screenshots/dark/auth-vault.png)
+
+![暗色远程渠道](assets/screenshots/dark/remote-channels.png)
+
+![暗色模型路由](assets/screenshots/dark/model-routing.png)
+
 ## 主工作区
 
 主界面按列展示：
