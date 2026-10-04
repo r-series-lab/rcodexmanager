@@ -6,6 +6,15 @@
 
 - No unreleased changes.
 
+## 0.1.9
+
+Public Preview update adding refreshed interface documentation, sanitized screenshots, and a promo-video project.
+
+### Changed
+
+- Updated the public documentation and type surface for the authentication vault, model routing, remote channels, and main workspace.
+- Added a Remotion promo-video project backed by public screenshots.
+
 ## 0.1.8
 
 Authentication refresh update with background Codex startup and automatic dialog completion.
